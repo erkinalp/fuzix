@@ -1978,6 +1978,11 @@ class Conv(object):
                     if s is None:
                         s = self.reference(t[1], False)
                     if not s.is_const and not s.is_array:
+                        # a known name skips reference(), so record the
+                        # touch here: a global reached ONLY as a by-ref
+                        # argument (c=in_check(side)) was otherwise left
+                        # out of gtouch, and mmb2csub emitted a bare v_side
+                        self.note_touch(canon, s)
                         self.i += 1
                         return ('var', s, None)
                 # one ELEMENT of an array: a(i), a(i,j)
@@ -2019,6 +2024,7 @@ class Conv(object):
                                 after is None
                                 or (after[0] == T_OP
                                     and after[1] in (',', ')', ':'))):
+                            self.note_touch(canon, s)   # as for a scalar
                             self.i += 1
                             return ('elem', s, (self.index(s), s.ty))
         v = self.expr()

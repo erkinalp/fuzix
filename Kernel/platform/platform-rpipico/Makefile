@@ -5,7 +5,9 @@ export PICO_SDK_FETCH_FROM_GIT = yes
 # Set 'SUBTARGET' to one of pico-sdk compatible boards
 # valid values: pico or pico2
 ifndef SUBTARGET
-SUBTARGET=pico # set default subtarget
+# set default subtarget (keep on its own line - a trailing comment
+# leaves whitespace in the value and breaks the ifeq checks below)
+SUBTARGET=pico
 endif
 
 ifeq ($(SUBTARGET),pico)

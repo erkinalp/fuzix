@@ -1,0 +1,149 @@
+Olivetti M20 FUZIX Port (Z8001)
+================================
+
+Hardware:
+  CPU:       Zilog Z8001 @ 4 MHz (segmented mode)
+  RAM:       512 KB (128 KB base + 3x128 KB expansion)
+  ROM:       8 KB bootstrap EPROM
+  Video:     MC6845 CRT controller, 512x256 pixels
+  Serial:    Intel i8251A USART (DB-25)
+  Keyboard:  Intel i8251A USART (via i8049 in keyboard)
+  Timer:     Intel i8253-5 PIT (3 channels)
+  PIC:       Intel i8259A (8 interrupt levels)
+  Floppy:    FD1797 (160/320/640 KB)
+  Hard Disk: WD1010 (optional, 11.25 MB)
+  Parallel:  Intel i8255A PPI (Centronics)
+
+Memory Layout:
+  Segment B (0x8B): Kernel code (.text + .rodata)
+  Segment 2 (0x82): Kernel data (.data + .bss), stacks, udata
+    0x0000-0x003F   Reserved for BIOS workspace
+    0x0100-0x017F   PSAP (interrupt/trap vectors)
+    0x0200+         Kernel data, BSS, stacks
+  Segment 3: Video RAM (16 KB)
+  Segment 4: Boot ROM (8 KB)
+  Segments 9-F: Available for user processes (448 KB)
+
+Toolchain:
+  Compiler:  z8k-coff-gcc 14.2.0 (https://github.com/tpaxia/gcc-z8k-14.2.0)
+  Binutils:  binutils 2.46.0 (https://github.com/tpaxia/binutils-2.46.0)
+             Must use the patched version — see "Toolchain Bugs" below.
+  Flags:     -msegmented (z8001 segmented mode), no -mregparms
+
+Calling Convention (z8k-coff-gcc, no -mregparms):
+  Arguments:     Passed on the stack, right-to-left
+  Return value:  r2 (16-bit), rr2 (32-bit)
+  Caller-saved:  R0-R7
+  Callee-saved:  R8-R13
+  Stack pointer: RR14 (R14=segment, R15=offset)
+  Segmented CALL pushes 4 bytes: PC offset at SP+0, PC segment at SP+2
+  First argument starts at SP+4 on function entry
+
+  IMPORTANT: This is NOT the register calling convention. All hand-written
+  assembly must read arguments from the stack and return values in r2/rr2.
+
+Emulation:
+  MAME:  https://github.com/tpaxia/mame (M20 driver with CTS fix)
+  Custom: https://github.com/tpaxia/z8000_emu
+
+  MAME requires a one-line fix to src/mame/olivetti/m20.cpp:
+    m_ttyi8251->write_cts(0);
+  Added in the machine_reset function, next to the existing keyboard CTS
+  line. Without this, the i8251A TTY USART never asserts TxRDY because
+  CTS is not wired from the RS-232 slot to the USART.
+
+  Run with:
+    ./m20 -bios 2 -ramsize 512k -hard1 <hd_image> -rs232 terminal
+
+Boot Process:
+  1. BIOS loads bootloader SAV file from HD sector 33
+  2. Bootloader reads kernel header from sector 64
+  3. Loads .text to segment B, .data to segment 2 (per header)
+  4. Jumps to entry point (segment B, offset 0)
+  5. crt0.S: clears BSS, calls init_early, init_hardware, fuzix_main
+
+HD Image Layout (256-byte sectors):
+  Sector 0:    PCOS geometry record
+  Sector 32:   VDB/extent record
+  Sector 33:   Bootloader (SAV format)
+  Sector 64:   Kernel load header (16 bytes)
+  Sector 65+:  Kernel .text section
+  Sector N:    Kernel .data section
+  Sector M+:   FUZIX filesystem (optional)
+
+  Built with: python3 mkm20hd.py bootloader.bin text.bin data.bin hd.img
+
+Building:
+  The kernel is not yet integrated into the main FUZIX build system.
+  Manual build from Kernel/platform/platform-m20/:
+
+  # Assemble platform files
+  z8k-coff-gcc -msegmented -c m20.S -o m20.o
+  z8k-coff-gcc -msegmented -c crt0.S -o crt0.o
+  z8k-coff-gcc -msegmented -c tricks.S -o tricks.o
+
+  # Compile C files (use the cross-compiler from gcc-z8k build)
+  $XGCC -c -Os -msegmented ... devtty.c -o devtty.o
+  $XGCC -c -Os -msegmented ... main.c -o main.o
+  # etc.
+
+  # Link with the PATCHED binutils linker
+  z8k-coff-ld -m z8001 -o fuzix.bin -T fuzix.ld <objects...>
+
+  # Extract sections and build HD image
+  z8k-coff-objcopy -j .text -O binary fuzix.bin fuzix.text.bin
+  z8k-coff-objcopy -j .data -O binary fuzix.bin fuzix.data.bin
+  python3 mkm20hd.py bootloader.bin fuzix.text.bin fuzix.data.bin hd.img
+
+Toolchain Bugs:
+  1. Binutils R_IMM32 segmented relocation (CRITICAL)
+     File: bfd/coff-z8k.c, extra_case(), R_IMM32 handler
+     Bug:  The relocation transform extracts the segment number from bits
+           23-16 of the VMA, but z8k-coff stores it in bits 31-24. Bits
+           23-16 are always zero, so every segmented address gets segment 0.
+     Fix:  Remove the transform — the VMA is already in Z8001 long-form
+           segmented encoding (1SSSSSSS 00000000 OOOOOOOO OOOOOOOO).
+           Just write the value directly with bfd_put_32().
+     Test: See ~/Projects/binutils-bug/ for a minimal reproducer.
+     Commit: https://github.com/tpaxia/binutils-2.46.0 (main branch)
+
+  2. GCC z8k return value register (UNDER INVESTIGATION)
+     The d_open() return value check appears to malfunction: tty_open
+     returns 0 (success) but the caller sees non-zero. The generated
+     code (test r2 / jr eq) looks correct. Root cause still unknown —
+     may be a MAME Z8001 emulation issue or a subtle codegen problem.
+
+i8251A USART Notes:
+  The serial port USART must be explicitly initialized by the kernel.
+  The BIOS init state may not survive the boot process. Init sequence:
+    0x00 x3 (sync), 0x40 (reset), 0xCE (mode: 8N1, x16), 0x37 (command:
+    RTS, DTR, error reset, RxEN, TxEN), then flush with a data read.
+
+  TxRDY (status bit 0) is gated by CTS in hardware. Since MAME doesn't
+  wire CTS, the kernel checks TxEMPTY (bit 2) instead, which is not
+  gated by CTS. This applies to both _outchar in m20.S and tty_putc/
+  tty_writeready in devtty.c.
+
+  Baud rate: PIT counter 0, divisor 8, mode 3 → 9615 baud (x16 clock).
+
+Current Status:
+  - Kernel boots and prints the FUZIX version banner on serial port
+  - Panics or crashes shortly after (investigating tty_open return and
+    subsequent function calls)
+  - No block device driver yet (floppy/HD via BIOS ROM calls planned)
+  - No filesystem mount
+  - No user-space execution
+  - Context switching (tricks.S) untested
+  - Interrupt handling (NVI timer, VI) untested
+  - Signal delivery not implemented
+
+Open Issues:
+  - Investigate d_open/tty_open return value mismatch
+  - Crash after FUZIX banner (jumps to segment 0)
+  - pagemap_init uses incorrect 32-bit arithmetic for segmented addresses
+  - BIOS disk driver needed for block device access
+  - PSAP vector table not populated with handler addresses
+  - Interrupts not enabled (PIC masked, PSAP not set up)
+  - User-space memory management for segmented mode
+  - Signal delivery mechanism
+  - Proper kernel memory layout across segments

@@ -107,7 +107,7 @@ extern char **sh_setenv(void);
 
 
 #define attrib(n,f)	(n->namflg |= f)
-#define round(a,b)	(((int)((ADR(a)+b)-1))&~((b)-1))
+#define round(a,b)	(((intptr_t)((ADR(a)+b)-1))&~((b)-1))
 #define closepipe(x)	(close(x[INPIPE]), close(x[OTPIPE]))
 #define eq(a,b)		(cf(a,b)==0)
 #define max(a,b)	((a)>(b)?(a):(b))
@@ -292,7 +292,7 @@ void blokinit(void);
 ADDRESS alloc(POS nbytes);
 extern void addblok(POS reqd);
 extern void sh_free(void *ap);
-extern int chkbptr(BLKPTR ptr);
+extern void chkbptr(BLKPTR ptr);
 /* builtin.c */
 extern int builtin(int argn, char * *cmd);
 /* cmd.c */

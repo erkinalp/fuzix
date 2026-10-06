@@ -1,0 +1,39 @@
+#!/bin/bash
+#
+#	Wrap the Z8001 binutils. Links with ld -r, then converts
+#	COFF relocatable to FUZIX a.out via coff2aout.
+#
+TARGET=a.out
+STACK=8192
+
+ARGS=""
+#
+#	Find the target and strip out the -o foo and -s stacksize options
+#
+while [[ $# -gt 0 ]]
+do
+	case "$1" in
+	-o)
+	TARGET="$2"
+	shift
+	shift
+	;;
+	-s)
+	STACK="$2"
+	shift
+	shift
+	;;
+	*)
+	ARGS+=' '"$1"
+	shift
+	;;
+esac
+done
+
+# Linker script: text at 0, data after text, bss after data
+LDSCRIPT='OUTPUT_FORMAT("coff-z8k") OUTPUT_ARCH(z8001) SECTIONS { .text 0 : { *(.text .text.*) } .data SIZEOF(.text) : { *(.data .rodata .rodata.*) } .bss SIZEOF(.text) + SIZEOF(.data) : { *(.bss) *(COMMON) } }'
+
+TMPFILE=$(mktemp "${TARGET}.XXXXXX")
+"${CROSS_COMPILE}"ld -m z8001 -r -T /dev/stdin -o "$TMPFILE" $ARGS <<< "$LDSCRIPT"
+"$FUZIX_ROOT"/Standalone/coff2aout -s "$STACK" -o "$TARGET" "$TMPFILE"
+rm -f "$TMPFILE"

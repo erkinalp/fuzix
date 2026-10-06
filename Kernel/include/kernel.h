@@ -550,7 +550,7 @@ typedef struct p_tab {
     uint16_t	p_pgrp;		/* Process group */
     uint8_t	p_nice;
     uint8_t	p_event;	/* Events */
-    usize_t	p_top;		/* Copy of u_top */
+    uaddr_t	p_top;		/* Copy of u_top */
     usize_t	p_size;		/* For ps (KBytes) */
 #ifdef CONFIG_UDATA_TEXTTOP
     usize_t	p_texttop;	/* Copy of u_texttop */
@@ -587,7 +587,7 @@ typedef struct u_data {
     bool        u_insys;        /* True if in kernel */
     uint8_t     u_callno;       /* sys call being executed. */
     uaddr_t     u_syscall_sp;   /* Stores SP when process makes system call */
-    susize_t    u_retval;       /* Return value from sys call */
+    arg_t       u_retval;       /* Return value from sys call */
     int16_t     u_error;        /* Last error number */
     void *      u_sp;           /* Stores SP when process is switchped */
     bool        u_ininterrupt;  /* True when the interrupt handler is running (prevents recursive interrupts) */
@@ -597,7 +597,7 @@ typedef struct u_data {
     arg_t       u_argn2;	/* Third C argument */
     arg_t       u_argn3;        /* Fourth C argument */
     void *      u_isp;          /* Value of initial sp (argv) */
-    usize_t	u_top;		/* Top of memory for this task */
+    uaddr_t	u_top;		/* Top of memory for this task */
     uaddr_t	u_break;	/* Top of data space */
     uaddr_t	u_codebase;	/* Platform base pointers */
     int     (*u_sigvec[NSIGS])(int);   /* Array of signal vectors */
@@ -638,7 +638,7 @@ typedef struct u_data {
     uaddr_t u_texttop;		/* Top of binary text (used for I/D systems) */
 #endif
    /* TODO: A specific define for "32bit" */
-#if defined(__mc68000__) || defined(__ns32k__) || defined(__ARM_ARCH_7EM__) || defined(__riscv)
+#if defined(__mc68000__) || defined(__ns32k__) || defined(__ARM_ARCH_7EM__) || defined(__riscv) || defined(__Z8000__)
     uaddr_t u_database;		/* data base for systems with separate code/data
 				   blocks. FIXME - sort this out in the usermode hdr */
 #endif

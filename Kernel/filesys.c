@@ -519,18 +519,26 @@ bool ch_link(register inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nind
 bool namecomp(uint8_t *n1, uint8_t *n2) // return true if n1 == n2
 {
     uint_fast8_t n; // do we have enough variables called n?
+    int c1, c2;     /* Use int to force proper zero-extension on z8k */
 
     n = FILENAME_LEN;
-    while(*n1 && *n1 != '/')
+    for (;;)
     {
-        if(*n1++ != *n2++)
+        c1 = *n1;
+        if (c1 == 0 || c1 == '/')
+            break;
+        c2 = *n2;
+        if (c1 != c2)
             return false; // mismatch
+        n1++;
+        n2++;
         n--;
         if(n==0)
             return true; // match
     }
 
-    return (*n2 == '\0' || *n2 == '/');
+    c2 = *n2;
+    return (c2 == '\0' || c2 == '/');
 }
 
 

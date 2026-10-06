@@ -38,8 +38,9 @@ void prs(const char *as)
 {
 	register const char *s;
 
-	if ( (s = as) )
+	if ( (s = as) ) {
 		write(output, s, length(s) - 1);
+	}
 }
 
 void prc(char c)

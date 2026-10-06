@@ -48,7 +48,7 @@ typedef struct namnod *NAMPTR;
  * into an Rvalue so two cheats
  * are necessary, one for each context.
  */
-#define Lcheat(a)	(*(int *)&(a))
+#define Lcheat(a)	(*(intptr_t *)&(a))
 
 
 /* address puns for storage allocation */

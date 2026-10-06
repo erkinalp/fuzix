@@ -43,7 +43,7 @@ static int valid_hdr(inoptr ino, struct exec *bf)
 		return 0;
 	if (bf->stacksize < 4096)
 		bf->stacksize = 4096;
-	/* Emtry must be within text */
+	/* Entry must be within text */
 	if (bf->a_entry >= bf->a_text)
 		return 0;
 	/* Wrapped */
@@ -252,12 +252,6 @@ arg_t _execve(void)
 	 */
 	install_vdso();
 
-#ifdef DEBUG
-	kprintf("Code at %p , Data at %p Stack Size %u)\n",
-		udata.u_codebase, udata.u_database,
-		aout.stacksize);
-	kprintf("Go = %p ISP = %p\n", go, udata.u_isp);
-#endif
 	doexec(go);
 
 nogood4:

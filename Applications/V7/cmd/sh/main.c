@@ -235,8 +235,7 @@ static void exfile(BOOL prof)
 				prs(mailmsg);
 			}
 			mailtime = statb.st_mtime;
-			if (line_input(ps1nod.namval) < 0)
-			{
+			if (line_input(ps1nod.namval) < 0) {
 				prs(ps1nod.namval);
 				alarm(TIMEOUT);
 			}

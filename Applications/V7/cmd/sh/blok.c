@@ -12,8 +12,6 @@
 
 #include	"defs.h"
 
-extern int printf(const char *, ...);
-
 /*
  *	storage allocator
  *	(circular first fit strategy)
@@ -146,17 +144,17 @@ void sh_free(void *ap)
 void chkbptr(BLKPTR ptr)
 {
 	int exf = 0;
-	register BLKPTR p = end;
+	register BLKPTR p = BLK(end);
 	register BLKPTR q;
 	int us = 0, un = 0;
 
 	for (;;) {
-		q = ((intptr_t)(p->word)) & ~BUSY;
+		q = BLK(((intptr_t)(p->word)) & ~BUSY);
 		if (p == ptr) {
 			exf++;
 		}
-		if (q < end || q > bloktop) {
-			abort(3);
+		if (q < BLK(end) || q > bloktop) {
+			abort();
 		}
 		if (p == bloktop) {
 			break;
@@ -169,12 +167,12 @@ void chkbptr(BLKPTR ptr)
 			;
 		}
 		if (p >= q) {
-			abort(4);
+			abort();
 		}
 		p = q;
 	}
 	if (exf == 0) {
-		abort(1);
+		abort();
 	}
 	prn(un);
 	prc(SP);

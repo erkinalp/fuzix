@@ -283,7 +283,7 @@ uint16_t incr;
 arg_t _sbrk(void)
 {
 	register uaddr_t oldbrk;
-	ssize_t inc = incr;
+	arg_t inc = incr;
 
 	udata.u_argn += (oldbrk = udata.u_break);
 
@@ -295,7 +295,7 @@ arg_t _sbrk(void)
 	if (_brk())		/* brk (udata.u_argn) */
 		return (-1);
 
-	return ((unsigned) oldbrk);
+	return oldbrk;
 }
 
 #undef incr

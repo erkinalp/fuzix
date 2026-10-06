@@ -371,7 +371,7 @@ int pagemap_realloc(struct exec *a, usize_t unused)
 	size = a->a_data + a->a_bss + a->stacksize;
 	size = (size + 511) & ~511;
 
-	mb->start = kmalloc(csize, proc);
+	mb->start = kmalloc_largest(csize, proc);
 	if (mb->start == NULL) {
 		mem_free(m, 0);
 		return ENOMEM;
@@ -380,7 +380,7 @@ int pagemap_realloc(struct exec *a, usize_t unused)
 
 	mb++;
 
-	mb->start = kmalloc(size, proc);
+	mb->start = kmalloc_largest(size, proc);
 	if (mb->start == NULL) {
 		mem_free(m, 0);
 		return ENOMEM;
@@ -401,7 +401,7 @@ int pagemap_realloc(struct exec *a, usize_t unused)
 #else
 	size = a->a_text + a->a_data + a->a_bss + a->stacksize;
 	size = (size + 511) & ~511;
-	mb->start = kmalloc(size, proc);
+	mb->start = kmalloc_largest(size, proc);
 	if (mb->start == NULL) {
 		mem_free(m, 0);
 		return ENOMEM;

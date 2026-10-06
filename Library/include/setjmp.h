@@ -148,6 +148,12 @@
 	extern int _setjmp(jmp_buf __env);
 	#define setjmp(x) _setjmp(x)
 
+#elif defined(__Z8000__)
+
+	/* R8-R13 (6 regs), RR14/SP (2 words), return PC (2 words) = 10 words */
+	typedef uint16_t jmp_buf[10];
+	extern int setjmp(jmp_buf __env);
+
 #else
 	#error jmp_buf definition not set for this architecture
 #endif

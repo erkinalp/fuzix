@@ -40,6 +40,7 @@ typedef union {            /* this structure is endian dependent */
 #define cpu_to_le16(x)	swab(x)
 #define le16_to_cpu(x)	swab(x)
 #define cpu_to_le32(x)	swab32(x)
+#define regptr register
 #define le32_to_cpu(x)	swab32(x)
 
 #define ntohs(x)	(x)

@@ -40,6 +40,7 @@ typedef union {            /* this structure is endian dependent */
 #define le32_to_cpu(x)	(x)
 #define cpu_to_le16(x)	(x)
 #define cpu_to_le32(x)	(x)
+#define regptr
 
 #define __packed
 #define barrier()

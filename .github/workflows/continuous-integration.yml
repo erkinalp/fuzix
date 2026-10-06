@@ -70,6 +70,16 @@ jobs:
         sudo apt-get update -q
         sudo apt-get install -y byacc automake ${PKGS}
         sudo update-alternatives --set yacc /usr/bin/byacc
+    - name: install Fuzix Compiler Kit
+      if: contains(fromJSON('["appleiie","dragon-mooh","dragon-nx32","multicomp09","rbc-mark4","rcbus-6502","sc108"]'), matrix.target)
+      run: |
+        sudo apt-get install -y libbsd-dev flex bison
+        sudo mkdir -p /opt/fcc && sudo chown $USER /opt/fcc
+        git clone --depth 1 https://codeberg.org/EtchedPixels/Fuzix-Bintools.git ~/Fuzix-Bintools
+        (cd ~/Fuzix-Bintools && make -j`nproc` && make install)
+        git clone --depth 1 https://codeberg.org/EtchedPixels/Fuzix-Compiler-Kit.git ~/Fuzix-Compiler-Kit
+        (cd ~/Fuzix-Compiler-Kit && make bootstrap -j`nproc` && PATH=/opt/fcc/bin:$PATH make install -j`nproc`)
+        echo "/opt/fcc/bin" >> $GITHUB_PATH
     - name: make
       run: ${{ env.setup_sh }} && make ${{ env.cross_cc }} ${{ env.target }} ${{ env.sub_target }} ${{ env.flags }} -j`nproc`
     - name: target testing

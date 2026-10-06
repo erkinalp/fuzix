@@ -2,7 +2,7 @@
 CSRCS = ttydw.c
 CSRCS += devices.c main.c libc.c devsdc.c
 
-CDSRCS = 
+CDSRCS = devsdc_discard.c devtty_discard.c
 
 DSRCS = ../../dev/devdw.c ../../dev/blkdev.c ../../dev/mbr.c
 
@@ -50,7 +50,7 @@ image:
 	multicomp09.o ../../start.o ../../version.o \
 	../../cpu-6809/lowlevel-6809.o tricks.o main.o ../../timer.o \
 	../../kdata.o devices.o ../../dev/drivewire/drivewire.o devdw.o \
-	ttydw.o blkdev.o mbr.o devsdc.o sdc.o ../../memalloc_none.o \
+	ttydw.o blkdev.o mbr.o devsdc.o devsdc_discard.o devtty_discard.o sdc.o ../../memalloc_none.o \
 	../../devio.o ../../filesys.o ../../process.o ../../inode.o \
 	../../syscall_fs.o ../../syscall_proc.o ../../syscall_other.o \
 	../../mm.o ../../bank16k.o ../../swap.o ../../tty.o ../../devsys.o \

@@ -24,7 +24,7 @@
 
    Port 0 is used for tty1, Port 1 for tty2. Port2 is dedicated to DriveWire.
 */
-static uint8_t *uart[] = {
+uint8_t *uart[] = {
 	0,      0,                               /* Unused */
 	(uint8_t *)0xFFD1, (uint8_t *)0xFFD0,    /* Virtual UART Data, Status port0, tty1 */
 	(uint8_t *)0xFFD3, (uint8_t *)0xFFD2,    /*         UART Data, Status port1, tty2 */
@@ -215,14 +215,3 @@ void plt_reinterrupt(void)
 	panic("reint");
 }
 
-
-/* Initial Setup stuff down here. */
-
-__attribute__((section(".discard")))
-void devtty_init()
-{
-	/* Reset each UART by write to STATUS register */
-	*uart[3] = 3;
-	*uart[5] = 3;
-	*uart[7] = 3;
-}

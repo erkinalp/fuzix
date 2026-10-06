@@ -44,6 +44,18 @@ can boot.
 Design doc candidate: allow larger-than-512B logical blocks / extents
 in FS32 (v2 format) — needs s_shift plumbing through filesys + tools.
 
+### centurion — REGRESSION carried in from tailwind/pc3 (BLKSIZE=400)
+platform-centurion sets BLKSIZE=400 but kernel.h unconditionally uses
+the FS32 dinode layout (i_addr[40+3], 30-char names) since the pc3
+merge — the classic-dinode path centurion needs no longer exists.
+Already broken on tailwind/pc3 before this PR; either restore a
+classic-FS build option for BLKSIZE!=512 platforms or port centurion
+onto FS32. Do NOT half-revert piecemeal.
+
+### m20 / Z8000 — residual items from PR-review
+- `nvi_signal` TODO left in the port (non-maskable interrupt signalling)
+- serial debug capture wiring documented in CLAUDE.md (socket :2323)
+
 ## Upstream issues (EtchedPixels/FUZIX, archived) — cross-check result
 
 SOLVED downstream (verified in this tree):

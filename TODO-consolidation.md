@@ -140,3 +140,11 @@ the to-do list until they're enabled.)
   it → venv pinned to setuptools<81 in the workflow.
 - multicomp09: __attribute__((section(".discard"))) isn't fcc-legal;
   init code split into devsdc_discard.c/devtty_discard.c (-Tdiscard).
+- esp32 libc source-list drift vs esp8266: mempcpy.c, stpcpy.c, nftw.c,
+  fdopendir{,_r}.c were missing → link failures; now synced.
+- rpipico: drivers assume RP2350 (DCP/FPU/HSTX/PSRAM); CI builds
+  SUBTARGET=pico2 and the RP2350-only init block is PICO_RP2350-guarded.
+- bbcbasic: bare `asm` isn't a keyword under rules.armm0's -std=c99;
+  register globals now use __asm__.
+
+CI status: 10/10 green at 4f0925245 (2026-10-06).

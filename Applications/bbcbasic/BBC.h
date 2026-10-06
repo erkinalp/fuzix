@@ -295,20 +295,20 @@ extern signed char *esi ;		// Program pointer
 extern heapptr *esp ;			// Stack pointer
 #else
 #ifdef __i386__
-register signed char *esi asm ("esi") ;	// Program pointer
-register heapptr *esp asm ("edi") ;	// Stack pointer
+register signed char *esi __asm__ ("esi") ;	// Program pointer
+register heapptr *esp __asm__ ("edi") ;	// Stack pointer
 #endif
 #ifdef __arm__
-register signed char *esi asm ("r10") ;	// Program pointer
-register heapptr *esp asm ("r11") ;	// Stack pointer
+register signed char *esi __asm__ ("r10") ;	// Program pointer
+register heapptr *esp __asm__ ("r11") ;	// Stack pointer
 #endif
 #ifdef __x86_64__
-register signed char *esi asm ("r12") ;	// Program pointer
-register heapptr *esp asm ("r13") ;	// Stack pointer
+register signed char *esi __asm__ ("r12") ;	// Program pointer
+register heapptr *esp __asm__ ("r13") ;	// Stack pointer
 #endif
 #ifdef __aarch64__
-register signed char *esi asm ("x27") ;	// Program pointer
-register heapptr *esp asm ("x28") ;	// Stack pointer
+register signed char *esi __asm__ ("x27") ;	// Program pointer
+register heapptr *esp __asm__ ("x28") ;	// Stack pointer
 #endif
 #endif
 

@@ -173,6 +173,7 @@ extern unsigned char pc3_lwip_heap[];
 #define TCP_WND                     (4 * TCP_MSS)
 #define TCP_SND_BUF                 (4 * TCP_MSS)
 #define TCP_SND_QUEUELEN            ((4 * TCP_SND_BUF + TCP_MSS - 1) / TCP_MSS)
+#define TCP_SNDQUEUELOWAT           2   /* must be < TCP_SND_QUEUELEN */
 #define MEMP_NUM_TCP_SEG            32
 
 /* NSOCKET in Fuzix is 8, so there is no point having room for more

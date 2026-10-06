@@ -3,7 +3,7 @@ CC=gcc
 #CCOPTS=-O2 -DLIBDSK -ldsk -g -Wall -pedantic -Wno-char-subscripts -Wno-deprecated-declarations
 CCOPTS=-O2 -g -Wall -pedantic -Wno-char-subscripts -Wno-deprecated-declarations
 
-TARGETS=mkfs fsck ucp chmem size elf2aout mkftl sethint mkfs400 fsck400
+TARGETS=mkfs fsck ucp chmem size elf2aout mkftl sethint mkfs400 fsck400 mkfs_fat fsck_fat
 
 all:	$(TARGETS)
 
@@ -21,6 +21,12 @@ fsck:	fsck.o util.o
 
 fsck400: fsck400.o util.o
 	$(CC) $(CCOPTS) -o $@ $< util400.o
+
+mkfs_fat: mkfs_fat.o
+	$(CC) $(CCOPTS) -o $@ $<
+
+fsck_fat: fsck_fat.o
+	$(CC) $(CCOPTS) -o $@ $<
 
 ucp:	ucp.o util.o
 	$(CC) $(CCOPTS) -o $@ $< util.o

@@ -111,3 +111,32 @@ STILL OPEN — features:
 
 (GitHub Issues are currently disabled on this repository — this file is
 the to-do list until they're enabled.)
+
+## Downstream CI/buildstate items (2026-10-06)
+
+- **6809 kernel asm migration (upstream-broken, dropped from CI)**:
+  dragon-mooh, dragon-nx32, multicomp09 removed from the CI matrix in
+  2753fdf27. Upstream aee91d86e (2026-08-16) switched cpu-6809/rules.mk
+  to fcc/ld6809 but never converted the ~225 kernel .s sources from
+  gcc6809/SDAS dialect (.globl/.area/.module/fcb/fdb) to Bintools
+  dialect (.export/.code/.byte/.word). Bintools' as6809 keyword table
+  only implements .dp/.pcrel, and ld6809 has no --script support for
+  the platform fuzix.link scripts. Userspace .s files (Library/libs
+  crt0_6809_rel.s, fuzix6809/syscall6809.s) ARE already Bintools
+  dialect. Fix: mass-convert Kernel/**/*.s 6809 sources + port the
+  per-platform .link scripts to ld6809 flags, then restore the three
+  CI targets. tailwind/pc3 took the other path — it kept the full
+  gcc6809 toolchain (m6809-unknown-gcc/as/ld, -mcode-section,
+  -mfar-code-page, -lgcc) for kernel+userspace.
+- **fcc C-parse flakes (CI-only)**: intermittent "unknown symbol" /
+  "expected ;" / "incorrect number of macro arguments" errors
+  (seen: sc108 devio.c+kernel.h, nx32 bsearch.c, appleiie startrek.c).
+  Every case compiles clean locally with identical fcc commands and
+  matching FCK HEAD; error position varies run to run. A serial -j1
+  retry was added to the make step in 2753fdf27 as probe+heal; if the
+  class survives, report upstream to FCK (likely cpp/cc1 temp-file or
+  symbol-table issue under parallel make).
+- esp32: IDF 5.0 export.sh needs pkg_resources; setuptools>=81 removed
+  it → venv pinned to setuptools<81 in the workflow.
+- multicomp09: __attribute__((section(".discard"))) isn't fcc-legal;
+  init code split into devsdc_discard.c/devtty_discard.c (-Tdiscard).

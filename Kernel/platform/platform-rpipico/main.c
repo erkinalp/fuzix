@@ -169,6 +169,7 @@ void syscall_handler(struct svc_frame* eh)
 
 int main(void)
 {
+#if PICO_RP2350
     /* Grant coprocessor 4 - the RP2350's double-precision DCP - to
      * everything.  Userland's libc __aeabi_d* routines run on it; they
      * are the SDK's self-saving wrappers, which save and restore an
@@ -228,6 +229,7 @@ int main(void)
     __asm volatile("dsb; isb");
     *(volatile uint32_t *)0xE000EF34 &= ~((1u << 31) | (1u << 30));
     __asm volatile("dsb; isb");
+#endif /* PICO_RP2350 */
 
 #ifdef PC3_SYS_CLOCK_KHZ
     /* Pico Computer 3: raise clk_sys before anything derives a divisor

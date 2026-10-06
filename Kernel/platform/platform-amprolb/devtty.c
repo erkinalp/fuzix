@@ -125,7 +125,6 @@ int tty_carrier(uint_fast8_t minor)
 	if (minor == 2)
 		port = DARTB_C;
 	out(port, 0);
-	c = in(port);
 	if (c & 0x08)
 		return 1;
 	return 0;

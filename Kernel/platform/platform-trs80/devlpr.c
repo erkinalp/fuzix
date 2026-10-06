@@ -49,6 +49,7 @@ int lpr_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
         /* FIXME: tidy up ugetc and sysio checks globally */
         out(LPDATA, ugetc(p++));
         udata.u_done++;
+        c--;
     }
     return udata.u_done;
 }

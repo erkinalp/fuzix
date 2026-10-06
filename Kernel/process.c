@@ -264,6 +264,9 @@ ptptr getproc(void)
 				p->p_pptr);
 #endif
 			p = p->p_pptr;
+			if (p->p_status != P_READY && p->p_status != P_RUNNING)
+				break;
+			/* fall through */
 		case P_READY:
 			/* If we are ready run us */
 			p->p_status = P_RUNNING;

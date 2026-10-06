@@ -362,7 +362,7 @@ arg_t _waitpid(void)
 		}
 		/* Nothing yet, so wait */
 		if (options & WNOHANG)
-			break;
+			return 0;
 		psleep(udata.u_ptab);
 	}
 	udata.u_error = EINTR;

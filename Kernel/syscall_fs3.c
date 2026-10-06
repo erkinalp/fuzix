@@ -293,7 +293,7 @@ arg_t _fcntl(void)
 		if (data & O_CLOEXEC)
 			udata.u_cloexec |= (1 << fd);
 		else
-			udata.u_cloexec &= (1 << fd);
+			udata.u_cloexec &= ~(1 << fd);
 		return 0;
 	case F_DUPFD:
 		/* The input fd is in argn and valid, the rest is the

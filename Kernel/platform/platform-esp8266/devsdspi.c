@@ -227,7 +227,7 @@ static void memcpy4_aligned(uint32_t *p1, const uint32_t *p2, uint32_t dwords)
 		*p1++ = *p2++;
 }
 
-bool sd_spi_receive_sector(void)
+bool sd_spi_rxsect(void)
 {
 	uint8_t *dptr = (uint8_t *) blk_op.addr;
 	if ((uint32_t) dptr & 3)
@@ -248,7 +248,7 @@ bool sd_spi_receive_sector(void)
 	return 0;
 }
 
-bool sd_spi_transmit_sector(void)
+bool sd_spi_txsect(void)
 {
 	uint8_t *sptr = (uint8_t *) blk_op.addr;
 	if ((uint32_t) sptr & 3)

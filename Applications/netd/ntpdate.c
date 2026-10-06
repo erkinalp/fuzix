@@ -41,6 +41,9 @@ struct ntp_t {
 
 
 #define MAXBUF 256
+/* NTP time 1900-01-01 to Unix time 1970-01-01; UL keeps fcc's
+   pre-C99 lexer happy (it has no LL suffix) */
+#define NTP_UNIX_EPOCH_OFFSET 2208988800UL
 int fd;
 char buf[MAXBUF];
 struct sockaddr_in addr;
@@ -180,7 +183,7 @@ int main( int argc, char *argv[] ){
     /* Same again: the timestamp arrives big-endian, and reading it raw
        on a little-endian machine dated this reply to 1869. */
     uv = (time_t)ntohl(ptr->xmit.sec);
-    uv -= 2208988800LL;	/* 1900 -> 1970; too big for a signed long */
+    uv -= NTP_UNIX_EPOCH_OFFSET;
     uv += tz * 60 * 60;
     uv += tzsec;
 

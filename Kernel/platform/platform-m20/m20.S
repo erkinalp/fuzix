@@ -252,12 +252,14 @@ _hd_biosio:
 	pushl	@rr14, rr10		! save udata pointer
 	pushl	@rr14, rr8		! save callee-saved
 
+	ldctl	r1, fcw			! FCW goes on the stack: BIOS clobbers
+	push	@rr14, r1		! r0-r13, so no register can hold it
 	di	vi,nvi			! disable interrupts during BIOS call
 
-	ld	r7, rr14(#12)		! dev_op (adjusted for 2 pushes = +8)
-	ld	r8, rr14(#14)		! count
-	ld	r9, rr14(#16)		! sector
-	ldl	rr10, rr14(#18)		! buffer (seg:off) — clobbers R10!
+	ld	r7, rr14(#14)		! dev_op (adjusted for 3 pushes = +10)
+	ld	r8, rr14(#16)		! count
+	ld	r9, rr14(#18)		! sector
+	ldl	rr10, rr14(#20)		! buffer (seg:off) — clobbers R10!
 
 	ldl	rr12, #0x84000068	! BIOS disk_io entry point
 	call	@rr12
@@ -265,7 +267,14 @@ _hd_biosio:
 	ldb	rl2, rl7		! return error code in r2
 	subb	rh2, rh2		! zero extend
 
-	ei	vi,nvi			! re-enable interrupts
+	! restore interrupt state (not blind ei: we may have been
+	! entered with interrupts already off)
+	pop	r1, @rr14
+	ldctl	r0, fcw
+	and	r0, #0xE7FF		! clear VIE+NVIE
+	and	r1, #0x1800		! keep saved VIE+NVIE
+	or	r0, r1
+	ldctl	fcw, r0
 
 	popl	rr8, @rr14		! restore callee-saved
 	popl	rr10, @rr14		! restore udata pointer
@@ -290,8 +299,17 @@ _outchar_wait:
 	outb	#TTY_DATA, rl0
 
 	! CRT output (BIOS clobbers r0-r13, already saved above)
+	ldctl	r1, fcw
+	push	@rr14, r1		! saved FCW lives on the stack
+	di	vi,nvi			! prevent re-entrant BIOS/echo
 	ldl	rr12, #0x84000080	! BIOS put_char entry point
 	call	@rr12
+	pop	r1, @rr14
+	ldctl	r0, fcw
+	and	r0, #0xE7FF
+	and	r1, #0x1800
+	or	r0, r1
+	ldctl	fcw, r0
 
 	popl	rr12, @rr14
 	popl	rr10, @rr14
@@ -313,10 +331,17 @@ _crt_put:
 
 	ldb	rl0, rr14(#17)		! char arg (offset: 3 pushes * 4 + 4 + 1)
 
+	ldctl	r1, fcw
+	push	@rr14, r1		! saved FCW lives on the stack
 	di	vi,nvi			! prevent re-entry from timer echo
 	ldl	rr12, #0x84000080	! BIOS put_char entry point
 	call	@rr12
-	ei	vi,nvi
+	pop	r1, @rr14
+	ldctl	r0, fcw
+	and	r0, #0xE7FF
+	and	r1, #0x1800
+	or	r0, r1
+	ldctl	fcw, r0
 
 	popl	rr12, @rr14
 	popl	rr10, @rr14

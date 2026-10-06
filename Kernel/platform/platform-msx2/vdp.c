@@ -26,8 +26,8 @@ void vdpinit(void)
     v99xx_set_mode(MODE_TEXT2);
     v99xx_set_color(15, 4);
     v99xx_copy_to_vram(VT_BASE_FONT + 32*8, (uint8_t *)&fontdata_6x8, 768);
-    v99xx_set_blink_color(15, 8);
-    v99xx_set_blink_period(4, 4);
+    v99xx_blink_col(15, 8);
+    v99xx_blink_per(4, 4);
 
     /* clean vram for all vt's */
     for (i = 0; i < MAX_VT; i++) {

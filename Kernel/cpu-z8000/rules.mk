@@ -1,4 +1,6 @@
-Z8K_GCC_BUILD=/Users/paxia/Projects/gcc-z8k/build-z8k-coff/gcc
+# Path to the built gcc-z8k tree (xgcc + -B). Override on the command line
+# or in the environment; the default assumes a sibling build layout.
+Z8K_GCC_BUILD ?= $(HOME)/gcc-z8k/build-z8k-coff/gcc
 export CROSS_COMPILE=z8k-coff-
 export CROSS_LD=$(CROSS_COMPILE)ld
 export CROSS_CC=$(Z8K_GCC_BUILD)/xgcc -B$(Z8K_GCC_BUILD)/

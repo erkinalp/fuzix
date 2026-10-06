@@ -53,8 +53,10 @@ static uint16_t bufclock;		/* Time-stamp counter for LRU */
  */
 static void bufown(bufptr bp)
 {
+#ifdef CONFIG_BUFSTAT_DEBUG
 	bp->bf_pid = udata.u_ptab ? udata.u_ptab->p_pid : 0;
 	bp->bf_call = udata.u_callno;
+#endif
 }
 
 #ifndef CONFIG_BLOCK_SLEEP
@@ -390,8 +392,13 @@ int bufstat_report(uint8_t *data)
 		be.be_time = bp->bf_time;
 		be.be_busy = bp->bf_busy;
 		be.be_dirty = bp->bf_dirty;
+#ifdef CONFIG_BUFSTAT_DEBUG
 		be.be_pid = bp->bf_pid;
 		be.be_call = bp->bf_call;
+#else
+		be.be_pid = 0;
+		be.be_call = 0;
+#endif
 		be.be_pad = 0;
 		if (uput((uint8_t *)&be, data, sizeof(be)))
 			return -1;

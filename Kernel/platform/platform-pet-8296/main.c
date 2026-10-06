@@ -22,7 +22,21 @@ void do_beep(void)
 }
 
 void *memmove(void *dest, const void *src, size_t n) {
-	memcpy(dest, src, n);
+	/* Direction-aware copy: safe for overlapping ranges. */
+	uint8_t *d = dest;
+	const uint8_t *s = src;
+	if (d == s || n == 0)
+		return dest;
+	if (d < s) {
+		while (n--)
+			*d++ = *s++;
+	} else {
+		d += n;
+		s += n;
+		while (n--)
+			*--d = *--s;
+	}
+	return dest;
 }
 
 

@@ -3,8 +3,8 @@
 
 void tty_hw_init(void);
 void tty_pollirq_escc(void);
-void tty_pollirq_asci0(void);
-void tty_pollirq_asci1(void);
+void tty_pollirq_as0(void);
+void tty_pollirq_as1(void);
 void tty_pollirq_com1(void);
 
 #ifdef _DEVTTY_PRIVATE

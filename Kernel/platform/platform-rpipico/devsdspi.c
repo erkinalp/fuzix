@@ -225,7 +225,7 @@ uint_fast8_t sd_spi_receive_byte(void)
     return b;
 }
 
-bool sd_spi_receive_sector(void)
+bool sd_spi_rxsect(void)
 {
 #ifdef CONFIG_PICO_COMPUTER_3
     if (sd_bb) {
@@ -240,7 +240,7 @@ bool sd_spi_receive_sector(void)
         return 0;
 }
 
-bool sd_spi_transmit_sector(void)
+bool sd_spi_txsect(void)
 {
 #ifdef CONFIG_PICO_COMPUTER_3
     if (sd_bb) {

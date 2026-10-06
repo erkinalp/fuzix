@@ -14,8 +14,8 @@
 		.globl sd_spi_lower_cs
 		.globl sd_spi_transmit_byte
 		.globl sd_spi_receive_byte
-		.globl sd_spi_transmit_sector
-		.globl sd_spi_receive_sector
+		.globl sd_spi_txsect
+		.globl sd_spi_rxsect
 		.globl ch375_irq5_handler
 		.globl ch375_send_cmd
 		.globl ch375_send_data
@@ -264,7 +264,7 @@ sd_spi_receive_byte:
 				/*	d0 = result read byte */
 spi_rb_rts:	rts
 
-sd_spi_receive_sector:
+sd_spi_rxsect:
 	move.w	#512,d0
 	/* Get the argument - address of buffer */
 	/* As we are a flat system we don't have to worry about */
@@ -298,7 +298,7 @@ sd_spi_receive_sector:
 	movem.l (a7)+,d2-d4/a2-a3	/* 12+40 restore regs */
 	rts
 
-sd_spi_transmit_sector:
+sd_spi_txsect:
 	move.w	#512,d0
 	move.l	blk_op,a0		/* 12	load data buffer */
 	movem.l d2-d6/a2,-(a7)		/* 12+48 save regs */

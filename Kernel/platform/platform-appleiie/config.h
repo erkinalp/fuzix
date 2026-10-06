@@ -58,10 +58,16 @@
 /* Device parameters */
 #define NUM_DEV_TTY 1	  /* For now until we add console switches */
 #define TTYDEV   BOOT_TTY /* Device used by kernel for messages, panics */
-#define NBUFS    5        /* Number of block buffers */
-#define NMOUNTS	 3	  /* Number of mounts at a time */
+#define NBUFS    3        /* Number of block buffers */
+#define NMOUNTS	 2	  /* Number of mounts at a time */
 
 #define CONFIG_SMALL
+
+/* FS32's bigger in-core dinode and fs code mean the CONFIG_SMALL
+   defaults no longer fit in the 48K kernel image */
+#define ITABSIZE	8
+#define OFTSIZE		12
+#define PTABSIZE	12
 
 #define plt_discard()
 #define plt_copyright()

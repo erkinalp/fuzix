@@ -128,7 +128,7 @@ void v99xx_copy_from_vram(uint8_t *dst, uint16_t vaddr, uint16_t size);
 uint_fast8_t v99xx_read_vram(uint16_t addr);
 void v99xx_set_mode(uint_fast8_t mode);
 void v99xx_set_color(uint_fast8_t fg, uint_fast8_t bg);
-void v99xx_set_blink_color(uint_fast8_t fg, uint_fast8_t bg);
-void v99xx_set_blink_period(uint_fast8_t fg, uint_fast8_t bg);
+void v99xx_blink_col(uint_fast8_t fg, uint_fast8_t bg);
+void v99xx_blink_per(uint_fast8_t fg, uint_fast8_t bg);
 
 #endif

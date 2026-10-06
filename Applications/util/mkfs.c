@@ -41,8 +41,11 @@ struct fblk {
     blkno_t     f_free[50];
 };
 
+/* FCK's cc1 is pre-C11 and cannot parse _Static_assert */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(struct dinode) == FS32_DINODE_SIZE,
 	       "FS32 dinode must be 256 bytes");
+#endif
 
 #define FILENAME_LEN	30
 #define DIR_LEN		32

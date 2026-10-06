@@ -79,9 +79,12 @@ struct dinode {
     uint8_t  i_reserved[56];
 };               /* Exactly 256 bytes long! */
 
+/* FCK's cc1 is pre-C11 and cannot parse _Static_assert */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(struct filesys) == 512, "FS32 superblock layout");
 _Static_assert(sizeof(struct dinode) == 256, "FS32 dinode must be 256 bytes");
 _Static_assert(sizeof(struct fblk) == 204, "FS32 free chain block layout");
+#endif
 
 #define F_REG   0100000
 #define F_DIR   040000

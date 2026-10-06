@@ -269,12 +269,12 @@ void v99xx_set_color(uint8_t fg, uint8_t bg)
     v99xx_write_reg(V99xx_REG_COLOR1, (fg << 4) | (bg & 0xf));
 }
 
-void v99xx_set_blink_color(uint8_t fg, uint8_t bg)
+void v99xx_blink_col(uint8_t fg, uint8_t bg)
 {
     v99xx_write_reg(V99xx_REG_COLOR2, (fg << 4) | (bg & 0xf));
 }
 
-void v99xx_set_blink_period(uint8_t fg, uint8_t bg)
+void v99xx_blink_per(uint8_t fg, uint8_t bg)
 {
     v99xx_write_reg(V99xx_REG_BLINK_PERIOD, (fg << 4) | (bg & 0xf));
 }

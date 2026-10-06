@@ -12,6 +12,7 @@
 #include <graphics.h>
 #include <crt9128.h>
 #include <input.h>
+#include "devinput.h"
 
 static uint8_t has_acia;
 

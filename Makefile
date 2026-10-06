@@ -148,7 +148,12 @@ tools:
 gtags:
 	gtags
 
-kernel: ltools
+# Kernel compiles resolve libc headers (<string.h>, <time.h>, ...) from
+# /opt/fcc/lib/$(CPU)/include via fcc's built-in system include path.
+# "libs" rewrites that directory with non-atomic "install" copies, so a
+# kernel that builds while libs is still installing reads half-written
+# headers and dies with nonsense parse errors at -j >1.  Serialize it.
+kernel: ltools libs
 	mkdir -p Images/$(TARGET)
 	+(cd Kernel; $(MAKE))
 

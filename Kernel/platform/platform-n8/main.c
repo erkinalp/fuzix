@@ -74,10 +74,10 @@ void plt_interrupt(void)
 #endif
             return;
         case Z180_INT_ASCI0:
-            tty_pollirq_asci0();
+            tty_pollirq_as0();
             return;
         case Z180_INT_ASCI1:
-            tty_pollirq_asci1();
+            tty_pollirq_as1();
             return;
         default:
             dummy = tms9918a_ctrl;

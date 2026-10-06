@@ -532,7 +532,9 @@ _outstring_loop:
 	testb	rl0
 	ret	z
 	push	@rr14, r0		! push char as word arg
+	pushl	@rr14, rr2		! _outchar's BIOS call clobbers r0-r7
 	call	_outchar
+	popl	rr2, @rr14
 	pop	r0, @rr14		! clean stack
 	inc	r3, #1
 	jr	_outstring_loop

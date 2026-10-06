@@ -11,11 +11,11 @@
 		.globl _fuzixbios_set_bank
 		.globl _fuzixbios_init_done
 
-		.globl _fuzixbios_serial_txready
-		.globl _fuzixbios_serial_tx
-		.globl _fuzixbios_serial_setup
+		.globl _fuzixbios_ser_txr
+		.globl _fuzixbios_ser_tx
+		.globl _fuzixbios_ser_set
 		.globl _fuzixbios_serial_param
-		.globl _fuzixbios_serial_carrier
+		.globl _fuzixbios_ser_car
 
 		.globl _fuzixbios_lpt_busy
 		.globl _fuzixbios_lpt_tx
@@ -95,11 +95,11 @@ _fuzixbios_param		.equ	.end+15
 _fuzixbios_idle			.equ	.end+18
 _fuzixbios_set_bank		.equ	.end+21
 
-_fuzixbios_serial_txready	.equ	.end+24
-_fuzixbios_serial_tx		.equ	.end+27
-_fuzixbios_serial_setup		.equ	.end+30
+_fuzixbios_ser_txr	.equ	.end+24
+_fuzixbios_ser_tx		.equ	.end+27
+_fuzixbios_ser_set		.equ	.end+30
 _fuzixbios_serial_param		.equ	.end+33
-_fuzixbios_serial_carrier	.equ	.end+36
+_fuzixbios_ser_car	.equ	.end+36
 
 _fuzixbios_lpt_busy		.equ	.end+39
 _fuzixbios_lpt_tx		.equ	.end+42

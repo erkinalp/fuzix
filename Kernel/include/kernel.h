@@ -218,11 +218,13 @@ typedef struct blkbuf {
     uint8_t     bf_dirty;	/* bit 0 used */
     uint8_t     bf_busy;	/* bits 0-1 used */
     uint16_t    bf_time;        /* LRU time stamp */
+#ifdef CONFIG_BUFSTAT_DEBUG
     /* DEBUG: who was running when this buffer was last pinned. Only
        meaningful while bf_busy, and only here to find a buffer leak -
-       see include/bufstat.h. Four bytes a buffer. */
+       see include/bufstat.h. Three bytes a buffer, so opt-in. */
     uint16_t    bf_pid;
     uint8_t     bf_call;
+#endif
 } blkbuf, *bufptr;
 
 #if defined(CONFIG_BLKBUF_HELPERS)
@@ -1035,6 +1037,10 @@ extern bufptr freebuf(void);
 extern void bufinit(void);
 extern void bufdump (void);
 extern int bufstat_report(uint8_t *data);	/* DEBUG, see bufstat.h */
+
+/* CONFIG_BUFSTAT_DEBUG keeps the per-buffer owner fields (bf_pid/
+   bf_call) that bufstat reports; without it they read as zero and
+   cost no RAM. Define it in config.h when hunting buffer leaks. */
 extern int bdread(bufptr bp);
 extern int bdwrite(bufptr bp);
 extern int cdread(uint16_t dev, uint_fast8_t flag);

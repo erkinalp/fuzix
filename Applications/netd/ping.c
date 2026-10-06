@@ -97,21 +97,20 @@ long us_since( pingtime_t t0 ){
 
 #else
 
-typedef struct timeval pingtime_t;
+/* microseconds; wraps in ~35 min, but ping only takes differences of
+   nearby timestamps so wraparound is harmless.  Kept scalar because
+   ccz80 cannot pass or return structs by value. */
+typedef long pingtime_t;
 
 pingtime_t time_now( void ){
     struct timeval t;
 
     gettimeofday( &t, NULL );
-    return t;
+    return t.tv_sec * 1000000L + (long)t.tv_usec;
 }
 
 long us_since( pingtime_t t0 ){
-    struct timeval now;
-
-    gettimeofday( &now, NULL );
-    return (now.tv_sec - t0.tv_sec) * 1000000L
-	 + (long)now.tv_usec - (long)t0.tv_usec;
+    return time_now() - t0;
 }
 
 #endif

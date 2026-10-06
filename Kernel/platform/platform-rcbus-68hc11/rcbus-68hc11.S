@@ -528,8 +528,8 @@ hd_swap:
 	.globl sd_spi_raise_cs
 	.globl sd_spi_lower_cs
 	.globl sd_spi_clock
-	.globl sd_spi_transmit_sector
-	.globl sd_spi_receive_sector
+	.globl sd_spi_txsect
+	.globl sd_spi_rxsect
 
 ;
 ;	Select the SD card
@@ -577,7 +577,7 @@ clkfast:
 ;
 ;	Sector transfers (for speed)
 ;
-sd_spi_transmit_sector:
+sd_spi_txsect:
 	ldx #blk_op
 	ldy ,x
 	ldaa 2,x
@@ -610,7 +610,7 @@ txw2:
 	bne txloop
 	bra map_kernel
 
-sd_spi_receive_sector:
+sd_spi_rxsect:
 	ldx #blk_op
 	ldy ,x
 	ldaa 2,x

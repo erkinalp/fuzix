@@ -123,12 +123,12 @@ void v99xx_set_color(uint_fast8_t fg, uint_fast8_t bg)
     v99xx_write_reg(V99xx_REG_COLOR1, (fg << 4) | (bg & 0xf));
 }
 
-void v99xx_set_blink_color(uint_fast8_t fg, uint_fast8_t bg)
+void v99xx_blink_col(uint_fast8_t fg, uint_fast8_t bg)
 {
     v99xx_write_reg(V99xx_REG_COLOR2, (fg << 4) | (bg & 0xf));
 }
 
-void v99xx_set_blink_period(uint_fast8_t fg, uint_fast8_t bg)
+void v99xx_blink_per(uint_fast8_t fg, uint_fast8_t bg)
 {
     v99xx_write_reg(V99xx_REG_BLINK_PERIOD, (fg << 4) | (bg & 0xf));
 }

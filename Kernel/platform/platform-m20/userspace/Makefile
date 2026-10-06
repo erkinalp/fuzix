@@ -1,4 +1,5 @@
-Z8K_GCC = /Users/paxia/Projects/gcc-z8k/build-z8k-coff/gcc
+# Override Z8K_GCC on the command line or in the environment.
+Z8K_GCC ?= $(HOME)/gcc-z8k/build-z8k-coff/gcc
 XGCC = $(Z8K_GCC)/xgcc -B$(Z8K_GCC)/
 AS = z8k-coff-as
 LD = z8k-coff-ld

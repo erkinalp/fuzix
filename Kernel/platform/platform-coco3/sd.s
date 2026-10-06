@@ -15,8 +15,8 @@
 	.globl _sd_spi_slow
 	.globl _sd_spi_transmit_byte
 	.globl _sd_spi_receive_byte
-	.globl _sd_spi_transmit_sector
-	.globl _sd_spi_receive_sector
+	.globl _sd_spi_txsect
+	.globl _sd_spi_rxsect
 
 	.area	.text
 
@@ -44,7 +44,7 @@ _sd_spi_receive_byte
 
 	.area	.common
 	
-_sd_spi_transmit_sector
+_sd_spi_txsect
 	lda	#0		; loop counter
 	jsr	blkdev_rawflg	; flip mmu mapping to whatever rawflag says
 a@	ldb	,x+
@@ -58,7 +58,7 @@ a@	ldb	,x+
 	jsr	blkdev_unrawflg	; revert mmu to normal
 	rts
 	
-_sd_spi_receive_sector
+_sd_spi_rxsect
 	lda	#512/8
 	jsr	blkdev_rawflg
 a@	ldb	$ff65

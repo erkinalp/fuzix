@@ -366,7 +366,14 @@ int bufstat_report(uint8_t *data)
 	uint16_t v;
 	unsigned n;
 
+#ifdef CONFIG_DYNAMIC_BUFPOOL
+	/* dynamic pools have no compile-time NBUFS; count live entries */
+	n = bufpool_end - bufpool;
+	if (n > BUFSTAT_MAX)
+		n = BUFSTAT_MAX;
+#else
 	n = (NBUFS > BUFSTAT_MAX) ? BUFSTAT_MAX : NBUFS;
+#endif
 
 	v = n;
 	if (uput((uint8_t *)&v, data, sizeof(v)))

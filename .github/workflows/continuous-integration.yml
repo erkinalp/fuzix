@@ -39,6 +39,9 @@ jobs:
           PKGS="esptool"
           (cd ~ && git clone -b v5.0.2 --depth 1 --recursive https://github.com/espressif/esp-idf.git)
           (cd ~/esp-idf && ./install.sh esp32)
+          # IDF 5.0 export.sh's pkg check imports pkg_resources, which is no
+          # longer bundled in the python3.12 venv on ubuntu-24.04 runners
+          find ~/esp-idf/python_env -name pip -exec {} install setuptools \;
           echo "setup_sh=. ~/esp-idf/export.sh" >> $GITHUB_ENV
           echo "target=TARGET=${{ matrix.target }}" >> $GITHUB_ENV
           ;;

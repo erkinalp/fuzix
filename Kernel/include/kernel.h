@@ -275,8 +275,11 @@ typedef struct dinode {
     blkno_t  i_addr[DIRECT_BLOCKS + 3];
 } dinode;               /* 200 bytes in core, 256 on disk */
 
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+/* FCK's cc1 is pre-C11 and cannot parse _Static_assert */
 _Static_assert(sizeof(dinode) == DINODE_SIZE - 56,
 	       "FS32 in-core dinode is the on-disk one minus reserve");
+#endif
 
 /* We use the Linux one for compatibility. There's no real Unix 'standard'
    for such things */
@@ -415,9 +418,11 @@ typedef struct fblk {
     blkno_t       f_free[FILESYS_TABSIZE];
 } fblk;
 
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(struct filesys) == 332,
 	       "FS32 superblock in-core region ends at 332");
 _Static_assert(sizeof(struct fblk) == 204, "FS32 free chain block layout");
+#endif
 
 typedef struct oft {
     off_t     o_ptr;      /* File position pointer */

@@ -189,6 +189,15 @@ nodir:
     return NULLINODE;
 }
 
+/* Most of the time we open the first argument with no
+ * parent info needed. So we have a helper
+ */
+
+inoptr n_open_argn(void)
+{
+    return n_open((uint8_t *)udata.u_argn, NULL);
+}
+
 /* Srch_dir is given an inode pointer of an open directory and a string
  * containing a filename, and searches the directory for the file.  If
  * it exists, it opens it and returns the inode pointer, otherwise NULL.
@@ -585,7 +594,7 @@ inoptr newfile(register inoptr pino, uint8_t *name)
     }
 
     i_lock(pino);	/* Lock in tree order */
-    i_lock(ino);
+    i_lock(nindex);
     /* This does not implement BSD style "sticky" groups */
     nindex->c_node.i_uid = udata.u_euid;
     nindex->c_node.i_gid = udata.u_egid;

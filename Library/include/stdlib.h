@@ -66,11 +66,15 @@ extern const char *_ultoa(unsigned long __value);
 extern char *__ultostr_r(char buf[34], unsigned long value, int __radix);
 extern char *__ltostr_r(char buf[34], long __value, int __radix);
 /* Present only where the library was built with CONFIG_PRINTF_LONGLONG;
-   declared always, because a declaration costs nothing and a program
-   that calls one without it gets a link error rather than an implicit
-   int. */
+   declared whenever the compiler defines __SIZEOF_LONG_LONG__ (gcc,
+   clang, sdcc), because a declaration costs nothing and a program that
+   calls one without it gets a link error rather than an implicit int.
+   Not declared unconditionally: fcc has no 'long long' type at all and
+   rejects the prototype itself. */
+#ifdef __SIZEOF_LONG_LONG__
 extern char *__ulltostr_r(char buf[34], unsigned long long value, int __radix);
 extern char *__lltostr_r(char buf[34], long long __value, int __radix);
+#endif
 
 extern long strtol(const char *__nptr, char **__endptr, int __base);
 extern unsigned long strtoul(const char *__nptr,

@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -83,7 +84,7 @@ struct node *sf_tree(unsigned op, struct node *l, struct node *r)
 	return n;
 }
 
-struct node *make_constant(unsigned long value, unsigned type)
+struct node *make_constant(cval_t value, unsigned type)
 {
 	struct node *n = new_node();
 	n->op = T_CONSTANT;
@@ -183,7 +184,7 @@ unsigned is_constant_zero(struct node *n)
 static void nameref(struct node *n)
 {
 	if (is_constant(n->right) && IS_NAME(n->left->op)) {
-		unsigned value = n->left->value + n->right->value;
+		cval_t value = n->left->value + n->right->value;
 		struct node *l = n->left;
 		memcpy(n , n->right, sizeof(*n));
 		free_node(n->right);
@@ -208,9 +209,36 @@ struct node *make_rval(struct node *n)
 	if (n->flags & LVAL) {
 		if (IS_ARRAY(nt)) {
 			if (PTR(nt) == array_num_dimensions(nt)) {
+				/* The array object itself. Its value is its
+				   own address, so there is nothing to load */
 				n->flags &= ~LVAL;
 				return n;
 			}
+			/*
+			 * More indirections than dimensions means this is a
+			 * pointer *to* an array - "char (*p)[4]" - and not
+			 * an array at all. It is an ordinary object whose
+			 * value has to be loaded like any other.
+			 *
+			 * Without this it kept its lvalue-ness, so the tree
+			 * used the address of p where it wanted the pointer
+			 * held in p, and "p[1][3]" quietly read from the
+			 * wrong place. Fewer indirections than dimensions is
+			 * a sub-array of a multidimensional array, which is
+			 * an array object again and does not load.
+			 */
+			if (PTR(nt) > array_num_dimensions(nt))
+				return sf_tree(T_DEREF, NULL, n);
+			/*
+			 * A sub-array - "two[1]" of char two[5][257].  Like
+			 * the whole-array case above its value is its own
+			 * address, so nothing is loaded and it stops being
+			 * an lvalue.  Left marked LVAL, a cast wrapped round
+			 * it - "(char *)two[1]" - treated it as an object
+			 * and loaded the first four bytes of the row as the
+			 * pointer value.
+			 */
+			n->flags &= ~LVAL;
 #if 0
 			n = sf_tree(T_DEREF, NULL, n);
 			/* Decay to base type of array */
@@ -237,8 +265,21 @@ struct node *make_cast(struct node *n, unsigned t)
 	unsigned nt = type_canonical(n->type);
 	n->type = nt;
 	if (nt != t) {
-		n = tree(T_CAST, NULL, n);
-		n->type = t;
+		struct node *c, *f;
+		/*
+		 * Not tree(), because tree() folds the node before the type
+		 * can be set on it and a cast is the one operation whose
+		 * whole meaning is its result type. Folding saw the source
+		 * type as the destination, so "(float)1.25" collapsed to
+		 * the double 1.25 with the cast thrown away, and the four
+		 * byte store that followed wrote the bottom half of it.
+		 */
+		c = new_node();
+		c->op = T_CAST;
+		c->right = n;
+		c->type = t;
+		f = constify(c);
+		return f ? f : c;
 	}
 	return n;
 }
@@ -428,42 +469,297 @@ struct node *logic_tree(unsigned op, struct node *l, struct node *r)
 
    Needs review and to be a bit more precise
  */
-unsigned long trim_constant(unsigned t, unsigned long value, unsigned warn)
+cval_t trim_constant(unsigned t, cval_t value, unsigned warn)
 {
-	int sign = 1;
-	unsigned long ov = value;
+	cval_t ov = value;
+	cval_t mask, sbit;
 
-	/* Signed is more fun */
-	if (!(t & UNSIGNED)) {
-		if ((signed long)value < 0) {
-			sign = -1;
-			value = -value;
-		}
+	/*
+	 * Match on the base type with the sign bit already masked off, so
+	 * the labels must be the signed forms. The cases here used to be
+	 * UCHAR/USHORT/ULONG (0x08/0x18/0x28), which "t & 0xF0" can never
+	 * produce - so nothing was ever trimmed and a narrowing cast of a
+	 * constant kept its full value: "(int)(signed char)200" folded to
+	 * 200 instead of -56.
+	 */
+	switch (t & 0xF0) {
+	case CCHAR:
+		mask = TARGET_CHAR_MASK;
+		break;
+	case CSHORT:
+		mask = TARGET_SHORT_MASK;
+		break;
+	case CLONG:
+		mask = TARGET_LONG_MASK;
+		break;
+	default:
+		return value;
 	}
-	/* Now trim the unsigned bit pattern */
-	switch(t & 0xF0) {
-	case UCHAR:
-		value &= TARGET_CHAR_MASK;
-		break;
-	case USHORT:
-		value &= TARGET_SHORT_MASK;
-		break;
-	case ULONG:
-		value &= TARGET_LONG_MASK;
-		break;
-	}
-	/* And do the range check */
+	sbit = (mask >> 1) + 1;
+
+	value &= mask;
+	/* Masking alone is not enough for a signed type: the value has to
+	   be sign extended out of the target's width, or a negative result
+	   comes back as a large positive one. */
+	if (!(t & UNSIGNED) && (value & sbit))
+		value |= ~mask;
+
 	if (warn && ov != value)
 		warning("out of range");
-	/* Then put the sign back so we sign extend into the upper bits */
-	return ((signed long)value) * sign;
+	return value;
 }
 
-/* FIXME: will need to use the right types for n->value etc eventually
-   and maybe union a float/double */
+static struct node *replace_constant(struct node *n, unsigned t, cval_t value);
 
-/* For now this only supports integer types */
-static struct node *replace_constant(struct node *n, unsigned t, unsigned long value)
+/*
+ *	Constant folding where floating point is involved.
+ *
+ *	A floating constant is carried as its IEEE754 bit pattern, so it
+ *	has to be unpacked before anything can be done with it and packed
+ *	again afterwards. Only a static initialiser really needs this -
+ *	the code generator has opcodes for the rest - but an initialiser
+ *	has nowhere to put an instruction, so "float f = 1.25;" has to be
+ *	converted here or it stores the bottom half of a double.
+ *
+ *	This uses the host's own floating point rather than assembling the
+ *	bits by hand. FCC avoids that in general so it can bootstrap from
+ *	an integer-only compiler, but this target has double in the
+ *	compiler it is built with and in the one it now generates, and
+ *	using the same arithmetic the interpreter uses is one fewer place
+ *	for the two to disagree.
+ */
+
+#ifdef TARGET_HAS_DOUBLE
+
+static double fp_unpack(cval_t v, unsigned t)
+{
+	if (type_sizeof(t) == 8) {
+		union { cval_t b; double d; } u;
+		u.b = v;
+		return u.d;
+	} else {
+		union { uint32_t b; float f; } u;
+		u.b = (uint32_t)v;
+		return (double)u.f;
+	}
+}
+
+static cval_t fp_pack(double d, unsigned t)
+{
+	if (type_sizeof(t) == 8) {
+		union { cval_t b; double d; } u;
+		u.d = d;
+		return u.b;
+	} else {
+		union { uint32_t b; float f; } u;
+		u.f = (float)d;
+		return (cval_t)u.b;
+	}
+}
+
+/* IEEE truthiness on the bit pattern: everything but +/-0 is true.
+   The same test the Thumb backend generates for a double condition,
+   and for the same reason: an arithmetic compare would go through
+   the DCP, which flushes denormals, and the machine that folds must
+   not disagree with the machine that runs. */
+static unsigned fp_iszero(cval_t v, unsigned t)
+{
+	if (type_sizeof(t) == 8)
+		return (v & 0x7FFFFFFFFFFFFFFFULL) == 0;
+	return ((uint32_t)v & 0x7FFFFFFF) == 0;
+}
+
+static struct node *fold_float_unary(struct node *n, struct node *r,
+				     unsigned op)
+{
+	unsigned rt = r->type;
+	unsigned lt = n->type;
+	double d;
+
+	/* An integer-typed constant can sit under a float-typed node -
+	   the tree above a folded subtree keeps the type it was built
+	   with.  Its value is then a number, not a bit pattern, and
+	   nothing below may unpack it.  A cast still belongs to the
+	   code below, which converts from the operand's real type;
+	   the boolean ops get the integer treatment here and the rest
+	   is left alone. */
+	if (!IS_FLOATING(rt) && op != T_CAST) {
+		if (op == T_BOOL) {
+			if (n->flags & NEEDCC)
+				return NULL;
+			return replace_constant(n, lt, r->value != 0);
+		}
+		if (op == T_BANG)
+			return replace_constant(n, lt, r->value == 0);
+		return NULL;
+	}
+
+	switch (op) {
+	case T_NEGATE:
+		/* Just the sign bit, so this one needs no arithmetic at
+		   all - but it has to be the right sign bit */
+		r->value ^= ((cval_t)1) << (8 * type_sizeof(rt) - 1);
+		return r;
+	case T_BANG:
+		return replace_constant(n, lt, fp_iszero(r->value, rt));
+	case T_BOOL:
+		if (n->flags & NEEDCC)
+			return NULL;
+		return replace_constant(n, lt, !fp_iszero(r->value, rt));
+	case T_CAST:
+		if (IS_FLOATING(rt) && IS_FLOATING(lt)) {
+			if (type_sizeof(rt) == type_sizeof(lt))
+				return replace_constant(n, lt, r->value);
+			return replace_constant(n, lt,
+				fp_pack(fp_unpack(r->value, rt), lt));
+		}
+		if (IS_FLOATING(lt)) {		/* integer -> floating */
+			if (rt & UNSIGNED)
+				d = (double)(cval_t)r->value;
+			else
+				d = (double)(long long)r->value;
+			return replace_constant(n, lt, fp_pack(d, lt));
+		}
+		if (IS_FLOATING(rt) && IS_INTARITH(lt)) {
+			d = fp_unpack(r->value, rt);
+			if (lt & UNSIGNED)
+				return replace_constant(n, lt, (cval_t)d);
+			return replace_constant(n, lt,
+					(cval_t)(long long)d);
+		}
+		/* To a pointer, which is not something to fold */
+		return NULL;
+	default:
+		return NULL;
+	}
+}
+
+/*
+ *	A value binary folding cannot promise: NaN and infinity, whose
+ *	payloads and canonical forms differ between the host that folds
+ *	and the target that would have computed, and denormals, which the
+ *	RP2350's DCP flushes to zero where the host's arithmetic does not.
+ *	Everything normal (and zero) is exactly rounded under IEEE754, so
+ *	for those host-folded and target-computed bits are identical.
+ */
+static unsigned fp_unsafe(cval_t v, unsigned t)
+{
+	if (type_sizeof(t) == 8) {
+		unsigned exp = (v >> 52) & 0x7FF;
+		return exp == 0x7FF ||
+		       (exp == 0 && (v & 0xFFFFFFFFFFFFFULL) != 0);
+	} else {
+		uint32_t b = (uint32_t)v;
+		unsigned exp = (b >> 23) & 0xFF;
+		return exp == 0xFF || (exp == 0 && (b & 0x7FFFFF) != 0);
+	}
+}
+
+/*
+ *	Binary folding where the operands are floating point.  The same
+ *	rule as the unary case: the values are IEEE754 bit patterns, and
+ *	nothing in the integer switch may touch them.  FLOAT slipped
+ *	through IS_INTORPTR() into that switch for years, so 1.5f + 2.5f
+ *	folded to the sum of two bit patterns - a NaN - and a comparison
+ *	of two negative float constants came out backwards.
+ *
+ *	Division by a floating zero is defined behaviour (an infinity),
+ *	not the integer trap the switch below preserves - but it is left
+ *	to runtime anyway, like every non-finite or denormal operand or
+ *	result, so folding never changes what a program computes.
+ */
+static struct node *fold_float_binary(struct node *n, struct node *l,
+				      struct node *r, unsigned op)
+{
+	double a, b, d;
+	cval_t bits;
+
+	if (l->op != T_CONSTANT || r->op != T_CONSTANT)
+		return NULL;
+	if (!IS_FLOATING(l->type) || !IS_FLOATING(r->type))
+		return NULL;
+	if ((l->flags | r->flags) & LVAL)
+		return NULL;
+	if (fp_unsafe(l->value, l->type) || fp_unsafe(r->value, r->type))
+		return NULL;
+	a = fp_unpack(l->value, l->type);
+	b = fp_unpack(r->value, r->type);
+	switch (op) {
+	case T_PLUS:
+		d = a + b;
+		break;
+	case T_MINUS:
+		d = a - b;
+		break;
+	case T_STAR:
+		d = a * b;
+		break;
+	case T_SLASH:
+		if (b == 0.0)
+			return NULL;
+		d = a / b;
+		break;
+	/* A comparison node carries the PROMOTED OPERAND type in this
+	   compiler - expression building restamps it after the fold -
+	   so the folded result must be a floating 1.0 or 0.0 in that
+	   type.  A bare integer 1 under a floating type reads back as
+	   a denormal, which the host's arithmetic kept and the DCP
+	   flushed to zero: the same program folded differently on the
+	   two machines, and only the board could show it. */
+	case T_LT:
+		return replace_constant(n, l->type,
+					fp_pack(a < b ? 1.0 : 0.0, l->type));
+	case T_LTEQ:
+		return replace_constant(n, l->type,
+					fp_pack(a <= b ? 1.0 : 0.0, l->type));
+	case T_GT:
+		return replace_constant(n, l->type,
+					fp_pack(a > b ? 1.0 : 0.0, l->type));
+	case T_GTEQ:
+		return replace_constant(n, l->type,
+					fp_pack(a >= b ? 1.0 : 0.0, l->type));
+	default:
+		return NULL;
+	}
+	/* n->type, not the operand type: the promoted type of the
+	   operation, which is also the precision the runtime would have
+	   computed at */
+	bits = fp_pack(d, n->type);
+	if (fp_unsafe(bits, n->type))
+		return NULL;
+	return replace_constant(n, n->type, bits);
+}
+
+#else
+
+/*
+ *	Without double in the compiler, only the sign flip is safe to do
+ *	on the bits, and that is all the front end needs: it tokenises a
+ *	negative constant as a negate of a positive one.
+ */
+static struct node *fold_float_unary(struct node *n, struct node *r,
+				     unsigned op)
+{
+	if (!IS_FLOATING(r->type))
+		return NULL;
+	if (op == T_NEGATE) {
+		r->value ^= ((cval_t)1) << (8 * type_sizeof(r->type) - 1);
+		return r;
+	}
+	return NULL;
+}
+
+/* No double in the compiler: fold nothing, but keep floating operands
+   out of the integer switch all the same */
+static struct node *fold_float_binary(struct node *n, struct node *l,
+				      struct node *r, unsigned op)
+{
+	return NULL;
+}
+
+#endif
+
+static struct node *replace_constant(struct node *n, unsigned t, cval_t value)
 {
 	if (n->left)
 		free_node(n->left);
@@ -520,8 +816,19 @@ struct node *constify(struct node *n)
 	   so all we have to worry about is truncating constants and just
 	   relabelling the type on a name or label */
 	if (op == T_CAST) {
-		if (r->op == T_CONSTANT)
+		if (r->op == T_CONSTANT) {
+			/*
+			 * Relabelling the type is the whole conversion for
+			 * an integer, whose value is a number in both. It
+			 * is not for floating point, where the value is a
+			 * bit pattern that means something different under
+			 * the new type: (float)1.25 relabelled is the
+			 * bottom half of the double, which is zero.
+			 */
+			if (IS_FLOATING(n->type) || IS_FLOATING(r->type))
+				return fold_float_unary(n, r, op);
 			return replace_constant(n, n->type, r->value);
+		}
 		if (r->op == T_NAME || r->op == T_LABEL) {
 			r->type = n->type;
 			free_node(n);
@@ -617,7 +924,7 @@ struct node *constify(struct node *n)
 	}
 	if (l) {
 		unsigned lt = l->type;
-		unsigned long value = l->value;
+		cval_t value = l->value;
 
 		/* Lval names are constant but a maths operation on two name lval is not */
 		if (is_name(l->op) || is_name(r->op)) {
@@ -652,6 +959,12 @@ struct node *constify(struct node *n)
 				return NULL;
 			n->left = l;
 		}
+		/* Floating point folds by value, and must be picked off
+		   BEFORE the integer test below: FLOAT (0x80) passes
+		   IS_INTORPTR(), and the switch would add IEEE bit
+		   patterns as if they were numbers */
+		if (IS_FLOATING(lt) || IS_FLOATING(r->type))
+			return fold_float_binary(n, l, r, op);
 		/* Only do constant work with simple types */
 		if (!IS_INTORPTR(lt))
 			return NULL;
@@ -677,7 +990,12 @@ struct node *constify(struct node *n)
 			} else if (l->type & UNSIGNED)
 				value /= r->value;
 			else
-				value = (signed long)value / r->value;
+				/* BOTH sides, and at cval_t's width: casting
+				   only the left one converted it straight
+				   back to unsigned, so -7 / 2 folded to
+				   9223372036854775804, and "signed long" is
+				   32 bits on the board (see cval_t) */
+				value = (scval_t)value / (scval_t)r->value;
 			break;
 		case T_PERCENT:
 			if (r->value == 0) {
@@ -686,7 +1004,7 @@ struct node *constify(struct node *n)
 			} else if (l->type & UNSIGNED)
 				value %= r->value;
 			else
-				value = (signed long)value % r->value;
+				value = (scval_t)value % (scval_t)r->value;
 			break;
 		case T_ANDAND:
 			value = value && r->value;
@@ -710,31 +1028,31 @@ struct node *constify(struct node *n)
 			if (l->type & UNSIGNED)
 				value >>= r->value;
 			else
-				value = ((signed long)value) >> r->value;
+				value = ((scval_t)value) >> r->value;
 			break;
 		case T_LT:
 			if (l->type & UNSIGNED)
 				value = value < r->value;
 			else
-				value = (signed long)value < (signed long )r->value;
+				value = (scval_t)value < (scval_t)r->value;
 			break;
 		case T_LTEQ:
 			if (l->type & UNSIGNED)
 				value = value <= r->value;
 			else
-				value = (signed long)value <= (signed long )r->value;
+				value = (scval_t)value <= (scval_t)r->value;
 			break;
 		case T_GT:
 			if (l->type & UNSIGNED)
-				value = value < r->value;
+				value = value > r->value;
 			else
-				value = (signed long)value < (signed long )r->value;
+				value = (scval_t)value > (scval_t)r->value;
 			break;
 		case T_GTEQ:
 			if (l->type & UNSIGNED)
-				value = value < r->value;
+				value = value >= r->value;
 			else
-				value = (signed long)value < (signed long )r->value;
+				value = (scval_t)value >= (scval_t)r->value;
 			break;
 		default:
 			return NULL;
@@ -744,19 +1062,27 @@ struct node *constify(struct node *n)
 	if (r) {
 		/* Uni-ops */
 		unsigned rt = r->type;
-		unsigned long value = r->value;
+		cval_t value = r->value;
 
 		if (r->flags & LVAL)
 			return NULL;
 
-		/* We special case one float manipulation as we need it here
-		   until we change how the front end tokenises -const */
-
-		if (r->op == T_CONSTANT && (rt == FLOAT || rt == DOUBLE)) {
-			/* FIXME: this assumes IEE754 math at 32bit */
-			r->value ^= 0x80000000UL;
-			return r;
-		}
+		/*
+		 * A unary operation on a constant with floating point on
+		 * either side. The value here is an IEEE754 bit pattern,
+		 * not a number, so none of the integer folding below applies
+		 * to it.
+		 *
+		 * This used to be one line - flip bit 31 and return - which
+		 * was right only for negating a float. It ran for every
+		 * unary operator and both widths, so negating a double
+		 * flipped a bit in the middle of its mantissa, and casting
+		 * a floating constant to anything returned it unconverted
+		 * with a mantissa bit flipped for good measure.
+		 */
+		if (r->op == T_CONSTANT && (IS_FLOATING(rt) ||
+					    IS_FLOATING(n->type)))
+			return fold_float_unary(n, r, op);
 
 		if (!IS_INTORPTR(rt))
 			return NULL;

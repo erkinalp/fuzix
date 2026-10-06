@@ -1,0 +1,993 @@
+/*
+ * Pico Computer 3 sound for Fuzix: the BBC Micro sound system, PCM
+ * streaming and the MMBasic synthesiser - the portable half.
+ *
+ * The classic model, kernel-side: channels 1-3 are square-wave tones,
+ * channel 0 is an LFSR noise source; each channel has a note queue and
+ * the SOUND channel-word flush/sync bits work; ENVELOPE 1-16 provides
+ * the authentic three-section pitch envelope plus ADSR amplitude,
+ * stepped at 100 Hz.  Pitch is the BBC scale: 4 units per semitone,
+ * 89 = A4 = 440 Hz.
+ *
+ * Everything here works on blocks of SND_NBUF stereo 16-bit frames and
+ * knows nothing about where they go.  On the PC3 that is sound_hw.c:
+ * PIO I2S to the PCM5102, two chained DMA channels ping-ponging the
+ * blocks, and a completion IRQ that calls sound_fill_block() for the
+ * half just freed.  On a PC the device server calls the same function
+ * from a sound card's callback.  sound_priv.h is the contract.
+ *
+ * Three sources fill a block, and the DMA does not care which: the
+ * BBC synth, a PCM ring a process's decoded samples pass through (what
+ * plays MP3s and WAVs - see PC3-MP3-PLAN.md), and the MMBasic PLAY
+ * SOUND synthesiser.  That is the reason the output stage was worth
+ * building this way rather than MMBasic's: nothing in the chain changes
+ * with the source.
+ */
+
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+#include "sound.h"
+#include "sound_priv.h"
+
+#define SND_QLEN  8             /* notes per channel queue */
+
+/* BBC pitch: phase increments for pitches 240-287 at 22050 Hz;
+ * inc(p) = table[p % 48] >> (5 - p / 48). */
+static uint32_t pinc48[48] = {
+    0x2D36D1A9, 0x2DDF2DB9, 0x2E89FCB1, 0x2F3747AE, 0x2FE717F2, 0x309976DF,
+    0x314E6DFB, 0x320606EE, 0x32C04B87, 0x337D45B6, 0x343CFF93, 0x34FF8359,
+    0x35C4DB6A, 0x368D1251, 0x375832BD, 0x38264786, 0x38F75BAC, 0x39CB7A59,
+    0x3AA2AEE0, 0x3B7D04BD, 0x3C5A879A, 0x3D3B4348, 0x3E1F43C8, 0x3F069545,
+    0x3FF14418, 0x40DF5CC9, 0x41D0EC0F, 0x42C5FECD, 0x43BEA219, 0x44BAE33A,
+    0x45BACFA7, 0x46BE7509, 0x47C5E13D, 0x48D12253, 0x49E0468E, 0x4AF35C6A,
+    0x4C0A7295, 0x4D2597F5, 0x4E44DBA8, 0x4F684D05, 0x508FFB98, 0x51BBF72D,
+    0x52EC4FC6, 0x542115A3, 0x555A5940, 0x56982B55, 0x57DA9CDB, 0x5921BF08,
+};
+
+struct note {
+    uint8_t amp;                /* 0-15 volume, or 0x80 | envelope# */
+    uint8_t pitch;
+    uint8_t dur;                /* 20ths of a second; 255 = forever */
+    uint8_t sync;               /* 0-3 */
+};
+
+struct schan {
+    /* queue */
+    struct note q[SND_QLEN];
+    volatile uint8_t qr, qw;
+    /* playing note */
+    uint8_t active;
+    uint8_t env;                /* envelope number or 0 */
+    uint8_t pitch;              /* base pitch of the note */
+    int16_t dur_cs;             /* remaining, -1 = forever */
+    int16_t level;              /* current amplitude 0..126 */
+    uint32_t phase, inc;
+    /* envelope runtime */
+    uint8_t esec;               /* pitch section 0-2, 3 = done */
+    uint8_t ecount;             /* steps left in section */
+    int16_t poff;               /* accumulated pitch offset */
+    uint8_t ephase;             /* 0 attack 1 decay 2 sustain 3 release */
+    uint8_t tctr;               /* envelope step countdown (cs) */
+};
+
+static struct schan ch[4];
+static uint8_t envs[17][13];    /* T,PI1-3,PN1-3,AA,AD,AS,AR,ALA,ALD */
+static uint32_t noise_lfsr = 0x1FFFF;
+static uint8_t noise_ctr;
+static uint16_t cs_acc;         /* 100 Hz tick accumulator */
+
+/* --- note/envelope engine (IRQ context) ---------------------------------- */
+
+static void set_inc(struct schan *c)
+{
+    int p = c->pitch + (c->env ? c->poff : 0);
+    if (p < 0) p = 0;
+    if (p > 255) p = 255;
+    c->inc = pinc48[p % 48] >> (5 - p / 48);
+}
+
+static void start_note(struct schan *c, struct note *n)
+{
+    c->pitch = n->pitch;
+    c->dur_cs = (n->dur == 255) ? -1 : (n->dur ? n->dur * 5 : 1);
+    c->poff = 0;
+    c->esec = 0;
+    c->ecount = 0;
+    c->ephase = 0;
+    c->tctr = 0;
+    if (n->amp & 0x80) {
+        c->env = n->amp & 0x7F;
+        if (c->env > 16) c->env = 16;
+        c->level = 0;
+        c->ecount = envs[c->env][4];    /* PN1 */
+    } else {
+        c->env = 0;
+        c->level = (n->amp > 15 ? 15 : n->amp) * 8;   /* 0..120 */
+    }
+    c->active = 1;
+    set_inc(c);
+}
+
+static void env_step(struct schan *c)
+{
+    uint8_t *e = envs[c->env];
+    /* pitch envelope: sections of PN1-3 steps of PI1-3 each */
+    if (c->esec < 3) {
+        while (c->esec < 3 && c->ecount == 0) {
+            c->esec++;
+            if (c->esec < 3)
+                c->ecount = e[4 + c->esec];
+            else if (!(e[0] & 0x80)) {
+                /* auto-repeat the pitch envelope */
+                c->esec = 0;
+                c->ecount = e[4];
+                c->poff = 0;
+            }
+        }
+        if (c->esec < 3 && c->ecount) {
+            c->poff += (int8_t)e[1 + c->esec];
+            c->ecount--;
+            set_inc(c);
+        }
+    }
+    /* amplitude ADSR: AA until ALA, AD until ALD, AS, then release */
+    {
+        int16_t lvl = c->level;
+        int8_t ala = e[11] & 0x7F, ald = e[12] & 0x7F;
+        switch (c->ephase) {
+        case 0:
+            lvl += (int8_t)e[7];
+            if (lvl >= ala) { lvl = ala; c->ephase = 1; }
+            break;
+        case 1:
+            lvl += (int8_t)e[8];
+            if (lvl <= ald) { lvl = ald; c->ephase = 2; }
+            break;
+        case 2:
+            lvl += (int8_t)e[9];        /* AS: 0 or negative */
+            break;
+        case 3:
+            lvl += (int8_t)e[10];       /* AR: negative */
+            break;
+        }
+        if (lvl < 0) lvl = 0;
+        if (lvl > 126) lvl = 126;
+        c->level = lvl;
+        if (c->ephase == 3 && lvl == 0)
+            c->active = 0;
+    }
+}
+
+static void try_dequeue(void)
+{
+    int i, j, n;
+    for (i = 0; i < 4; i++) {
+        struct schan *c = &ch[i];
+        if (c->active || c->qr == c->qw)
+            continue;
+        struct note *hd = &c->q[c->qr % SND_QLEN];
+        if (hd->sync) {
+            /* count idle channels whose head carries the same sync */
+            n = 0;
+            for (j = 0; j < 4; j++) {
+                struct schan *o = &ch[j];
+                if (!o->active && o->qr != o->qw &&
+                    o->q[o->qr % SND_QLEN].sync == hd->sync)
+                    n++;
+            }
+            if (n < hd->sync + 1)
+                continue;
+            /* release the whole group */
+            for (j = 0; j < 4; j++) {
+                struct schan *o = &ch[j];
+                if (!o->active && o->qr != o->qw &&
+                    o->q[o->qr % SND_QLEN].sync == hd->sync) {
+                    start_note(o, &o->q[o->qr % SND_QLEN]);
+                    o->qr++;
+                }
+            }
+        } else {
+            start_note(c, hd);
+            c->qr++;
+        }
+    }
+}
+
+static void tick_100hz(void)
+{
+    int i;
+    for (i = 0; i < 4; i++) {
+        struct schan *c = &ch[i];
+        if (!c->active)
+            continue;
+        if (c->env) {
+            uint8_t t = envs[c->env][0] & 0x7F;
+            if (t == 0) t = 1;
+            if (++c->tctr >= t) {
+                c->tctr = 0;
+                env_step(c);
+            }
+        }
+        if (c->dur_cs > 0 && --c->dur_cs == 0) {
+            if (c->env && c->ephase < 3)
+                c->ephase = 3;          /* enter release */
+            else
+                c->active = 0;
+        }
+    }
+    try_dequeue();
+}
+
+/* --- mixer ---------------------------------------------------------------- */
+
+static void SND_FAST(snd_fill)(int16_t *buf)
+{
+    int s, i;
+    for (s = 0; s < SND_NBUF; s++) {
+        int32_t mix = 0;
+
+        cs_acc += 100;
+        if (cs_acc >= SND_RATE) {
+            cs_acc -= SND_RATE;
+            tick_100hz();
+        }
+
+        for (i = 1; i < 4; i++) {
+            struct schan *c = &ch[i];
+            if (c->active && c->level) {
+                uint32_t ph, nc, u, t;
+                int32_t v;
+
+                c->phase += c->inc;
+                ph = c->phase;
+                nc = c->inc;
+                v = (ph & 0x80000000u) ? c->level : -c->level;
+
+                /* polyBLEP.  A square that can only flip on sample
+                 * boundaries carries alias images that beat against
+                 * the true harmonics - a pitch-dependent shimmer on
+                 * sustained notes, worst at the top of the range.
+                 * The band-limited step differs from the naive one
+                 * only within a sample of each edge, and there the
+                 * residual is (1-tau)^2 of the step toward the
+                 * transition midpoint - which for a square centred
+                 * on zero is just a scale-down of the sample's own
+                 * value.  tau in Q8; the divide is a single UDIV on
+                 * this core, and only edge-adjacent samples (a few
+                 * hundred per second per voice) reach it.  This
+                 * runs in the DMA IRQ: everything stays inline and
+                 * integer.  Edges: wrap = fall, half = rise. */
+                if (ph < nc)
+                    u = ph;                     /* just after fall */
+                else if (ph > (uint32_t)-nc)
+                    u = (uint32_t)-ph;          /* just before fall */
+                else if ((ph - 0x80000000u) < nc)
+                    u = ph - 0x80000000u;       /* just after rise */
+                else if ((0x80000000u - ph) < nc)
+                    u = 0x80000000u - ph;       /* just before rise */
+                else
+                    u = ~0u;
+                if (u != ~0u && (t = u / (nc >> 8)) < 256) {
+                    t = 256 - t;
+                    v -= (int32_t)(v * (int32_t)(t * t)) >> 16;
+                }
+                mix += v;
+            }
+        }
+        /* channel 0: noise, LFSR clocked from its pitch */
+        if (ch[0].active && ch[0].level) {
+            if (++noise_ctr >= (2 << (ch[0].pitch & 3))) {
+                noise_ctr = 0;
+                /* 15-bit LFSR, taps 0 and 1: white-ish */
+                uint32_t b = ((noise_lfsr) ^ (noise_lfsr >> 1)) & 1;
+                noise_lfsr = (noise_lfsr >> 1) | (b << 14);
+            }
+            mix += (noise_lfsr & 1) ? ch[0].level : -ch[0].level;
+        }
+
+        mix *= 64;                       /* 4 x 126 x 64 = 32256 max */
+        if (mix > 32767) mix = 32767;
+        if (mix < -32768) mix = -32768;
+        buf[s * 2] = mix;
+        buf[s * 2 + 1] = mix;
+    }
+}
+
+/* --- PCM streaming -------------------------------------------------------
+ *
+ * The second mode for the buffer filler: instead of synthesising the BBC
+ * channels, copy PCM a process has already decoded.  This is what
+ * MicroPython's machine_i2s.c does - the DMA chain is untouched and the
+ * completion IRQ's whole job is feed_dma(), one block out of a ring, or
+ * silence when the ring is dry.
+ *
+ * The ring is in PSRAM (the kernel's heap IS the PSRAM window, see
+ * arena.c) because there is nowhere else: kernel SRAM has single-digit
+ * kilobytes spare, and the ring wants a quarter of a megabyte.  At
+ * 44100 stereo the stream is 176.4 KB/s, so 256K is about 1.5 seconds -
+ * chosen against the ~25 ms a process can be swapped out for, plus SD
+ * latency, rather than against the ~93 ms MMBasic and MicroPython use.
+ * Neither of those has to survive being swapped out; a Fuzix process
+ * does.
+ *
+ * Allocated on the first open and never freed.  A machine that never
+ * plays anything pays nothing.
+ *
+ * The RING is shared but the STREAM is not: it belongs to one pid at a
+ * time.  The first version left it open to anyone, and two players
+ * really did interleave their samples into it - it sounded like it, and
+ * whichever finished first closed the stream under the other, which
+ * then got EINVAL on every write.  So open refuses a second process
+ * (EBUSY) and only the owner may write or close.  A player that dies
+ * without closing is not a deadlock: pcm_reap notices the pid is gone
+ * and hands the state machine back.
+ *
+ * head and tail are free-running byte counters; used = head - tail in
+ * unsigned arithmetic, which is exact across wrap and needs no spare
+ * slot to tell full from empty.  Only the IRQ moves tail and only the
+ * ioctl moves head, so neither needs a lock.
+ */
+
+#define PCM_RING_BYTES (256u * 1024u)
+
+static uint8_t *pcm_ring;
+static volatile uint32_t pcm_head, pcm_tail;
+static volatile uint32_t pcm_underruns;
+static volatile uint8_t pcm_active, pcm_started;
+static uint8_t pcm_channels = 2;
+static uint16_t pcm_owner;              /* the pid holding the stream */
+
+/* n bytes out of the ring, in at most two spans. */
+static void SND_FAST(pcm_take)(void *dst, uint32_t n)
+{
+    uint32_t off = pcm_tail % PCM_RING_BYTES;
+    uint32_t first = PCM_RING_BYTES - off;
+
+    if (first > n)
+        first = n;
+    memcpy(dst, pcm_ring + off, first);
+    if (n > first)
+        memcpy((uint8_t *)dst + first, pcm_ring, n - first);
+    pcm_tail += n;
+}
+
+static void SND_FAST(pcm_fill)(int16_t *buf)
+{
+    uint32_t used = pcm_head - pcm_tail;
+    uint32_t framesz = (pcm_channels == 2) ? 4 : 2;
+    uint32_t need = SND_NBUF * framesz;
+    uint32_t got = (used < need) ? used : need;
+    int i, frames;
+
+    /*
+     * A SHORT buffer must still be consumed, and the first version of
+     * this did not do that: it filled with silence and left the data
+     * where it was, so the last few milliseconds of every stream - less
+     * than one 1K half-buffer - could never drain.  A player waiting
+     * for the queue to empty before closing then waited forever, which
+     * is exactly what pcmtest did.
+     *
+     * So take whatever is there, pad the rest with silence, and only
+     * call it an underrun when there was nothing at all to play: that
+     * is when the hardware actually emitted a gap.  A run that is
+     * merely short in its final block is the normal end of a stream.
+     */
+    got -= got % framesz;               /* never split a frame */
+    if (got < need)
+        memset(buf, 0, SND_NBUF * 2 * sizeof(int16_t));
+    if (got == 0) {
+        /* Not an underrun before the stream has started.  The DMA is
+         * consuming from the moment OPEN returns, while the player is
+         * still generating or decoding its first block, so an empty
+         * ring at that point means "not begun" and not "starved" -
+         * counting it reported six every run and made the number
+         * useless for the thing it exists to measure. */
+        if (pcm_started)
+            pcm_underruns++;
+        return;
+    }
+    pcm_started = 1;
+    frames = (int)(got / framesz);
+
+    if (pcm_channels == 2) {
+        pcm_take(buf, got);
+        return;
+    }
+
+    /* Mono: duplicate into both channels here rather than in the
+     * player, so a mono file costs the decoder nothing and halves the
+     * ring traffic (machine_i2s.c does the same).  Expanded in place,
+     * so it needs no second buffer - an IRQ has no stack to spare for
+     * one.
+     *
+     * The samples MUST land in the LOWER half and be expanded
+     * backwards.  Reading buf[i] and writing buf[2i] and buf[2i+1] is
+     * safe because every write from a later iteration is at 2i+2 or
+     * above, which is past i for any i.  The first version of this put
+     * them in the TOP half and read buf[SND_NBUF + i], where that
+     * inequality does not hold: i = 255 writes buf[510] and buf[511],
+     * which is precisely what i = 254 then reads.  Every sample but
+     * the first was garbage, and it sounded like it. */
+    pcm_take(buf, got);
+    for (i = frames - 1; i >= 0; i--) {
+        int16_t v = buf[i];
+        buf[i * 2] = v;
+        buf[i * 2 + 1] = v;
+    }
+}
+
+/* Hand the state machine back to the synth. */
+static void pcm_release(void)
+{
+    pcm_active = 0;
+    pcm_owner = 0;
+    pcm_head = pcm_tail = 0;
+    snd_hw_rate(SND_RATE);
+}
+
+/*
+ * --- MMBasic PLAY SOUND synthesiser (IRQ context) ---------------------
+ *
+ * playsnd's 4-voice x 2-side core (utils/playsnd.c, itself MMBasic's
+ * audio.c), moved INTO the DMA IRQ.  The daemon could not do the job:
+ * its 186 ms PCM cushion swallowed every 20 ms pitch slide, and a
+ * pool-sized program plus the daemon could not be co-resident at all -
+ * every exchange swapped ~300K through the QMI, which is the noise,
+ * the starved scanout and the "lockup" of 2026-08-15.  Here a
+ * parameter poke is audible within one 64-frame buffer, which is
+ * MMBasic's own arrangement.
+ *
+ * Integer only, 20.12 phase in 4096-entry-table units at 44100 Hz -
+ * verbatim from playsnd, whose arithmetic was already built for a
+ * machine that must not touch the FPU.  rand() is the one substitution
+ * (the kernel has none): an xorshift32, seeded fixed - noise is noise.
+ */
+
+#include "utils/sound_tables.h"
+
+static void pcm_reap(void);             /* defined below with the ring */
+
+/* mmb_playctl.h's values, pinned in pico_ioctl.h's comment */
+#define MMS_OP_SOUND  1
+#define MMS_OP_TONE   2
+#define MMS_OP_VOLUME 4
+#define MMS_SND_OFF    0
+#define MMS_SND_SINE   1
+#define MMS_SND_SQUARE 2
+#define MMS_SND_TRI    3
+#define MMS_SND_SAW    4
+#define MMS_SND_PNOISE 5
+#define MMS_SND_WNOISE 6
+
+struct mmvoice {
+    uint8_t type;
+    long phase;                 /* table units << 12 */
+    long phinc;
+    int vol;                    /* index into mapping[], 0..41 */
+    int vol_target;
+    long dwell;                 /* white noise: samples on this level */
+    int noiseval;
+};
+
+static struct mmvoice mmv[4][2];
+/* 8K the kernel's SRAM has not got: allocated from the heap - which IS
+ * the PSRAM window - on the first PNOISE, exactly as the PCM ring is.
+ * The IRQ reads it there the same way it reads the ring. */
+static uint16_t *mms_noisetable;
+static long mms_tone_ph[2], mms_tone_inc[2];
+static long long mms_tone_left = -2;    /* -2 off, -1 forever */
+static int mms_gain = 205;              /* 8.8: 80% of full */
+static volatile uint8_t mms_active;
+static uint16_t mms_owner;
+static uint32_t mms_quiet_frames;
+#define MMS_IDLE_FRAMES (5u * MMS_RATE) /* playsnd's 5 s idle exit */
+
+static uint32_t mms_rand_state = 0x2545F491;
+static int mms_rand(void)
+{
+    uint32_t x = mms_rand_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    mms_rand_state = x;
+    return (int)(x & 0x7FFFFFFF);
+}
+
+static void mms_make_noise(void)
+{
+    int i;
+
+    if (mms_noisetable)
+        return;
+    mms_noisetable = malloc(4096 * sizeof(uint16_t));
+    if (!mms_noisetable)
+        return;                 /* PNOISE stays silent; nothing dies */
+    for (i = 0; i < 4096; i++)
+        mms_noisetable[i] = (uint16_t)(mms_rand() % 3800 + 100);
+}
+
+/* polyBLEP residual, q*q in 0..65536 - playsnd's blep_q verbatim */
+static long SND_FAST(mms_blep_q)(long d, long inc)
+{
+    long t;
+
+    if (inc < 256)
+        return 0;
+    t = d / (inc >> 8);
+    if (t >= 256)
+        return 0;
+    t = 256 - t;
+    return t * t;
+}
+
+static int SND_FAST(mms_sample)(struct mmvoice *v)
+{
+    int j, ph = (int)(v->phase >> 12);
+
+    switch (v->type) {
+    case MMS_SND_SINE:
+        j = SineTable[ph];
+        break;
+    case MMS_SND_TRI:
+        j = triangletable[ph];
+        break;
+    case MMS_SND_SQUARE: {
+        long q = 0, half = 2048L << 12, full = 4096L << 12;
+
+        j = ph > 2047 ? 3900 : 100;
+        if (v->phase < v->phinc)
+            q = mms_blep_q(v->phase, v->phinc);
+        else if (full - v->phase < v->phinc)
+            q = mms_blep_q(full - v->phase, v->phinc);
+        else if (v->phase >= half && v->phase - half < v->phinc)
+            q = mms_blep_q(v->phase - half, v->phinc);
+        else if (v->phase < half && half - v->phase < v->phinc)
+            q = mms_blep_q(half - v->phase, v->phinc);
+        if (q)
+            j = 2000 + (int)((long)(j - 2000) * (65536 - q) / 65536);
+        break;
+    }
+    case MMS_SND_SAW: {
+        long full = 4096L << 12;
+
+        j = ph * 3800 / 4096 + 100;
+        if (v->phase < v->phinc)
+            j += (int)(1900L * mms_blep_q(v->phase, v->phinc) / 65536);
+        else if (full - v->phase < v->phinc)
+            j -= (int)(1900L * mms_blep_q(full - v->phase, v->phinc)
+                       / 65536);
+        break;
+    }
+    case MMS_SND_PNOISE:
+        if (!mms_noisetable)
+            return 0;           /* the malloc failed at claim time */
+        j = mms_noisetable[ph];
+        break;
+    case MMS_SND_WNOISE:
+        if (v->dwell <= 0) {
+            v->dwell = v->phinc >> 12;
+            if (v->dwell <= 0)
+                v->dwell = 1;
+            v->noiseval = mms_rand() % 3800 + 100;
+        }
+        v->dwell--;
+        return (v->noiseval - 2000) * mapping[v->vol] / 2000;
+    default:
+        return 0;
+    }
+    v->phase += v->phinc;
+    if (v->phase >= (4096L << 12))
+        v->phase -= (4096L << 12);
+    return (j - 2000) * mapping[v->vol] / 2000;
+}
+
+static int mms_quiet(void)
+{
+    int i, s;
+
+    if (mms_tone_left != -2)
+        return 0;
+    for (i = 0; i < 4; i++)
+        for (s = 0; s < 2; s++)
+            if (mmv[i][s].type != MMS_SND_OFF || mmv[i][s].vol != 0)
+                return 0;
+    return 1;
+}
+
+/* IRQ-safe: the idle path runs this from the DMA interrupt, so it must
+ * not call into the SDK's PIO code (flash-resident, and the flash may
+ * be mid-write).  The SM is left at 44100: the BBC synth that takes
+ * over renders silence while idle, and the next claimant - PCM open,
+ * an MM command, or PLAY STOP below - sets the rate it wants.  The one
+ * visible edge is a BBC SOUND note played after an MM session idles
+ * out, which sounds an octave high until then. */
+static void mms_release(void)
+{
+    int i, s;
+
+    for (i = 0; i < 4; i++)
+        for (s = 0; s < 2; s++) {
+            mmv[i][s].type = MMS_SND_OFF;
+            mmv[i][s].vol = 0;
+            mmv[i][s].vol_target = 0;
+        }
+    mms_tone_left = -2;
+    mms_active = 0;
+    mms_owner = 0;
+}
+
+/* playsnd's render(), one 64-frame buffer, straight into the DMA half */
+static void SND_FAST(mmsnd_fill)(int16_t *buf)
+{
+    static int ramp;
+    int n, i, s;
+
+    for (n = 0; n < SND_NBUF; n++) {
+        int lv = 0, rv = 0;
+
+        if (++ramp >= 44) {             /* SOUND_RAMP_INTERVAL */
+            ramp = 0;
+            for (i = 0; i < 4; i++)
+                for (s = 0; s < 2; s++) {
+                    struct mmvoice *v = &mmv[i][s];
+
+                    if (v->vol < v->vol_target)
+                        v->vol++;
+                    else if (v->vol > v->vol_target)
+                        v->vol--;
+                }
+        }
+        if (mms_tone_left != -2) {
+            lv = (SineTable[mms_tone_ph[0] >> 12] - 2000) * 16;
+            rv = (SineTable[mms_tone_ph[1] >> 12] - 2000) * 16;
+            mms_tone_ph[0] += mms_tone_inc[0];
+            if (mms_tone_ph[0] >= (4096L << 12))
+                mms_tone_ph[0] -= (4096L << 12);
+            mms_tone_ph[1] += mms_tone_inc[1];
+            if (mms_tone_ph[1] >= (4096L << 12))
+                mms_tone_ph[1] -= (4096L << 12);
+            if (mms_tone_left > 0 && --mms_tone_left == 0)
+                mms_tone_left = -2;
+        } else {
+            for (i = 0; i < 4; i++) {
+                if (mmv[i][0].type != MMS_SND_OFF)
+                    lv += mms_sample(&mmv[i][0]);
+                if (mmv[i][1].type != MMS_SND_OFF)
+                    rv += mms_sample(&mmv[i][1]);
+            }
+            lv *= 16;
+            rv *= 16;
+        }
+        buf[n * 2] = (int16_t)((lv * mms_gain) >> 8);
+        buf[n * 2 + 1] = (int16_t)((rv * mms_gain) >> 8);
+    }
+
+    /* The daemon exited after five silent seconds to free the output
+     * for MP3 and MOD; the claim releases itself on the same terms. */
+    if (mms_quiet()) {
+        mms_quiet_frames += SND_NBUF;
+        if (mms_quiet_frames >= MMS_IDLE_FRAMES)
+            mms_release();
+    } else
+        mms_quiet_frames = 0;
+}
+
+/* The owner is gone: hand the output back. */
+static void mms_reap(void)
+{
+    if (!mms_active)
+        return;
+    if (snd_hw_pid_alive(mms_owner))
+        return;
+    mms_release();
+}
+
+/* The ioctl entry.  Returns 0, or -2 when an MP3/MOD player holds the
+ * output (the reference's "Sound output in use"). */
+int sound_mm_cmd(uint8_t op, uint8_t a, uint8_t b,
+                 int32_t p1, int32_t p2, int32_t p3, uint16_t pid)
+{
+    int i;
+
+    pcm_reap();
+    mms_reap();
+    if (pcm_active)
+        return -2;
+    if (!mms_active) {
+        sound_quiet();                  /* the BBC channels stop */
+        snd_hw_rate(MMS_RATE);
+        mms_owner = pid;
+        mms_quiet_frames = 0;
+        mms_active = 1;                 /* last: the IRQ reads this */
+    } else
+        mms_owner = pid;                /* one BASIC at a time anyway */
+
+    switch (op) {
+    case MMS_OP_SOUND: {
+        int voice = a - 1;
+        long inc;
+
+        if (voice < 0 || voice > 3)
+            return 0;
+        if (p1 == MMS_SND_PNOISE)
+            mms_make_noise();
+        /* phinc = freq/RATE * 4096 in 20.12; freq arrives in mHz */
+        {
+            long long t = (long long)p2 << 24;
+
+            inc = (long)(t / ((long long)MMS_RATE * 1000));
+        }
+        for (i = 0; i < 2; i++) {
+            struct mmvoice *v = &mmv[voice][i];
+
+            if (!(b & (1 << i)))
+                continue;
+            v->phinc = inc;
+            if (p1 == MMS_SND_WNOISE)
+                v->dwell = 0;
+            v->type = (uint8_t)p1;
+            v->vol_target = (int)(p3 * 41 / 25);
+            if (v->type == MMS_SND_OFF)
+                v->vol_target = 0;
+            if (v->phase >= (4096L << 12))
+                v->phase = 0;
+        }
+        break;
+    }
+    case MMS_OP_TONE:
+        mms_tone_ph[0] = mms_tone_ph[1] = 0;
+        mms_tone_inc[0] = (long)(((long long)p1 << 24) /
+                                 ((long long)MMS_RATE * 1000));
+        mms_tone_inc[1] = (long)(((long long)p2 << 24) /
+                                 ((long long)MMS_RATE * 1000));
+        mms_tone_left = (p3 < 0) ? -1 : (long long)p3;
+        if (mms_tone_left == 0)
+            mms_tone_left = -2;
+        break;
+    case MMS_OP_VOLUME: {
+        int v = p1 > p2 ? p1 : p2;
+
+        if (v < 0)
+            v = 0;
+        if (v > 100)
+            v = 100;
+        mms_gain = (mapping[v] << 8) / mapping[100];
+        break;
+    }
+    default:
+        break;
+    }
+    return 0;
+}
+
+void sound_mm_stop(void)
+{
+    if (mms_active) {
+        mms_release();
+        snd_hw_rate(SND_RATE);          /* process context: safe */
+    }
+}
+
+/* Called from pagemap_free as a process dies.  Without this a program
+ * killed mid-note - Ctrl-C included - leaves its last parameters
+ * sounding forever: a sustained voice never goes quiet, so the idle
+ * release never fires, and nothing else ever asks the driver anything.
+ * The daemon died WITH its sound; the kernel synth has to be told. */
+void sound_mm_owner_gone(uint16_t pid)
+{
+    if (mms_active && mms_owner == pid) {
+        mms_release();
+        snd_hw_rate(SND_RATE);
+    }
+}
+
+/* Release a stream whose owner is gone - snd_hw_pid_alive says what
+ * "gone" means.  Without this a player killed with SIGKILL - or one
+ * that faulted - would lock the audio device out for everyone until
+ * the machine was rebooted, and lock out SOUND with it. */
+static void pcm_reap(void)
+{
+    if (!pcm_active)
+        return;
+    if (snd_hw_pid_alive(pcm_owner))
+        return;
+    pcm_release();
+}
+
+/* Take the state machine for a stream at this rate.  The BBC synth's
+ * note tables assume SND_RATE, so the two are mutually exclusive -
+ * which is what MMBasic does too.
+ *
+ * Returns -2 when another process is playing.  Reopening one's own
+ * stream is allowed and restarts it, which is what a player that
+ * changes sample rate mid-file would need. */
+int sound_pcm_open(uint32_t rate, int channels, uint16_t owner)
+{
+    if (rate < 8000 || rate > 48000 || (channels != 1 && channels != 2))
+        return -1;
+    pcm_reap();
+    mms_reap();
+    /* The kernel synth holds the output exactly as a daemon used to:
+     * PLAY MP3 while SOUND is playing is the reference's error. */
+    if (mms_active)
+        return -2;
+    if (pcm_active && pcm_owner != owner)
+        return -2;
+    if (pcm_ring == NULL) {
+        pcm_ring = malloc(PCM_RING_BYTES);
+        if (pcm_ring == NULL)
+            return -1;
+    }
+    sound_quiet();
+    pcm_head = pcm_tail = 0;
+    pcm_underruns = 0;
+    pcm_started = 0;
+    pcm_channels = (uint8_t)channels;
+    snd_hw_rate(rate);
+    pcm_owner = owner;
+    pcm_active = 1;             /* last: the IRQ reads this */
+    return 0;
+}
+
+/* Who is playing, or 0.  The one thing a program outside the player can
+ * usefully ask: BASIC's PLAY STOP signals this pid, and PLAY MP3
+ * refuses to start when it is not zero. */
+uint16_t sound_pcm_owner(void)
+{
+    pcm_reap();
+    mms_reap();
+    if (mms_active)
+        return mms_owner;
+    return pcm_active ? pcm_owner : 0;
+}
+
+/* Copy from the caller into the ring, as much as fits.  Returns the
+ * number of bytes taken, which the caller must honour - a short write
+ * means the ring is full and the player should come back later, not
+ * that anything is wrong. */
+int sound_pcm_write(const uint8_t *ubuf, uint32_t len, uint16_t owner)
+{
+    uint32_t used, space, off, first;
+
+    if (!pcm_active || pcm_owner != owner)
+        return -1;
+    used = pcm_head - pcm_tail;
+    space = PCM_RING_BYTES - used;
+    if (len > space)
+        len = space;
+    /* Never accept a partial frame.  Everything downstream assumes
+     * head - tail is a whole number of frames, and a single odd byte
+     * would swap the channels for the rest of the stream. */
+    len -= len % (uint32_t)((pcm_channels == 2) ? 4 : 2);
+    if (len == 0)
+        return 0;
+
+    off = pcm_head % PCM_RING_BYTES;
+    first = PCM_RING_BYTES - off;
+    if (first > len)
+        first = len;
+    if (snd_hw_copyin(pcm_ring + off, ubuf, first))
+        return -1;
+    if (len > first && snd_hw_copyin(pcm_ring, ubuf + first, len - first))
+        return -1;
+    pcm_head += len;
+    return (int)len;
+}
+
+/* The level, for whoever does the waiting - sound_hw.c's sleep on the
+ * board, the server's deferred reply on a PC.  owner 0 asks about
+ * whatever stream is open. */
+int sound_pcm_queued(uint16_t owner, uint32_t *queued)
+{
+    if (!pcm_active || (owner && pcm_owner != owner))
+        return -1;
+    *queued = pcm_head - pcm_tail;
+    return 0;
+}
+
+void sound_pcm_stat(uint32_t *space, uint32_t *queued, uint32_t *under)
+{
+    uint32_t used = pcm_head - pcm_tail;
+
+    *space = pcm_active ? PCM_RING_BYTES - used : 0;
+    *queued = used;
+    *under = pcm_underruns;
+}
+
+/* Stops at once and drops whatever is still queued.  A player that
+ * wants the tail played out polls sound_pcm_stat until nothing is
+ * queued and closes then.
+ *
+ * Ignored from anyone but the owner, which is the other half of the
+ * lock: a stale close - a second player exiting after being refused -
+ * must not silence the process that legitimately holds the stream. */
+void sound_pcm_close(uint16_t owner)
+{
+    if (!pcm_active || pcm_owner != owner)
+        return;
+    pcm_release();
+}
+
+/* --- the block ------------------------------------------------------------ */
+
+/* One block for the output stage, from whichever source holds it.  The
+ * DMA IRQ on the board; the sound card's callback on a PC. */
+void SND_FAST(sound_fill_block)(int16_t *buf)
+{
+    if (pcm_active)
+        pcm_fill(buf);
+    else if (mms_active)
+        mmsnd_fill(buf);
+    else
+        snd_fill(buf);
+}
+
+/* --- public API ----------------------------------------------------------- */
+
+int sound_cmd(uint16_t chan, int16_t amp, uint16_t pitch, uint16_t dur)
+{
+    int cn = chan & 3;
+    struct schan *c = &ch[cn];
+    struct note n;
+    snd_lock_t irq;
+
+    /* A player that died without closing would otherwise leave the
+     * synth muted for good - the IRQ would go on filling from an empty
+     * PCM ring.  Nothing else here cares about the stream: while a live
+     * player holds it, SOUND queues notes that are heard when it ends,
+     * which is what this did before there was a lock at all. */
+    pcm_reap();
+
+    if (chan & 0x10) {                  /* flush */
+        irq = snd_hw_lock();
+        c->qr = c->qw;
+        c->active = 0;
+        snd_hw_unlock(irq);
+    }
+
+    if (amp > 0)
+        n.amp = 0x80 | (amp > 16 ? 16 : amp);
+    else
+        n.amp = (-amp) > 15 ? 15 : -amp;
+    n.pitch = pitch & 0xFF;
+    n.dur = dur > 255 ? 255 : dur;
+    n.sync = (chan >> 8) & 3;
+
+    irq = snd_hw_lock();
+    if ((uint8_t)(c->qw - c->qr) >= SND_QLEN) {
+        snd_hw_unlock(irq);
+        return -1;                      /* queue full: EAGAIN */
+    }
+    c->q[c->qw % SND_QLEN] = n;
+    c->qw++;
+    try_dequeue();
+    snd_hw_unlock(irq);
+    return 0;
+}
+
+void sound_envelope(const uint8_t *e)
+{
+    int n = e[0];
+    if (n < 1 || n > 16)
+        return;
+    memcpy(envs[n], e + 1, 13);
+}
+
+int sound_qfree(int cn)
+{
+    struct schan *c = &ch[cn & 3];
+    return SND_QLEN - (uint8_t)(c->qw - c->qr);
+}
+
+void sound_quiet(void)
+{
+    int i;
+    snd_lock_t irq = snd_hw_lock();
+    for (i = 0; i < 4; i++) {
+        ch[i].qr = ch[i].qw;
+        ch[i].active = 0;
+        ch[i].level = 0;
+    }
+    snd_hw_unlock(irq);
+}

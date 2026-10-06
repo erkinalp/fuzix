@@ -42,6 +42,7 @@ f 0755 /bin/reboot      reboot
 l /bin/reboot /bin/halt
 l /bin/reboot /bin/shutdown
 f 0755 /bin/remount     remount
+f 0755 /bin/rx          rx
 f 0755 /bin/rm          rm
 f 0755 /bin/rmdir       rmdir
 f 0755 /bin/setdate     setdate

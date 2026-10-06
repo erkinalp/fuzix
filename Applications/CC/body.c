@@ -15,6 +15,8 @@ static unsigned switch_default;
 static unsigned func_type;
 
 unsigned func_flags;
+/* Nonzero while a function body is being parsed. See function_body. */
+unsigned in_funcbody;
 
 /* C keyword statements */
 
@@ -110,11 +112,55 @@ static void for_statement(void)
 	cont_tag = oldcont;
 }
 
+/*
+ *	"return expr;" from a function returning a struct or union.
+ *
+ *	The caller passed the address of space for the result as a hidden
+ *	first argument, so this is a block copy into it that then leaves
+ *	that same address behind as the return value - which is exactly
+ *	what T_EQ on an aggregate already generates.
+ *
+ *	The destination is the *contents* of argument zero, so it is a
+ *	load, not the argument's own address. The source stays an address
+ *	like every other struct valued expression, which is why hier0() is
+ *	used directly rather than expression_tree().
+ */
+static void return_struct(void)
+{
+	struct node *dst, *src, *n;
+
+	if (token == T_SEMICOLON) {
+		error("return value expected");
+		write_tree(tree(T_NULL, NULL, NULL));
+		return;
+	}
+	src = hier0(0);
+	if (type_canonical(src->type) != func_type || PTR(src->type)) {
+		typemismatch();
+		write_tree(tree(T_NULL, NULL, NULL));
+		return;
+	}
+	dst = new_node();
+	dst->op = T_ARGUMENT;
+	dst->value = 0;
+	dst->type = type_ptr(func_type);
+	dst->flags = LVAL;
+	dst = make_rval(dst);		/* load the hidden pointer */
+
+	n = sf_tree(T_EQ, dst, src);
+	n->type = func_type;
+	n->value = type_sizeof(func_type);
+	write_tree(n);
+}
+
 static void return_statement(void)
 {
 	next_token();
 	header(H_RETURN, func_tag, 0);
-	expression_typed(func_type);
+	if (IS_STRUCT(func_type) && !PTR(func_type))
+		return_struct();
+	else
+		expression_typed(func_type);
 	footer(H_RETURN, func_tag, 0);
 }
 
@@ -141,7 +187,7 @@ static void switch_statement(void)
 	unsigned oldswc = switch_count;
 	unsigned oldswtype = switch_type;
 	unsigned olddefault = switch_default;
-	unsigned long *swptr;
+	cval_t *swptr;
 
 	switch_tag = next_tag++;
 	break_tag = next_tag++;
@@ -227,9 +273,14 @@ static void statement(void)
 	if (token == T_RCURLY)
 		return;
 
-#if 0	/* C99 for later if we want it */
-	declaration_block();
-#endif
+	/*
+	 * This is where a "declaration_block()" call used to sit disabled,
+	 * marked "C99 for later if we want it". We do want it, but not
+	 * here: statement() is also what a bare "if (x) ..." body is, and
+	 * "if (x) int y;" is legal in no dialect. Mixed declarations are
+	 * handled in statement_block(), where a declaration really is
+	 * allowed.
+	 */
 	/* Check for keywords */
 	switch (token) {
 	case T_IF:
@@ -259,6 +310,10 @@ static void statement(void)
 	case T_GOTO:
 		goto_statement();
 		break;
+	/* statement_block() consumes any run of labels before calling us,
+	   so these are only reached for a case or default that is not
+	   prefixing a statement at all. Report and move on rather than
+	   letting it fall into the expression parser. */
 	case T_CASE:
 		case_statement();
 		return;
@@ -282,13 +337,6 @@ static void statement(void)
 	require(T_SEMICOLON);
 }
 
-static void declaration_block(void)
-{
-	while (is_modifier() || is_storage_word() || is_type_word() ||
-			is_typedef()) {
-		declaration(S_AUTO);
-	}
-}
 
 /*
  *	Either a statement or a sequence of statements enclosed in { }. In
@@ -298,23 +346,55 @@ static void declaration_block(void)
 void statement_block(unsigned need_brack)
 {
 	struct symbol *ltop;
+	struct symbol *obase;
 	if (token == T_EOF) {
 		fatal("unexpected EOF");
 		return;
 	}
-	/* We could write this not to push back a token but it's
-	   actually much cleaner to push back */
-	while (token >= T_SYMBOL) {
-		unsigned name = token;
-		next_token();
-		if (token == T_COLON) {
-			next_token();
-			/* We found a label */
-			add_label(name);
-			header(H_LABEL, func_tag, name);
-		} else {
-			push_token(name);
+	/*
+	 * Labels prefix a statement, they are not statements themselves:
+	 * "case 1: return 1;" is one labelled statement. So consume any
+	 * run of them here and then parse the statement they belong to.
+	 *
+	 * case and default have to be in this loop with ordinary labels.
+	 * They used to be handled in statement(), which returned after
+	 * emitting the label - fine inside a { } body, where the enclosing
+	 * loop picks up the next statement anyway, and wrong when the
+	 * switch body is a bare statement:
+	 *
+	 *     switch (x)
+	 *         case 1:
+	 *             return 1;
+	 *
+	 * ended the switch at the colon, so the case body landed *after*
+	 * the break label and ran whether or not the case matched.
+	 *
+	 * We could write this not to push back a token but it's
+	 * actually much cleaner to push back
+	 */
+	for (;;) {
+		if (token == T_CASE) {
+			case_statement();
+			continue;
+		}
+		if (token == T_DEFAULT) {
+			default_statement();
+			continue;
+		}
+		if (token < T_SYMBOL)
 			break;
+		{
+			unsigned name = token;
+			next_token();
+			if (token == T_COLON) {
+				next_token();
+				/* We found a label */
+				add_label(name);
+				header(H_LABEL, func_tag, name);
+			} else {
+				push_token(name);
+				break;
+			}
 		}
 	}
 	if (token != T_LCURLY) {
@@ -325,13 +405,52 @@ void statement_block(unsigned need_brack)
 	}
 	next_token();
 	ltop = mark_local_symbols();
-	/* declarations */
-	declaration_block();
+	/*
+	 * Names declared from here on belong to this block and may shadow
+	 * anything below. Saved and restored because blocks nest.
+	 *
+	 * Not for a function body: its parameters and its outermost block
+	 * are one scope in C, so type_name_parse has already set the base
+	 * below the parameters and this must not move it above them.
+	 */
+	obase = block_base;
+	if (!need_brack)
+		block_base = ltop;
 
+	/*
+	 * Declarations and statements, in any order.
+	 *
+	 * C89 wants every declaration at the head of the block, and this
+	 * used to parse them once here and then loop over statements
+	 * only. Mixing them is a C99 rule, but it is what everyone writes
+	 * and refusing it is a nuisance out of all proportion to the
+	 * standard it comes from - so the compiler is C89 plus this.
+	 *
+	 * It is a pure relaxation: nothing that was legal before changes
+	 * meaning, and block scope already works, so a declaration part
+	 * way down a block behaves exactly like one at the top of it.
+	 *
+	 * A declaration only where a *statement* may appear, mind - not
+	 * inside statement() - or "if (x) int y;" would be accepted, and
+	 * that is legal in no dialect at all.
+	 */
 	while (token != T_RCURLY) {
-		/* statements */
-		statement_block(0);
+		/* A typedef is a declaration but not one declaration() can
+		   handle - it has its own syntax - and it was previously
+		   only ever recognised in toplevel(), so "typedef int myint;"
+		   inside any block was rejected. It is scoped to the block:
+		   update_typedef() marks it so pop_local_symbols() below
+		   discards it. */
+		if (token == T_TYPEDEF) {
+			next_token();
+			dotypedef();
+		} else if (is_modifier() || is_storage_word() ||
+				is_type_word() || is_typedef())
+			declaration(S_AUTO);
+		else
+			statement_block(0);
 	}
+	block_base = obase;
 	pop_local_symbols(ltop);
 	next_token();
 }
@@ -348,6 +467,7 @@ void function_body(unsigned st, unsigned name, unsigned type)
 	unsigned long hrw;
 	unsigned *p;
 	unsigned n;
+	unsigned dead;
 
 	func_flags = 0;
 
@@ -368,6 +488,27 @@ void function_body(unsigned st, unsigned name, unsigned type)
 
 	if (st == S_AUTO || st == S_EXTERN)
 		error("invalid storage class");
+
+	/*
+	 * A file scope static whose name occurs exactly once in the token
+	 * stream - here, in its own definition - can have no caller and
+	 * nothing can have taken its address, so parse it for its errors
+	 * and generate nothing. That is what lets a header carry a
+	 * library of helpers and a program pay only for the ones it uses;
+	 * with no linker there is nothing to strip it later.
+	 *
+	 * name_unreachable is the same idea carried further: counting
+	 * names keeps whatever a DEAD function mentions, which was fine
+	 * for a header holding one primitive and useless against the
+	 * sprite and blit engines, where one entry point named the other
+	 * fourteen. It walks the static call graph from the roots
+	 * instead. Both are asked; either is enough to drop the code.
+	 */
+	dead = (st == S_STATIC &&
+		(name_used_once(name) || name_unreachable(name)));
+	if (dead)
+		out_off++;
+
 	func_tag = next_tag++;
 	header(H_FUNCTION, func_tag, name);
 	hrw = mark_header();
@@ -375,10 +516,37 @@ void function_body(unsigned st, unsigned name, unsigned type)
 
 	init_labels();
 
+	/* Note that we are *inside* a body. funcbody looks like it says
+	   this and does not - it is set after function_body() returns, to
+	   mean "one has just been parsed". */
+	in_funcbody++;
 	statement_block(1);
+	in_funcbody--;
+
+	/*
+	 * Falling off the end of main returns 0.
+	 *
+	 * C89 leaves that value undefined, but every implementation makes
+	 * it zero and programs rely on it. Without this, main returned
+	 * whatever happened to be in the accumulator - so a program that
+	 * ended in a printf exited with the character count as its status,
+	 * which is what stopped printf being able to return one.
+	 *
+	 * Emitted unconditionally: if main already ended with a return
+	 * this is a few unreachable bytes, which is cheaper than working
+	 * out whether the last statement could fall through.
+	 */
+	if (name == T_MAIN && func_type != VOID) {
+		header(H_RETURN, func_tag, 0);
+		write_tree(make_constant(0, func_type));
+		footer(H_RETURN, func_tag, 0);
+	}
 
 	footer(H_FUNCTION, func_tag, name);
 
 	rewrite_header(hrw, H_FRAME, frame_size(), func_flags);
 	check_labels();
+
+	if (dead)
+		out_off--;
 }

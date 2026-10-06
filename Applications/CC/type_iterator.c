@@ -22,7 +22,31 @@ unsigned is_type_word(void)
 /* This one is more expensive so use it last when possible */
 struct symbol *is_typedef(void)
 {
-	return find_symbol_by_class(token, S_TYPEDEF);
+	struct symbol *td = find_symbol_by_class(token, S_TYPEDEF);
+	struct symbol *ord;
+
+	if (td == NULL)
+		return NULL;
+	/*
+	 * A typedef name can be shadowed by an ordinary identifier:
+	 *
+	 *	typedef int myt;
+	 *	int main(void) { int myt; myt = 5; return myt; }
+	 *
+	 * is C89, and the same shape is what lets "struct s s;" work when
+	 * there is also a "typedef struct s s;" (c-testsuite 00129).
+	 *
+	 * Both namespaces share this table, and alloc_symbol() only ever
+	 * hands out slots going upwards, so the nearer declaration is
+	 * simply the one further along it. Without this the statement
+	 * "myt = 5;" was taken for a declaration, get_type() consumed the
+	 * name as a type specifier, and it came out as "useless
+	 * declaration" followed by "missing semicolon".
+	 */
+	ord = find_symbol(token, 0);
+	if (ord && ord > td)
+		return NULL;
+	return td;
 }
 
 void skip_modifiers(void)
@@ -42,7 +66,7 @@ static unsigned structured_type(unsigned sflag)
 	struct symbol *sym;
 	unsigned name = symname();
 
-	sym = update_struct(name, sflag);
+	sym = update_struct(name, sflag, token == T_LCURLY);
 	if (sym == NULL) {
 		error("not a struct");
 		junk();
@@ -77,8 +101,13 @@ static unsigned base_type(void)
 			set_once(1);
 			break;
 		case T_LONG:
-			/* For now -- long long is for the future */
-			set_once(2);
+			/* "long long" is a second long, not a conflict. Bit 2
+			   is the first, bit 32 the second; a third is an
+			   error. */
+			if (once_flags & 2)
+				set_once(32);
+			else
+				set_once(2);
 			break;
 		case T_UNSIGNED:
 			set_once(4);
@@ -123,8 +152,15 @@ static unsigned base_type(void)
 	/* No void modifiers */
 	if (type == VOID && (once_flags & 15))
 		return typeconflict();
+	/* No short long long, and no long long char/float/double */
+	if ((once_flags & 32) && ((once_flags & 1) || type == CCHAR ||
+				  type == FLOAT || type == DOUBLE))
+		return typeconflict();
+	/* long long */
+	if (type == CINT && (once_flags & 32))
+		type = CLONGLONG;
 	/* long */
-	if (type == CINT && (once_flags & 2))
+	else if (type == CINT && (once_flags & 2))
 		type = CLONG;
 	if (type == FLOAT && (once_flags & 2))
 		type = DOUBLE;
@@ -182,6 +218,9 @@ struct declstack {
 struct declstack decls[MAX_DECL];
 struct declstack *decp = decls;
 
+/* The base type of the declaration being walked - see do_type_name_parse */
+static unsigned decl_base_type;
+
 static void declarator_add(unsigned form, unsigned ptr, unsigned *idx)
 {
 	if (decp == &decls[MAX_DECL])
@@ -206,12 +245,51 @@ static void declarator_add(unsigned form, unsigned ptr, unsigned *idx)
  */
 
 
-static void parse_function_arguments(unsigned *tplt)
+/*
+ * How many parameter lists this declaration has produced so far. Only
+ * the first one names anything - see the comment in
+ * parse_function_arguments(). Saved and restored around each
+ * declaration by do_type_name_parse(), because parsing a parameter that
+ * is itself a function pointer re-enters the declaration parser.
+ */
+static unsigned arglist_seen;
+
+static void parse_function_arguments(unsigned *tplt, unsigned hidden)
 {
 	unsigned *tn = tplt + 1;
 	unsigned t;
 	unsigned an;
 	struct symbol *sym;
+	/*
+	 * Parameter names are only real in the list that belongs to the
+	 * declared name itself; in any other list they are decoration that
+	 * C explicitly allows and ignores. declarator() recurses inwards to
+	 * the name before working rightwards and outwards, so the name's
+	 * own list is always the first one seen here.
+	 *
+	 *	int (*f1(int a, int b))(int c, int b)
+	 *
+	 * declares f1 taking (a, b) and returning a pointer to a function
+	 * taking (c, b). The two lists are separate scopes, so the repeated
+	 * b is legal - but both were being entered in the symbol table and
+	 * the second reported "duplicate name" (c-testsuite 00124).
+	 */
+	unsigned named = (arglist_seen++ == 0);
+
+	/*
+	 * A function returning a struct or union is passed the address of
+	 * space the caller has reserved, as a hidden first argument, and
+	 * returns that same address. Reserving it here - before any
+	 * declared parameter - puts it at argument offset zero and shifts
+	 * everything else up by a word, which is what the call site
+	 * builds.
+	 *
+	 * It is deliberately not added to the argument template: the
+	 * template is the function's type, used to check calls against
+	 * the prototype, and the hidden argument is not part of it.
+	 */
+	if (hidden)
+		assign_storage(type_ptr(hidden), S_ARGUMENT);
 
 	/* Parse the bracketed arguments if any and nail them to the
 	   symbol. */
@@ -234,12 +312,18 @@ static void parse_function_arguments(unsigned *tplt)
 			*tn++ = VOID;
 			break;
 		}
-		if (!PTR(t) && (IS_STRUCT(t) || IS_FUNCTION(t))) {
+		if (!PTR(t) && IS_FUNCTION(t)) {
 			error("cannot pass objects");
 			t = CINT;
 		}
+#ifndef TARGET_HAS_STRUCTARG
+		if (!PTR(t) && IS_STRUCT(t)) {
+			error("cannot pass objects");
+			t = CINT;
+		}
+#endif
 		t = type_canonical(t);
-		if (an) {
+		if (an && named) {
 			sym = update_symbol_by_name(an, S_ARGUMENT, t);
 			sym->data.offset = assign_storage(t, S_ARGUMENT);
 			*tn++ = t;
@@ -264,9 +348,28 @@ void type_parse_function(unsigned ptr)
 	unsigned tplt[33];	/* max 32 typed arguments */
 	unsigned argsave, locsave;
 	unsigned *idx;
+	unsigned hidden = 0;
+
+	/*
+	 * Does this function return a struct or union? The declarator is
+	 * parsed before the base type is applied to it, so the return
+	 * type does not exist yet - but it is the base type of the
+	 * declaration currently being parsed with this level's
+	 * indirections applied, and only ptr == 0 gives an aggregate.
+	 */
+	if (ptr == 0 && IS_STRUCT(decl_base_type) && !PTR(decl_base_type)) {
+#ifdef TARGET_HAS_STRUCTARG
+		hidden = decl_base_type;
+#else
+		/* Refuse rather than miscompile. Without the hidden
+		   argument the caller reads whatever a scalar return
+		   would have left behind. */
+		error("cannot return objects");
+#endif
+	}
 
 	mark_storage(&argsave, &locsave);
-	parse_function_arguments(tplt);
+	parse_function_arguments(tplt, hidden);
 	header(H_ARGFRAME, arg_size(), 0);
 	pop_storage(&argsave, &locsave);
 
@@ -352,11 +455,26 @@ static void declarator(unsigned *name, unsigned depth)
 static unsigned do_type_name_parse(unsigned type, unsigned *name)
 {
 	struct declstack *dp = decp;
+	unsigned obase = decl_base_type;
+	unsigned oargs = arglist_seen;
 
 	*name = 0;
 
+	/* type_parse_function() needs to know what this declaration's base
+	   type is, because the declarator is walked before the base type
+	   is applied to it. Saved and restored because parsing a
+	   parameter list re-enters here with a base type of its own. */
+	decl_base_type = type;
+	/* Likewise: this declaration's first parameter list is the one that
+	   names its parameters, and a parameter which is itself a function
+	   pointer re-enters here with a list of its own. */
+	arglist_seen = 0;
+
 	/* Walk the declaration building a type stack.*/
 	declarator(name, 0);
+
+	decl_base_type = obase;
+	arglist_seen = oargs;
 
 	/* Now work back down the stack from outside inwards so we can
 	   create our types cleanly */
@@ -382,6 +500,7 @@ static unsigned parse_depth = 0;
 unsigned type_name_parse(unsigned storage, unsigned type, unsigned *name)
 {
 	struct symbol *ltop = mark_local_symbols();
+	struct symbol *obase;
 	parse_depth++;
 	if (parse_depth == 8)
 		fatal("too complex");
@@ -398,7 +517,17 @@ unsigned type_name_parse(unsigned storage, unsigned type, unsigned *name)
 			header(H_EXPORT, *name, 0);
 		mark_storage(&argsave, &locsave);
 		init_storage();
+		/*
+		 * The parameters and the outermost block of the body are one
+		 * scope in C, so "f(int p) { int p; }" is a redeclaration and
+		 * not a shadow. ltop was taken before the parameters were
+		 * parsed, which makes it the right base for that block -
+		 * statement_block leaves it alone for a function body.
+		 */
+		obase = block_base;
+		block_base = ltop;
 		function_body(storage, *name, type);
+		block_base = obase;
 		pop_storage(&argsave, &locsave);
 		sym->infonext |= INITIALIZED;
 		funcbody = 1;

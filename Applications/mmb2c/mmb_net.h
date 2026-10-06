@@ -1,0 +1,591 @@
+#ifndef MMB_NET_H
+#define MMB_NET_H
+/*
+ *	The socket floor under every WEB family - constants, address
+ *	building, the dotted-quad parser and the non-blocking switch.
+ *	PLAN-web.md §2.2; carried only by a program that uses a network
+ *	family, and cc1's dead-static rule trims within that.
+ *
+ *	THE ABI IS FUZIX'S.  A compiled program bakes these constants in,
+ *	and the board is the product, so the values are the kernel's
+ *	(Library/include/sys/socket.h, fcntl.h) and the board pays no
+ *	translation.  The other two worlds adapt:
+ *	  - under the host gates' bcrun, the lc_socket family translates
+ *	    values in the wrapper (bcrun.c, #ifdef __linux__);
+ *	  - a hosted native build (make check) compiles against the
+ *	    system headers instead, so the same helper names carry the
+ *	    host's own values and glibc is called directly.
+ *
+ *	Everything program-facing goes through the mmn_* helpers below,
+ *	so the split lives in this file and nowhere else.  Both targets
+ *	are little-endian, which mmn_sin's byte stores rely on.
+ */
+
+#include <string.h>
+#include "mmb_runtime.h"
+
+#ifndef MMG_FN
+#if defined(MM_FCC) || defined(MM_PC3)
+#define MMG_FN static
+#else
+#define MMG_FN static __inline__ __attribute__((unused))
+#endif
+#endif
+
+#if defined(MM_FCC) || defined(MM_PC3)
+
+/* sys/socket.h, netinet/in.h, fcntl.h - the kernel's values */
+#define MMN_AF_INET	1
+#define MMN_SOCK_RAW	1
+#define MMN_SOCK_DGRAM	2
+#define MMN_SOCK_STREAM	3
+#define MMN_IPPROTO_TCP	6
+#define MMN_IPPROTO_UDP	17
+#define MMN_IPPROTO_TLS	254	/* Kernel/include/net_lwip.h */
+#define MMN_O_NDELAY	16
+#define MMN_F_GETFL	0
+#define MMN_F_SETFL	1
+#define MMN_SIOCTLSHOST	0x0420
+#define MMN_O_RDWR	2
+#define MMN_NETIOC_TLSCA 0x0043	/* pico_ioctl.h is the authority */
+#define MMN_NETIOC_STATUS 0x0041
+
+/* Resolved by name: the board's libc, or bcrun's lc_ wrappers. */
+int socket(int __d, int __t, int __p);
+int connect(int __fd, void *__sa, int __len);
+int bind(int __fd, void *__sa, int __len);
+int listen(int __fd, int __n);
+int accept(int __fd, void *__sa, void *__lenp);
+int sendto(int __fd, void *__buf, int __n, int __fl, void *__sa, int __len);
+int recvfrom(int __fd, void *__buf, int __n, int __fl, void *__sa,
+	     void *__lenp);
+int ioctl(int __fd, int __req, void *__p);
+int fcntl(int __fd, int __cmd, int __v);
+int open(const char *__path, int __flags);
+int close(int __fd);
+int read(int __fd, void *__buf, int __n);
+int write(int __fd, void *__buf, int __n);
+
+#define mmn_open_ro(p)			open(p, 0)	/* O_RDONLY is 0 */
+#define mmn_open_rw(p)			open(p, MMN_O_RDWR)
+
+/* errno through the neterr libcall, Fuzix numbering (bcrun's hosted
+   build maps the few Linux values that differ) */
+int neterr(void);
+#define mmn_errno()			neterr()
+#define MMN_EAGAIN	11
+#define MMN_EALREADY	39
+#define MMN_EINPROGRESS	54
+
+#define mmn_socket(d, t, p)		socket(d, t, p)
+#define mmn_connect(fd, sa, l)		connect(fd, (void *)(sa), l)
+#define mmn_bind(fd, sa, l)		bind(fd, (void *)(sa), l)
+#define mmn_listen(fd, n)		listen(fd, n)
+#define mmn_accept(fd, sa, lp)		accept(fd, (void *)(sa), (void *)(lp))
+#define mmn_sendto(fd, b, n, f, sa, l)	\
+	sendto(fd, (void *)(b), n, f, (void *)(sa), l)
+#define mmn_recvfrom(fd, b, n, f, sa, lp) \
+	recvfrom(fd, (void *)(b), n, f, (void *)(sa), (void *)(lp))
+#define mmn_ioctl(fd, r, p)		ioctl(fd, r, (void *)(p))
+#define mmn_fcntl(fd, c, v)		fcntl(fd, c, v)
+#define mmn_close(fd)			close(fd)
+#define mmn_read(fd, b, n)		read(fd, (void *)(b), n)
+#define mmn_write(fd, b, n)		write(fd, (void *)(b), n)
+
+#else /* hosted native: the system's own sockets */
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#define MMN_AF_INET	AF_INET
+#define MMN_SOCK_RAW	SOCK_RAW
+#define MMN_SOCK_DGRAM	SOCK_DGRAM
+#define MMN_SOCK_STREAM	SOCK_STREAM
+#define MMN_IPPROTO_TCP	IPPROTO_TCP
+#define MMN_IPPROTO_UDP	IPPROTO_UDP
+#define MMN_IPPROTO_TLS	0	/* TLS is kernel-side on the board only */
+#define MMN_O_NDELAY	O_NONBLOCK
+#define MMN_F_GETFL	F_GETFL
+#define MMN_F_SETFL	F_SETFL
+#define MMN_SIOCTLSHOST	0x0420
+#define MMN_O_RDWR	O_RDWR
+#define MMN_NETIOC_TLSCA 0x0043
+#define MMN_NETIOC_STATUS 0x0041
+
+#define mmn_socket(d, t, p)		socket(d, t, p)
+#define mmn_connect(fd, sa, l)		\
+	connect(fd, (const struct sockaddr *)(void *)(sa), l)
+#define mmn_bind(fd, sa, l)		\
+	bind(fd, (const struct sockaddr *)(void *)(sa), l)
+#define mmn_listen(fd, n)		listen(fd, n)
+#define mmn_accept(fd, sa, lp)		\
+	accept(fd, (struct sockaddr *)(void *)(sa), (socklen_t *)(void *)(lp))
+#define mmn_sendto(fd, b, n, f, sa, l)	\
+	sendto(fd, b, n, f, (const struct sockaddr *)(void *)(sa), l)
+#define mmn_recvfrom(fd, b, n, f, sa, lp) \
+	recvfrom(fd, b, n, f, (struct sockaddr *)(void *)(sa), \
+		 (socklen_t *)(void *)(lp))
+/* The board-only requests succeed silently, so the same program
+   structure-tests here; anything else is real. */
+MMG_FN int mmn_ioctl(int fd, int req, void *p)
+{
+	if (req == MMN_SIOCTLSHOST || (req >= 0x0040 && req <= 0x0043))
+		return 0;
+	return ioctl(fd, req, p);
+}
+#define mmn_fcntl(fd, c, v)		fcntl(fd, c, v)
+#define mmn_open_ro(p)			open(p, O_RDONLY)
+#define mmn_open_rw(p)			open(p, O_RDWR)
+#include <errno.h>
+#define mmn_errno()			errno
+#define MMN_EAGAIN	EAGAIN
+#define MMN_EALREADY	EALREADY
+#define MMN_EINPROGRESS	EINPROGRESS
+#define mmn_close(fd)			close(fd)
+#define mmn_read(fd, b, n)		read(fd, (void *)(b), n)
+#define mmn_write(fd, b, n)		write(fd, (void *)(b), n)
+
+#endif /* hosted */
+
+/*
+ *	struct sockaddr_in, built by hand into 16 bytes so no struct
+ *	layout crosses a compiler boundary: family (uint16,
+ *	little-endian - both targets are), port and address in network
+ *	order.  The layout is BSD's and is byte-identical on Fuzix and
+ *	Linux; only the family VALUE differs, and MMN_AF_INET carries
+ *	the right one for the build.
+ */
+MMG_FN void mmn_sin(unsigned char *sa, const unsigned char *ip4, int port)
+{
+	memset(sa, 0, 16);
+	sa[0] = (unsigned char)(MMN_AF_INET & 0xFF);
+	sa[1] = (unsigned char)((MMN_AF_INET >> 8) & 0xFF);
+	sa[2] = (unsigned char)((port >> 8) & 0xFF);
+	sa[3] = (unsigned char)(port & 0xFF);
+	if (ip4)
+		memcpy(sa + 4, ip4, 4);
+}
+
+/*
+ *	Dotted quad out of an M-string, network-order bytes out.
+ *	Deliberately strict - exactly four decimal fields, each 0-255 -
+ *	because everything that is NOT a dotted quad goes to the
+ *	resolver (stage 2), and a sloppy parse here would eat hostnames.
+ *	The WebMite's own gate is "three dots and ip4addr_aton agrees"
+ *	(MMTCPclient.c:303-306); this is that test.
+ */
+MMG_FN int mmn_aton(const char *m, unsigned char *ip4)
+{
+	int len = mm_slen(m), i = 1, f, v, digits;
+
+	for (f = 0; f < 4; f++) {
+		v = 0;
+		digits = 0;
+		while (i <= len && m[i] >= '0' && m[i] <= '9') {
+			v = v * 10 + (m[i] - '0');
+			if (v > 255)
+				return 0;
+			i++;
+			digits++;
+		}
+		if (digits == 0)
+			return 0;
+		ip4[f] = (unsigned char)v;
+		if (f < 3) {
+			if (i > len || m[i] != '.')
+				return 0;
+			i++;
+		}
+	}
+	return i == len + 1;
+}
+
+/*	Append one address byte as decimal - the addressbuff formatter's
+ *	worker, hand-rolled so no printf prototype is needed here. */
+MMG_FN int mmn_decb(char *out, unsigned int v)
+{
+	int n = 0;
+
+	if (v >= 100)
+		out[n++] = (char)('0' + v / 100);
+	if (v >= 10)
+		out[n++] = (char)('0' + (v / 10) % 10);
+	out[n++] = (char)('0' + v % 10);
+	return n;
+}
+
+MMG_FN void mmn_ndelay(int fd)
+{
+	mmn_fcntl(fd, MMN_F_SETFL, mmn_fcntl(fd, MMN_F_GETFL, 0)
+		  | MMN_O_NDELAY);
+}
+
+/*
+ *	Wrap-safe deadline arithmetic.  mm_us() crosses the libcall
+ *	boundary in 31 bits on the board, so deadlines are never compared
+ *	as absolutes: take a start, subtract unsigned, and the difference
+ *	is right across the wrap.  (unsigned long is 32 bits there, 64 on
+ *	the host - correct in both.)
+ */
+#define MMN_US()		((unsigned long)mm_us())
+#define MMN_SINCE(t0)		((unsigned long)(MMN_US() - (t0)))
+
+/*
+ *	The resolver - Applications/netd/gethostbyname.c re-expressed as
+ *	statics, the PLAN-web.md §5 bargain: DNS over the sendto/recvfrom
+ *	doors, compiled only into a program that names a host.  Recursive
+ *	A queries only, like the original.
+ */
+
+/*	First word of each /etc/resolv.conf "nameserver" line, cached:
+ *	the file does not change under a running program, and a compile
+ *	of the parse per lookup would be pure waste. */
+static unsigned char mmn_ns[4];
+static signed char mmn_ns_state;	/* 0 unread, 1 good, -1 none */
+
+MMG_FN int mmn_aton_span(const char *p, int len, unsigned char *ip4)
+{
+	char m[20];
+
+	if (len < 7 || len > 15)
+		return 0;
+	m[0] = (char)len;
+	memcpy(m + 1, p, len);
+	return mmn_aton(m, ip4);
+}
+
+/*	One line of resolv.conf: [ws] nameserver [ws] a.b.c.d.  1 if it
+ *	named the server and mmn_ns holds it. */
+MMG_FN int mmn_ns_line(const char *buf, int i, int j)
+{
+	int k;
+
+	while (i < j && (buf[i] == ' ' || buf[i] == '\t'))
+		i++;
+	if (j - i > 11 && memcmp(buf + i, "nameserver", 10) == 0 &&
+	    (buf[i + 10] == ' ' || buf[i + 10] == '\t')) {
+		i += 10;
+		while (i < j && (buf[i] == ' ' || buf[i] == '\t'))
+			i++;
+		k = i;
+		while (k < j && buf[k] > ' ')
+			k++;
+		return mmn_aton_span(buf + i, k - i, mmn_ns);
+	}
+	return 0;
+}
+
+/*	The file is read in 256-byte pieces with the unfinished last line
+ *	carried into the next, so the nameserver is found wherever it
+ *	sits.  The first version read one piece and stopped: on a PC
+ *	whose /etc/resolv.conf is systemd-resolved's stub file, the line
+ *	sits under 700 bytes of comment and was never seen, and every
+ *	name failed to resolve - "Failed to find TCP address".  The
+ *	board's file is a line or two and never noticed. */
+MMG_FN int mmn_nameserver(unsigned char *ip4)
+{
+	char buf[257];
+	int fd, n, i, j, have;
+
+	if (mmn_ns_state == 0) {
+		mmn_ns_state = -1;
+		fd = mmn_open_ro("/etc/resolv.conf");
+		if (fd >= 0) {
+			have = 0;
+			for (;;) {
+				n = mmn_read(fd, buf + have, 256 - have);
+				if (n <= 0) {
+					/* the last line, if it has no newline */
+					if (have > 0 && mmn_ns_line(buf, 0, have))
+						mmn_ns_state = 1;
+					break;
+				}
+				have += n;
+				for (i = 0; i < have; ) {
+					j = i;
+					while (j < have && buf[j] != '\n')
+						j++;
+					if (j == have) {
+						/* unfinished: carry it, unless it
+						   already fills the buffer, when it
+						   is not a nameserver line anyway */
+						if (i == 0 && have == 256)
+							have = 0;
+						else {
+							memmove(buf, buf + i, have - i);
+							have -= i;
+						}
+						break;
+					}
+					if (mmn_ns_line(buf, i, j)) {
+						mmn_ns_state = 1;
+						break;
+					}
+					i = j + 1;
+					if (i >= have)
+						have = 0;
+				}
+				if (mmn_ns_state == 1)
+					break;
+			}
+			mmn_close(fd);
+		}
+	}
+	/*	No file, or a file with no nameserver in it: ask the
+	 *	machine.  NETIOC_STATUS carries the DNS servers of the
+	 *	lease - the kernel's on the board, the operating system's
+	 *	own on a PC - and a Windows machine has no
+	 *	/etc/resolv.conf at all, so without this every name there
+	 *	failed with "Failed to find TCP address".  Tried second,
+	 *	so a file that names a server still wins, and asked once:
+	 *	the state above caches whichever answered.
+	 *
+	 *	dns[0] is at offset 24 of struct net_status, in host
+	 *	order, so its bytes run a.b.c.d from 27 down - the way
+	 *	mmn_ipaddr reads the address at 12.
+	 */
+	if (mmn_ns_state != 1) {
+		unsigned char st[48];
+		int sys;
+
+		memset(st, 0, sizeof(st));
+		sys = mmn_open_rw("/dev/sys");
+		if (sys >= 0) {
+			mmn_ioctl(sys, MMN_NETIOC_STATUS, st);
+			mmn_close(sys);
+		}
+		if (st[24] | st[25] | st[26] | st[27]) {
+			mmn_ns[0] = st[27];
+			mmn_ns[1] = st[26];
+			mmn_ns[2] = st[25];
+			mmn_ns[3] = st[24];
+			mmn_ns_state = 1;
+		}
+	}
+	if (mmn_ns_state != 1)
+		return 0;
+	memcpy(ip4, mmn_ns, 4);
+	return 1;
+}
+
+/*
+ *	MM.INFO(IP ADDRESS) - the machine's address out of NETIOC_STATUS
+ *	on /dev/sys, "0.0.0.0" when there is no radio, no join, or no
+ *	/dev/sys (the hosted gates).  net_status.ip is HOST order, and
+ *	wifi(8) prints it high byte first - so bytes 15..12 of the
+ *	little-endian struct are a.b.c.d, in that order.
+ */
+static char mmn_ipbuf[17];
+
+MMG_FN char *mmn_ipaddr(void)
+{
+	unsigned char st[48];
+	int sys, i;
+
+	memset(st, 0, sizeof(st));
+	sys = mmn_open_rw("/dev/sys");
+	if (sys >= 0) {
+		mmn_ioctl(sys, MMN_NETIOC_STATUS, st);
+		mmn_close(sys);
+	}
+	i = 1;
+	i += mmn_decb(mmn_ipbuf + i, st[15]);
+	mmn_ipbuf[i++] = '.';
+	i += mmn_decb(mmn_ipbuf + i, st[14]);
+	mmn_ipbuf[i++] = '.';
+	i += mmn_decb(mmn_ipbuf + i, st[13]);
+	mmn_ipbuf[i++] = '.';
+	i += mmn_decb(mmn_ipbuf + i, st[12]);
+	mmn_ipbuf[0] = (char)(i - 1);
+	return mmn_ipbuf;
+}
+
+/*	1 resolved, 0 no answer within the timeout, -1 no nameserver /
+ *	no socket.  The query id comes off the clock so a stale reply
+ *	from an earlier attempt is never mistaken for this one. */
+MMG_FN int mmn_resolve(const char *host, unsigned char *ip4,
+		       long tmo_ms)
+{
+	unsigned char q[300], r[512], ns[4], sa[16], src[16];
+	int fd, qn, i, n, len, labels, ancount, ty, rdlen;
+	int hl = mm_slen(host);
+	unsigned int id;
+	unsigned long t0, lastsend;
+	int sl;
+
+	if (hl < 1 || hl > 200)
+		return -1;
+	if (!mmn_nameserver(ns))
+		return -1;
+	fd = mmn_socket(MMN_AF_INET, MMN_SOCK_DGRAM, MMN_IPPROTO_UDP);
+	if (fd < 0)
+		return -1;
+	mmn_ndelay(fd);
+	mmn_sin(sa, ns, 53);
+
+	id = (unsigned int)MMN_US() & 0xFFFF;
+	memset(q, 0, 12);
+	q[0] = (unsigned char)(id >> 8);
+	q[1] = (unsigned char)id;
+	q[2] = 0x01;			/* RD */
+	q[5] = 1;			/* QDCOUNT */
+	qn = 12;
+	/* the name, as length-prefixed labels */
+	i = 1;
+	while (i <= hl) {
+		labels = 0;
+		len = qn++;
+		while (i <= hl && host[i] != '.' && labels < 63) {
+			q[qn++] = (unsigned char)host[i++];
+			labels++;
+		}
+		q[len] = (unsigned char)labels;
+		if (labels == 0) {
+			mmn_close(fd);
+			return -1;	/* "..", or a trailing dot */
+		}
+		if (i <= hl && host[i] == '.')
+			i++;
+	}
+	q[qn++] = 0;
+	q[qn++] = 0; q[qn++] = 1;	/* QTYPE A */
+	q[qn++] = 0; q[qn++] = 1;	/* QCLASS IN */
+
+	t0 = MMN_US();
+	lastsend = t0 - 2000000UL;	/* so the first send happens now */
+	while ((long)MMN_SINCE(t0) < tmo_ms * 1000L) {
+		if (MMN_SINCE(lastsend) >= 1500000UL) {
+			lastsend = MMN_US();
+			mmn_sendto(fd, q, qn, 0, sa, 16);
+		}
+		sl = 16;
+		n = mmn_recvfrom(fd, r, (int)sizeof(r), 0, src, &sl);
+		if (n < 12) {
+			mm_pause(2.0);
+			continue;
+		}
+		if (r[0] != (unsigned char)(id >> 8) ||
+		    r[1] != (unsigned char)id)
+			continue;
+		ancount = (r[6] << 8) | r[7];
+		/* skip the question we asked */
+		i = 12;
+		while (i < n && r[i] != 0)
+			i += r[i] + 1;
+		i += 5;
+		while (ancount-- > 0 && i + 10 <= n) {
+			/* the answer's name: a compression pointer or
+			   labels */
+			if (r[i] & 0xC0)
+				i += 2;
+			else {
+				while (i < n && r[i] != 0)
+					i += r[i] + 1;
+				i++;
+			}
+			if (i + 10 > n)
+				break;
+			ty = (r[i] << 8) | r[i + 1];
+			rdlen = (r[i + 8] << 8) | r[i + 9];
+			i += 10;
+			if (ty == 1 && rdlen == 4 && i + 4 <= n) {
+				memcpy(ip4, r + i, 4);
+				mmn_close(fd);
+				return 1;
+			}
+			i += rdlen;
+		}
+		/* a reply with no A record is a real answer: NO */
+		mmn_close(fd);
+		return 0;
+	}
+	mmn_close(fd);
+	return 0;
+}
+
+/*
+ *	WEB NTP [offset [, server$ [, timeout]]] - MMntp.c's cmd_ntp
+ *	mapped onto ntpdate(8), the plan's "no new code beyond argv
+ *	building".  The offset is FLOAT hours, -12..14 with the
+ *	reference's own gate and message, applied as whole seconds
+ *	(timeadjust = adjust * 3600, the reference's truncation) through
+ *	ntpdate's -O; -s sets the clock and prints nothing.  An empty
+ *	server$ means the default, as the reference's *argv[2] test does.
+ *	The reference's third argument - a DNS/reply timeout - is parsed
+ *	and dropped by the translator: ntpdate carries its own 3 x 2 s
+ *	retry cadence, which is inside MMBasic's 5 s default anyway.
+ *	Failure (no DNS, no reply) is a non-zero exit, which mm_run_exec
+ *	raises - retic retries WEB NTP in a loop under ON ERROR, and a
+ *	trapped raise returns.
+ */
+MMG_FN void mmg_web_ntp(MMFLOAT adjust, const char *server)
+{
+	if (adjust < -12.0 || adjust > 14.0)
+		MM_RAISE("Invalid Time Offset");
+	if (mm_slen(server) == 0)
+		server = "\014" "pool.ntp.org";
+	mm_run_begin();
+	mm_run_arg("\007" "ntpdate");
+	mm_run_arg("\002" "-s");
+	if (adjust != 0.0) {
+		mm_run_arg("\002" "-O");
+		mm_run_arg_i((MMINTEGER)(adjust * 3600.0));
+	}
+	mm_run_arg(server);
+	mm_run_exec();
+}
+
+/*
+ *	WEB PING addr$ [, count] - ping(8), stdout straight to the
+ *	console (the child inherits it; nothing to collect).  The
+ *	WebMite build this campaign replicates has no PING of its own,
+ *	so this is the one WEB statement that is a mapping without a
+ *	reference.  ping(8) prints its sent/recv summary and exits 0
+ *	even when nothing answered - board-observed - so an unanswered
+ *	ping is NOT a raise; only a failure to resolve or to open the
+ *	socket exits non-zero, which mm_run_exec turns into one.
+ */
+MMG_FN void mmg_web_ping(const char *addr, MMINTEGER count)
+{
+	mm_run_begin();
+	mm_run_arg("\004" "ping");
+	mm_run_arg("\002" "-c");
+	mm_run_arg_i(count);
+	mm_run_arg(addr);
+	mm_run_exec();
+}
+
+/*
+ *	WEB CONNECT, no arguments: the WebMite's own gate at the top of
+ *	cmd_web - link up or error "WIFI not connected" (WiFi.c:583).
+ *	net_status.link is byte 2; 3 = associated with an address.  On
+ *	the hosted gates /dev/sys is absent or the ioctl no-ops to a
+ *	zeroed struct, so the answer there is the raise - right for a
+ *	machine with no radio.
+ *
+ *	WEB CONNECT ssid$, pass$ spawns wifi(8) instead (translator-
+ *	built argv): it joins, waits for DHCP, and exits non-zero on
+ *	timeout, and it does NOT persist - /etc/wifi.conf stays the
+ *	owner of the boot-time join, the divergence PLAN-web.md 12.2
+ *	documents.
+ */
+MMG_FN void mmg_web_connect_chk(void)
+{
+	unsigned char st[48];
+	int sys;
+
+	memset(st, 0, sizeof(st));
+	sys = mmn_open_rw("/dev/sys");
+	if (sys < 0)
+		MM_RAISE("WIFI not connected");
+	mmn_ioctl(sys, MMN_NETIOC_STATUS, st);
+	mmn_close(sys);
+	if (st[2] != 3)
+		MM_RAISE("WIFI not connected");
+}
+
+#endif /* MMB_NET_H */

@@ -1,0 +1,61 @@
+ROOT = ../..
+FUZIX_ROOT ?= $(ROOT)
+include $(ROOT)/Target/rules.armm0
+
+# The interpreter core is upstream BBCSDL (console edition); bbccon.c
+# carries the Fuzix OS layer under -DFUZIX, bbcstdio.c supplies the
+# float/long-long sprintf and %n sscanf the Fuzix libc lacks.
+# Thumb-2 (cortex-m33, from rules.armm0) is REQUIRED here: gcc
+# mishandles the r10/r11 global register variables (esi/esp) in
+# Thumb-1 - getput advanced esi and the caller never saw the update,
+# so INPUT looped forever.
+# -fsigned-char: the interpreter was written for x86 where plain char
+# is signed; tokens are negative bytes and comparisons rely on it.
+CFLAGS += -DFUZIX -Dtruncl=trunc -Dfloorl=floor -include fuzixshim.h \
+	  -fsigned-char \
+	  -Wno-array-bounds -Wno-unused-result \
+	  -Wno-attributes -Wno-parentheses -Wno-unused-variable \
+	  -Wno-misleading-indentation -Wno-maybe-uninitialized
+FASTFP = -ffast-math -fno-finite-math-only
+
+OBJS = bbmain.o bbexec.o bbeval.o bbasmb.o bbdata.o bbccos.o bbccon.o \
+	bbcstdio.o bbcgfx.o
+
+all: bbcbasic
+
+bbmain.o: bbmain.c BBC.h bbccon.h
+	$(CC) $(CFLAGS) -Os $(FASTFP) -c -o $@ $<
+
+# The statement executor and expression evaluator are the interpreter's
+# hot loops: keep them at -O2 (the rest trades speed for workspace).
+bbexec.o: bbexec.c BBC.h bbccon.h
+	$(CC) $(CFLAGS) -O2 $(FASTFP) -c -o $@ $<
+
+bbeval.o: bbeval.c BBC.h bbccon.h
+	$(CC) $(CFLAGS) -O2 $(FASTFP) -fmath-errno -c -o $@ $<
+
+bbasmb.o: bbasmb_arm_v6m.c BBC.h bbccon.h
+	$(CC) $(CFLAGS) -Os -c -o $@ $<
+
+bbccos.o: bbccos.c bbccon.h BBC.h
+	$(CC) $(CFLAGS) -Os -c -o $@ $<
+
+bbccon.o: bbccon.c bbccon.h BBC.h version.h
+	$(CC) $(CFLAGS) -Os -c -o $@ $<
+
+bbcstdio.o: bbcstdio.c
+	$(CC) $(CFLAGS) -Os -c -o $@ $<
+
+bbcgfx.o: bbcgfx.c
+	$(CC) $(CFLAGS) -O2 -c -o $@ $<
+
+bbdata.o: bbdata_arm_32.s
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+bbcbasic: $(OBJS) $(CRT0)
+	$(LINKER) -o bbcbasic.debug $(CRT0) $(OBJS) -lmarmm0 $(LINKER_OPT) \
+		$(LINKER_TAIL)
+	$(STRIP) $(STRIP_OPT) -o $@ $@.debug
+
+clean:
+	rm -f $(OBJS) bbcbasic bbcbasic.debug *~

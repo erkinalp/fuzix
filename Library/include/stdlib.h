@@ -34,6 +34,13 @@ extern void exit(int __status);
 #endif
 extern void abort(void);
 
+/* libs/system.c has been in the library all along and was never
+   declared here, so every caller got an implicit int and a warning at
+   best - and on a compiler that rejects implicit declarations, an
+   outright error.  Found porting awk, whose system() builtin is a
+   direct call to it. */
+extern int system(const char *__command);
+
 
 #define RAND_MAX	32767
 
@@ -58,6 +65,12 @@ extern const char *_ultoa(unsigned long __value);
 
 extern char *__ultostr_r(char buf[34], unsigned long value, int __radix);
 extern char *__ltostr_r(char buf[34], long __value, int __radix);
+/* Present only where the library was built with CONFIG_PRINTF_LONGLONG;
+   declared always, because a declaration costs nothing and a program
+   that calls one without it gets a link error rather than an implicit
+   int. */
+extern char *__ulltostr_r(char buf[34], unsigned long long value, int __radix);
+extern char *__lltostr_r(char buf[34], long long __value, int __radix);
 
 extern long strtol(const char *__nptr, char **__endptr, int __base);
 extern unsigned long strtoul(const char *__nptr,

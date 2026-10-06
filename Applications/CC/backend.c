@@ -36,8 +36,11 @@ void error(const char *p)
 
 static void xread(int fd, void *buf, int len)
 {
-	if (read(fd, buf, len) != len)
+	int n = read(fd, buf, len);
+	if (n != len) {
+		fprintf(stderr, "xread fd=%d want=%d got=%d\n", fd, len, n);
 		error("short read");
+	}
 }
 
 /*
@@ -92,9 +95,23 @@ static void init_name_cache(void)
 /*
  *	Expression tree nodes
  */
-#define NUM_NODES 100
+/* cc2's own node pool, nothing to do with cc1's in compiler.h */
+#undef NUM_NODES
+#ifdef ARENA_TABLES
+/* Storage comes from the PSRAM arena (see backend-bcode.c); 100 was
+   the "Too many nodes" every 12-argument printf tripped over. */
+#define NUM_NODES 512
+struct node *node_table;
+#else
+/* The SAME 512 as the arena build: the host cc2 is the development
+   gate for the board cc2, and a gate stricter than its target rejects
+   code the board compiles (mmb_sprite.h's collision sweep was the one
+   that showed it, at the old 100).  Static here because the host has
+   no arena and no reason to care. */
+#define NUM_NODES 512
 
 static struct node node_table[NUM_NODES];
+#endif
 static struct node *nodes;
 
 struct node *new_node(void)
@@ -515,8 +532,13 @@ void process_data(void)
 
 void helper_type(unsigned t, unsigned s)
 {
+	/* A pointer is the natural integer width for the target. This was
+	   USHORT, which is the same thing on a 16bit target but wrong
+	   where pointers are 32bit. */
 	if (PTR(t))
-		t = USHORT;
+		t = UINT;
+	/* Cases must name concrete widths: on a target where int is 32bit
+	   UINT is ULONG, and "case UINT" then collides with "case ULONG". */
 	switch (t) {
 	case UCHAR:
 		if (s)
@@ -524,7 +546,7 @@ void helper_type(unsigned t, unsigned s)
 	case CCHAR:
 		putchar('c');
 		break;
-	case UINT:
+	case USHORT:
 		if (s)
 			putchar('u');
 	case CSHORT:
@@ -930,6 +952,17 @@ int main(int argc, char *argv[])
 		codeseg = argv[4];
 	init_name_cache();
 	load_symbols(argv[1]);
+#ifdef ARENA_TABLES
+	/* Table storage comes from the PSRAM arena; the node pool is
+	   carved here because NUM_NODES is this file's business. */
+	{
+		extern void bc_arena_init(void);
+		extern void *bc_arena_carve(unsigned long n);
+		bc_arena_init();
+		node_table = bc_arena_carve(NUM_NODES *
+					    sizeof(struct node));
+	}
+#endif
 	init_nodes();
 
 	gen_start();

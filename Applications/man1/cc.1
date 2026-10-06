@@ -1,0 +1,113 @@
+.TH cc 1 "FUZIX System Utilities" "FUZIX"
+.SH NAME
+cc \- the C compiler
+.SH SYNOPSIS
+.B cc
+[
+.B \-v
+] [
+.B \-k
+] [
+.B \-r
+] [
+.BI \-o " out"
+] [
+.BI \-L dir
+]
+.IR file.c " | " file.bas
+.SH DESCRIPTION
+.B cc
+compiles C on the machine itself.  From
+.B prog.c
+it produces
+.BR prog.bc ,
+which is a program in its own right:
+.BR ./prog.bc .
+.PP
+Given a
+.B .bas
+file it runs
+.BR mmbc (1)
+first and compiles the C that comes out, so a BASIC program can be built
+in one step.
+.SH OPTIONS
+.TP
+.BI \-o " out"
+Name the output.  The default is the source name with
+.B .bc
+in place of its extension, in the current directory.
+.TP
+.B \-v
+Show each pass as it runs.
+.TP
+.B \-k
+Keep the intermediates - the preprocessed source, the tokens, the IR,
+and the C that
+.B mmbc
+generated from a BASIC file.
+.TP
+.B \-r
+Run it.  When every pass has succeeded,
+.B cc
+execs the program it just built; if any pass failed, nothing runs.  This
+is what
+.BR mmbedit (1)
+uses for F2.
+.TP
+.BI \-L dir
+Where the passes and their headers live.  The default is
+.BR /usr/lib/cc/ .
+.SH WHAT IT DOES NOT TAKE
+There is no
+.BR \-c ,
+.B \-S
+or
+.BR \-E :
+one source file makes one program, and this target has neither an
+assembler nor a linker.  There is no
+.BR \-D ,
+.BR \-I ,
+.BR \-l ,
+.B \-M
+or
+.B \-X
+either.  To see preprocessed source, run
+.BR cpp (1)
+by hand.
+.SH WHAT IT PRODUCES
+Bytecode with spans of native ARM Thumb in it, run by
+.BR bcrun (1).
+Headers live in
+.BR /usr/lib/cc/include ,
+and describe what
+.B bcrun
+provides rather than what the FUZIX libc does.  The library is resolved
+by name at load time.
+.SH LIMITS WORTH KNOWING
+The compiler is small.  Deeply nested expressions and very large
+functions can exceed it.
+.PP
+It also has a threshold past which a function stops being turned into
+native ARM and falls back to bytecode, which is worth two to three times
+on a hot loop.  If a small change makes a program suddenly slower, that
+is the first thing to suspect;
+.B BCRUN_BYTECODE=1
+forces bytecode everywhere so the two can be compared.
+.PP
+The preprocessor is the board's own, not
+.BR "gcc \-E" .
+Expect C89 with some of C99: 160 of 175 conformance tests pass here.
+.SH EXAMPLES
+.nf
+# cc hello.c
+# ./hello.bc
+# cc -o prog.bc prog.c
+# cc prog.bas
+# cc -r prog.bas          build it and run it
+.fi
+.SH SEE ALSO
+.BR bcrun (1),
+.BR bcdump (1),
+.BR mmbc (1),
+.BR mmbedit (1),
+.BR cpp (1)

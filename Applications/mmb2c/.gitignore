@@ -1,0 +1,36 @@
+# build output
+*.o
+*.a
+*.out
+/build/
+tests/xcheck/xcheck
+
+# translator output and the programs built from it
+*.c.bak
+/tests/*.c
+/tests/t1
+/tests/t2
+/tests/t3
+/tests/t4
+/tests/t5
+/tests/t6
+/tests/t7
+/tests/t8
+
+# scratch files the tests leave behind
+/tests/work/
+*.mpy
+__pycache__/
+
+# hand-written harness sources, not translator output.  Every one of
+# them needs naming: /tests/*.c above hides them by default, HARNESS_SRC
+# in the Makefile is a wildcard, and `make check` passes either way - so
+# an untracked harness means a fresh clone silently runs fewer gates and
+# still says ok.  That is how guiharness.c and lineharness.c were lost
+# in the 2026-08-19 subtree move.
+!/tests/blitharness.c
+!/tests/webcharness.c
+!/tests/websharness.c
+
+# cc scratch, rewritten by every compile
+.symtmp

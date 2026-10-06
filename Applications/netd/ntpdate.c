@@ -41,7 +41,6 @@ struct ntp_t {
 
 
 #define MAXBUF 256
-#define NTP_UNIX_EPOCH_OFFSET 2208988800UL  /*NTP Time  1900-01-01 to Unix Time 1970-01-01 */
 int fd;
 char buf[MAXBUF];
 struct sockaddr_in addr;
@@ -54,7 +53,11 @@ void alarm_handler( int signum ){
 }
 
 void pusage( void ){
-    fprintf(stderr, "ntpdate -sd [-o tz] server\n");
+    fprintf(stderr, "usage: ntpdate [-s] [-d] [-p port] [-o hours]"
+		    " [-O seconds] server\n");
+    fprintf(stderr, "  options must come BEFORE the server name\n");
+    fprintf(stderr, "  -s sets the clock; without it the time is only"
+		    " printed\n");
     exit(1);
 }
 
@@ -82,6 +85,9 @@ void my_open( int argc, char *argv[]){
 	exit(1);
     }
 
+    /* Network order.  Without this the query goes to port 0x7B00
+       (31488) on a little-endian machine, which is why this has only
+       ever worked where htons() is the identity. */
     addr.sin_port = htons(port);
     addr.sin_family = AF_INET;
     if (connect(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
@@ -94,12 +100,15 @@ void my_open( int argc, char *argv[]){
 int main( int argc, char *argv[] ){
     int retries;
     int rv;
-    uint32_t ntpsec;
-    time_t uv;
+    /* time_t, NOT uint32_t.  It is 64 bits on some Fuzix platforms
+       and "ctime((time_t *)&uv)" then reads four bytes of stack past
+       the end of it - which is what dated a good reply to 1890. */
+    time_t uv = 0;
     int tz = 0;
+    long tzsec = 0;
     struct ntp_t *ptr = (struct ntp_t *)buf;
 
-    while ((rv = getopt( argc, argv, "p:o:ds" )) > 0 ){
+    while ((rv = getopt( argc, argv, "p:o:O:ds" )) > 0 ){
 	switch (rv){
 	case 'p':
 	    port = atoi( optarg );
@@ -110,6 +119,13 @@ int main( int argc, char *argv[] ){
 		fprintf(stderr, "bad timezone\n");
 		exit(1);
 	    }
+	    break;
+	case 'O':
+	    /* an offset in whole SECONDS, on top of -o: half-hour and
+	       quarter-hour zones exist and -o's integer hours cannot
+	       say them.  No range gate: the caller (BASIC's WEB NTP)
+	       has already applied MMBasic's own -12..14 hour check. */
+	    tzsec = atol( optarg );
 	    break;
 	case 's':
 	    setflg = 1;
@@ -123,6 +139,24 @@ int main( int argc, char *argv[] ){
     }
     if( ! argv[optind] )
 	pusage();
+
+    /*
+     * getopt here is the System V one: it stops at the first argument
+     * that is not an option and does NOT permute, so everything after
+     * the server name is an operand.  "ntpdate host -o 5" therefore
+     * ignored -o and printed UTC - an answer that looks perfectly
+     * right and is an hour or five out.  GNU's getopt permutes, so the
+     * same line works on the machine you tested it on, which is what
+     * makes it worth an error rather than a footnote.
+     */
+    for( rv = optind + 1; rv < argc; rv++ ){
+	if( argv[rv][0] == '-' && argv[rv][1] ){
+	    fprintf(stderr,
+		    "%s: options must come before the server name\n",
+		    argv[0]);
+	    pusage();
+	}
+    }
 
     my_open( argc, argv );
 
@@ -142,18 +176,23 @@ int main( int argc, char *argv[] ){
     exit(1);
 
  process:
-    ntpsec = ntohl(ptr->xmit.sec);
-    uv = (time_t)(ntpsec - NTP_UNIX_EPOCH_OFFSET);
+
+    /* Same again: the timestamp arrives big-endian, and reading it raw
+       on a little-endian machine dated this reply to 1869. */
+    uv = (time_t)ntohl(ptr->xmit.sec);
+    uv -= 2208988800LL;	/* 1900 -> 1970; too big for a signed long */
     uv += tz * 60 * 60;
+    uv += tzsec;
 
     if (disflg || !setflg)
-        printf(ctime(&uv));
+	printf(ctime(&uv));
+
     if (setflg){
-        rv = stime(&uv);
-        if (rv){
-            perror("stime");
-            exit(1);
-        }
+	rv = stime(&uv);
+	if (rv){
+	    perror( "stime" );
+	    exit(1);
+	}
     }
     exit(0);
 }

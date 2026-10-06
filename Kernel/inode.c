@@ -58,7 +58,16 @@ uint16_t umove(uint16_t n)
 	return udata.u_done;
 }
 
-static uint16_t mapcalc(inoptr ino, usize_t *size, uint_fast8_t m)
+/* blkno_t, NOT the classic uint16_t.  bmap() returns a 32-bit block
+ * number and this sat between it and every read and write in the
+ * system, silently truncating.  Below block 65536 nothing shows; the
+ * first thing past it was fsck rebuilding a 256MB card's free list
+ * through the raw device, and every chain write above that line
+ * landed at (block - 65536) - 1099 blocks of the inode area
+ * overwritten with free-list chains, found by diffing the card
+ * against the pristine image.  The FIXME at blkdev.c's u_block
+ * assignment predicted this class; this was the instance. */
+static blkno_t mapcalc(inoptr ino, usize_t *size, uint_fast8_t m)
 {
 	*size = min(udata.u_count, BLKSIZE - uoff());
 	/* We know offset is positive at this point. The cast makes
@@ -99,6 +108,8 @@ void readi(register inoptr ino, uint_fast8_t flag)
 #endif
 	case MODE_R(F_PIPE):
 		ispipe = true;
+		/* the stream position is the pipe's own, not this fd's */
+		udata.u_offset = ino->c_pipe_roff;
 		/* This bit really needs to be inside the loop for pipe cases */
 		if (!wait_pipe_read(ino, flag))
 		        break;
@@ -148,6 +159,7 @@ void readi(register inoptr ino, uint_fast8_t flag)
 			if (ispipe && LOWORD(udata.u_offset) >= 18 * BLKSIZE)
 				udata.u_offset = 0;
 			if (ispipe) {
+				ino->c_pipe_roff = LOWORD(udata.u_offset);
 				ino->c_node.i_size -= amount;
 				wakeup(ino);
 			}
@@ -190,6 +202,8 @@ void writei(register inoptr ino, uint_fast8_t flag)
 #endif
 	case MODE_R(F_PIPE):
 		ispipe = true;
+		/* the stream position is the pipe's own, not this fd's */
+		udata.u_offset = ino->c_pipe_woff;
 
 	case MODE_R(F_DIR):
 	case MODE_R(F_REG):
@@ -230,6 +244,7 @@ void writei(register inoptr ino, uint_fast8_t flag)
 			if (ispipe) {
 				if (LOWORD(udata.u_offset) >= 18 * BLKSIZE)
 					udata.u_offset = 0;
+				ino->c_pipe_woff = LOWORD(udata.u_offset);
 				ino->c_node.i_size += amount;
 				/* Wake up any readers */
 				wakeup(ino);
@@ -376,7 +391,16 @@ static void sync_mounts(void)
 				m->m_fs.s_fmod = FMOD_CLEAN;
 			buf = bread(m->m_dev, 1, 1);
 			if (buf) {
+				/* The on-disk superblock is a whole block:
+				   the in-core struct then the reserved
+				   region, which the format requires written
+				   as zero (and the rewrite buffer holds
+				   whatever block it last cached). */
+				static const uint8_t sb_zero[BLKSIZE -
+					sizeof(struct filesys)];
 				blkfromk(&m->m_fs, buf, 0, sizeof(struct filesys));
+				blkfromk((void *)sb_zero, buf,
+					sizeof(struct filesys), sizeof(sb_zero));
 				bfree(buf, 2);
 			}
 		}

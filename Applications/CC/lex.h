@@ -1,6 +1,6 @@
 extern unsigned token;
 extern unsigned line_num;
-extern unsigned long token_value;
+extern cval_t token_value;
 extern char filename[33];
 
 extern unsigned label_tag;
@@ -16,6 +16,16 @@ extern unsigned symname(void);
 extern unsigned quoted_string(int *len);
 extern unsigned copy_string(unsigned label, unsigned maxlen, unsigned pad,
                                 unsigned literal);
+
+/* Dead static elimination: see the comment in lex.c */
+extern unsigned out_off;
+extern void prescan_names(void);
+extern unsigned name_used_once(unsigned id);
+/* A file scope static that no root reaches - see lex.c.  Strictly
+   stronger than name_used_once, which only sees names nothing mentions
+   twice; this also drops a function whose only callers are themselves
+   dead. */
+extern unsigned name_unreachable(unsigned id);
 
 extern void out_write(void);
 extern void out_flush(void);

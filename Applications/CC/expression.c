@@ -1,6 +1,9 @@
 #include <stddef.h>
 #include "compiler.h"
 
+/* get_sizeof needs the unary-expression parser, which is below it */
+static struct node *hier10(void);
+
 static void unexarg(void)
 {
 	error("unexpected argument");
@@ -21,13 +24,24 @@ struct node *typeconv(struct node *n, unsigned type, unsigned warn)
 {
 	unsigned nt = type_canonical(n->type);
 
+	/* An aggregate is passed and assigned whole, so a matching struct
+	   or union type needs no conversion at all. Everything below this
+	   understands only scalars and would call it an invalid
+	   conversion. */
+	if (nt == type && !PTR(nt) && IS_STRUCT(nt))
+		return n;
+
 	/* Weirdness with functions. Properly you should write
 	         funcptr = &func,
 	   but compilers allow funcptr = func even though this is
 	   by strict interpretation nonsense */
-	if (PTR(type) == 1 && IS_FUNCTION(n->type)) {
+	if (PTR(type) == 1 && IS_FUNCTION(n->type) && !PTR(n->type)) {
 		/* A function type can only be a name, you can't do maths
-		   on them or dereference them */
+		   on them or dereference them.
+		   The !PTR test matters: "&func" has already produced a
+		   pointer to function, and incrementing that again made it
+		   a pointer to a pointer, which then failed to match the
+		   parameter it was being passed to. */
 		n->type++;
 	}
 	/* Handle the various cases where we are working with complex types
@@ -90,8 +104,19 @@ struct node *typeconv_implicit(struct node *n)
  */
 struct node *call_args(unsigned *narg, unsigned *argt, unsigned *argsize, unsigned *va)
 {
-	struct node *n = expression_tree(0);
+	struct node *n = hier0(0);
 	unsigned t;
+	unsigned sz = 0;
+
+	/*
+	 * Normally this is expression_tree(), which is make_rval(hier0()).
+	 * A struct or union argument is copied onto the stack whole and so
+	 * stays an address, exactly as in struct assignment: make_rval
+	 * would insert a dereference and there is no way to load an
+	 * aggregate into the accumulator.
+	 */
+	if (!IS_STRUCT(n->type) || PTR(n->type))
+		n = make_rval(n);
 
 	/* See what argument type handling is needed */
 	if (*argt == VOID)
@@ -114,10 +139,26 @@ struct node *call_args(unsigned *narg, unsigned *argt, unsigned *argsize, unsign
 	}
 	*argsize += target_argsize(n->type);
 	t = n->type;
+	/*
+	 * The code generator cannot size a struct, so the length has to
+	 * travel with the node that gets pushed - and which node that is
+	 * depends on position. codegen_lr() pushes n->left, which is the
+	 * T_ARGCOMMA for every argument but the last, and the argument
+	 * itself for the last one. So the length goes on both: T_ARGSTRUCT
+	 * wraps the argument (its own value field is in use for an offset)
+	 * and the T_ARGCOMMA above it carries a copy.
+	 */
+	if (IS_STRUCT(t) && !PTR(t)) {
+		sz = type_sizeof(t);
+		n = sf_tree(T_ARGSTRUCT, NULL, n);
+		n->type = t;
+		n->value = sz;
+	}
 	if (match(T_COMMA)) {
 		/* Switch around for calling order */
 		n = tree(T_ARGCOMMA, call_args(narg, argt, argsize, va), n);
 		n->type = t;
+		n->value = sz;
 		return n;
 	}
 	require(T_RPAREN);
@@ -138,6 +179,7 @@ struct node *function_call(struct node *n)
 	unsigned argsize = 0;
 	unsigned narg;
 	unsigned va = 0;
+	struct node *args;
 
 	/* Must be a function or pointer to function */
 	if (!IS_FUNCTION(n->type)) {
@@ -159,12 +201,41 @@ struct node *function_call(struct node *n)
 	/* A function without arguments */
 	if (match(T_RPAREN)) {
 		/* Make sure no arguments is acceptable */
-		n  = sf_tree(T_FUNCCALL, NULL, n);
+		args = NULL;
 		missedarg(narg, argp[0]);
 	} else {
-		n = sf_tree(T_FUNCCALL, call_args(&narg, argp, &argsize, &va), n);
+		args = call_args(&narg, argp, &argsize, &va);
 		missedarg(narg, argp[0]);
 	}
+
+	/*
+	 * A struct or union return goes through a hidden first argument:
+	 * the caller reserves the space and passes its address, and the
+	 * function copies its result there and hands the same address
+	 * back. So the call's value is an address, which is how every
+	 * other struct valued expression is already represented, and
+	 * "f().x" and "a = f()" then need nothing of their own.
+	 *
+	 * Being the first argument means being pushed last, which is what
+	 * wrapping the existing chain in one more T_ARGCOMMA does.
+	 */
+	if (IS_STRUCT(type) && !PTR(type)) {
+		struct node *h = new_node();
+		h->op = T_LOCAL;
+		h->value = assign_storage(type, S_AUTO);
+		/* No LVAL: we want the address of the temporary, not its
+		   contents, and T_LOCAL on its own is that address */
+		h->type = type_ptr(type);
+		if (args) {
+			args = tree(T_ARGCOMMA, args, h);
+			args->type = h->type;
+			args->value = 0;
+		} else
+			args = h;
+		argsize += target_argsize(h->type);
+	}
+
+	n = sf_tree(T_FUNCCALL, args, n);
 	/* Always emit this - some targets have other uses for knowing
 	   the boundary of a function call return */
 	n->type = type;
@@ -188,29 +259,37 @@ struct node *get_sizeof(void)
 	unsigned name;
 	unsigned type;
 	struct node *n, *r;
-	unsigned want_paren = 0;
 
-	if (match(T_LPAREN))
-		want_paren = 1;
-
-	/* We will eventually need to count typedefs as type_word */
-	if (is_type_word() || is_typedef()) {
-		type = type_name_parse(S_NONE, get_type(), &name);
-		if (type == UNKNOWN || name)
-			return badsizeof();
-		require(T_RPAREN);
-		return make_constant(type_sizeof(type), UINT);
+	if (match(T_LPAREN)) {
+		/* We will eventually need to count typedefs as type_word */
+		if (is_type_word() || is_typedef()) {
+			type = type_name_parse(S_NONE, get_type(), &name);
+			if (type == UNKNOWN || name)
+				return badsizeof();
+			require(T_RPAREN);
+			return make_constant(type_sizeof(type), UINT);
+		}
+		/* Not a type name, so the bracket belongs to the expression.
+		   Put it back and let hier10 take it as a primary, which
+		   also keeps any postfix operators after the bracket. */
+		push_token(T_LPAREN);
 	}
-	/* Sizeof an expression. This is one case that does not degrade to a pointer
-	   if the result is an array. We track whether we are in sizeof so that
-	   we can optimize some of the symbol table tracking for constanrt strings
-	   to keep memory usage a bit more controlled. See primary.c */
+	/*
+	 * Sizeof an expression takes a *unary-expression*, not a full one:
+	 * "sizeof 0 < 2" means "(sizeof 0) < 2". Parsing a whole
+	 * expression here made it "sizeof (0 < 2)", and since that is 4
+	 * the condition silently came out true.
+	 *
+	 * This is also the one case that does not degrade to a pointer if
+	 * the result is an array. We track whether we are in sizeof so
+	 * that we can optimize some of the symbol table tracking for
+	 * constant strings to keep memory usage a bit more controlled.
+	 * See primary.c
+	 */
 	in_sizeof++;
-	n = hier0(0);
+	n = hier10();
 	r = make_constant(type_sizeof(n->type), UINT);
 	free_tree(n);
-	if (want_paren)
-		require(T_RPAREN);
 	in_sizeof--;
 	return r;
 }
@@ -329,6 +408,7 @@ static struct node *hier10(void)
 	    && token != T_SIZEOF
 	    && token != T_MINUSMINUS
 	    && token != T_MINUS
+	    && token != T_PLUS
 	    && token != T_TILDE
 	    && is_tcast == 0
 	    && token != T_BANG && token != T_STAR && token != T_AND) {
@@ -386,6 +466,18 @@ static struct node *hier10(void)
 		if (!IS_ARITH(r->type) && !PTR(r->type))
 			badtype();
 		return tree(T_NEGATE, NULL, r);
+	case T_PLUS:
+		/* Unary plus. ANSI added it, so it is C89, and it was not
+		   implemented at all - "+5" and "60 + +3" were both refused.
+		   The operand must be arithmetic (unlike unary minus above,
+		   a pointer is not allowed) and the value is unchanged, so
+		   there is no node to build. Arithmetic here is always 32
+		   bit, so the integer promotion it formally performs has
+		   nothing to do. */
+		r = make_rval(hier10());
+		if (!IS_ARITH(r->type))
+			badtype();
+		return r;
 	case T_BANG:
 		/* Floating point allowed */
 		r = make_rval(hier10());
@@ -419,7 +511,26 @@ static struct node *hier10(void)
 		require(T_RPAREN);
 		if (t == UNKNOWN || name)
 			badtype();
-		return typeconv(make_rval(hier10()), t, 0);
+		r = make_rval(hier10());
+		/*
+		 * "(void)expr" is always valid and simply says "evaluate
+		 * this and throw the result away". It is not a conversion,
+		 * and typeconv only knows how to convert between arithmetic
+		 * and pointer types, so it called this an invalid type
+		 * conversion - on "(void)printf(...)", which is everywhere.
+		 *
+		 * Done here rather than in typeconv because typeconv is
+		 * also what checks "return expr;" against the function's
+		 * type, and accepting void there would stop it complaining
+		 * about a value returned from a void function.
+		 */
+		if (t == VOID) {
+			r = tree(T_CAST, NULL, r);
+			r->type = VOID;
+			r->flags |= NORETURN;
+			return r;
+		}
+		return typeconv(r, t, 0);
 	case T_SIZEOF:
 		return get_sizeof();
 
@@ -640,7 +751,7 @@ static struct node *hier1a(void)
 	struct node *l;
 	struct node *a1, *a2;
 	unsigned lt;
-	unsigned a1t, a2t;
+	unsigned a1t, a2t, rt;
 
 	l = hier1b();
 	if (!match(T_QUESTION))
@@ -665,14 +776,41 @@ static struct node *hier1a(void)
 	a1t = type_canonical(a1->type);
 	a2t = type_canonical(a2->type);
 
-	/* Check the two sides of colon are compatible */
-	if (a1t == a2t || type_pointermatch(a1, a2) || (IS_ARITH(a1t) && IS_ARITH(a2t))) {
-		a2 = tree(T_QUESTION, bool_tree(l, NEEDCC), tree(T_COLON, a1, typeconv(a2, a1t, 1)));
-		/* Takes the type of the : arguments not the ? */
-		a2->type = a1t;
-	}
-	else
+	/*
+	 * Check the two sides of the colon are compatible and decide the
+	 * type of the result, which is that of the colon arguments and not
+	 * of the condition.
+	 *
+	 * The null pointer constant cases were missing. C89 says that when
+	 * one operand is a pointer and the other a null pointer constant,
+	 * the result has the pointer type - but the type was taken from a1
+	 * unconditionally, so "i ? 0 : q" came out as int and whatever it
+	 * was assigned to then reported a type mismatch. c-testsuite 00144,
+	 * and "x ? p : 0" is ordinary code.
+	 *
+	 * These two tests have to come first. type_pointermatch() already
+	 * answers yes for (constant zero, pointer), so the general case
+	 * below matched and then took a1's type - which for "i ? 0 : q" is
+	 * int, exactly the case being fixed.
+	 */
+	if (PTR(a2t) && is_constant_zero(a1))
+		rt = a2t;
+	else if (PTR(a1t) && is_constant_zero(a2))
+		rt = a1t;
+	else if (a1t == a2t || type_pointermatch(a1, a2) ||
+		 (IS_ARITH(a1t) && IS_ARITH(a2t)))
+		rt = a1t;
+	else {
 		badtype();
+		return a2;
+	}
+	/* Only convert a1 when it is the side that has to move, so the
+	   common case generates exactly what it did before. */
+	if (a1t != rt)
+		a1 = typeconv(a1, rt, 1);
+	a2 = tree(T_QUESTION, bool_tree(l, NEEDCC),
+		  tree(T_COLON, a1, typeconv(a2, rt, 1)));
+	a2->type = rt;
 	return a2;
 }
 
@@ -693,10 +831,30 @@ static struct node *hier1(void)
 	if (match(T_EQ)) {
 		if ((l->flags & LVAL) == 0)
 			needlval();
-		r = make_rval(hier1());
 		/* You can't assign to an array/offset, you assign to
 		   the underlying type */
 		l->type = type_canonical(l->type);
+		/*
+		 * Assigning a whole struct or union is a block copy, so
+		 * both sides stay addresses - make_rval would insert a
+		 * dereference and there is no way to load an aggregate into
+		 * the accumulator. The size travels in the node's value
+		 * because the code generator cannot size a struct: that
+		 * lives in this pass's symbol table.
+		 */
+		if (IS_STRUCT(l->type) && !PTR(l->type)) {
+			struct node *n;
+			r = hier1();
+			if (type_canonical(r->type) != l->type || PTR(r->type)) {
+				typemismatch();
+				return l;
+			}
+			n = sf_tree(T_EQ, l, r);
+			n->type = l->type;
+			n->value = type_sizeof(l->type);
+			return n;
+		}
+		r = make_rval(hier1());
 		if (!IS_SIMPLE(l->type) && !PTR(l->type)) {
 			badtype();
 			return l;

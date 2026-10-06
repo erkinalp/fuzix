@@ -10,6 +10,16 @@ struct symbol
 };
 
 #define INITIALIZED	0x0800
+/*
+ * A struct or union tag, or a typedef, declared inside a function body,
+ * which goes out of scope with its block. Storage class cannot say so -
+ * S_STRUCT and S_TYPEDEF are both above S_STATIC, which is what marks a
+ * symbol permanent - and neither can position in the table, because a
+ * file scope name may sit above the mark a block was entered at. The
+ * low bits of infonext are the index field, which is never set for
+ * either of these.
+ */
+#define S_TAGLOCAL	0x0400
 #define S_FREE		0x0000	/* Unused */
 #define S_AUTO		0x1000	/* Auto */
 #define S_REGISTER	0x2000	/* Register */
@@ -37,11 +47,14 @@ struct symbol
 
 extern struct symbol *update_symbol(struct symbol *sym, unsigned name, unsigned storage, unsigned type);
 extern struct symbol *update_symbol_by_name(unsigned name, unsigned storage, unsigned type);
+extern struct symbol *update_typedef(unsigned name, unsigned type);
 extern struct symbol *find_symbol(unsigned name, unsigned global);
 extern struct symbol *find_symbol_by_class(unsigned name, unsigned class);
 extern struct symbol *alloc_symbol(unsigned name, unsigned local);
 extern void pop_local_symbols(struct symbol *top);
 extern struct symbol *mark_local_symbols(void);
+extern struct symbol *block_base;
+extern unsigned in_funcbody;
 extern unsigned *sym_find_idx(unsigned storage, unsigned *idx, unsigned len);
 extern unsigned func_return(unsigned type);
 extern unsigned *func_args(unsigned type);
@@ -54,7 +67,7 @@ extern unsigned array_type(unsigned type);
 extern unsigned make_array(unsigned type, unsigned *id);
 extern unsigned array_with_size(unsigned type, unsigned size);
 extern unsigned array_compatible(unsigned t1, unsigned t2);
-extern struct symbol *update_struct(unsigned name, unsigned isstruct);
+extern struct symbol *update_struct(unsigned name, unsigned isstruct, unsigned defining);
 extern unsigned type_of_struct(struct symbol *sym);
 extern unsigned *struct_find_member(unsigned name, unsigned fname);
 

@@ -5,9 +5,21 @@
 
 extern void rawuart_early_init(void);
 extern void rawuart_putc(uint8_t devn, uint8_t c);
+/* Called once per timer tick: re-asks for the transmit interrupt if the
+ * ring still has anything in it.  See the comment on the definition -
+ * the transmit interrupt is a watermark crossing that in practice never
+ * fires, so output runs on manual kicks, and a lost kick would
+ * otherwise stop the console permanently. */
+extern void rawuart_tx_poll(void);
+/* Poll the transmit ring empty without relying on the interrupt: for
+ * panic() and plt_monitor(), where the interrupt will never run again. */
+extern void rawuart_flush_polled(void);
 extern ttyready_t rawuart_ready(uint8_t devn);
 extern void rawuart_sleeping(uint8_t devn);
 extern int rawuart_getc(uint8_t devn);
 extern void rawuart_setup(uint_fast8_t minor, uint_fast8_t devn, uint_fast8_t flags);
+
+extern void rawuart_rx_irq_start(void);
+extern unsigned rawuart_rx_lost(uint8_t devn);
 
 #endif

@@ -1,6 +1,7 @@
 #include <kernel.h>
 #include <printf.h>
 #include <kdata.h>
+#include <bufstat.h>
 #include <stdarg.h>
 
 /* Error checking */
@@ -37,18 +38,54 @@ Bufsync() write outs all dirty blocks.
 Note that a pointer to a buffer structure is the same as a pointer to
 the data if the buffer is inline. This is very important.
 
+FIXME: need to add locking to this for the sleeping case, and a hash for
+the bigger systems
 **********************************************************************/
 
 static uint16_t bufclock;		/* Time-stamp counter for LRU */
 
 #define bisbusy(x)	((x)->bf_busy == BF_BUSY)
 
-#define	block(x)	((x)->bf_busy = BF_BUSY)
+/*
+ * DEBUG: stamp a buffer with whoever is pinning it, so that a buffer
+ * still held by nobody in particular can be traced back to the syscall
+ * that walked off and left it. See include/bufstat.h.
+ */
+static void bufown(bufptr bp)
+{
+	bp->bf_pid = udata.u_ptab ? udata.u_ptab->p_pid : 0;
+	bp->bf_call = udata.u_callno;
+}
+
+#ifndef CONFIG_BLOCK_SLEEP
+#define	block(x)	((x)->bf_busy = BF_BUSY, bufown(x))
 #define bunlock(x)	((x)->bf_busy = BF_FREE)
 #define bcheck(x)	bisbusy(x)
 #define block_s(x)
 #define bunlock_s(x)
+#else
 
+static void block(bufptr bp)
+{
+	while (bp->bf_busy == BF_BUSY)
+		psleep_nosig(bp);
+	bp->bf_busy = BF_BUSY;
+	bufown(bp);
+}
+
+static void bunlock(bufptr bp)
+{
+	if (bp->bf_busy == BF_FREE)
+		panic(BFREEFREE);
+	bp->bf_busy = BF_FREE;
+	pwake(bp);
+}
+
+#define block_s(x)	block(x)
+#define bunlock_s(x)	bunlock(x)
+#define bcheck(x)	0
+
+#endif
 
 /*
  *	Make an entry in the buffer cache and fill it. If rewrite is
@@ -59,7 +96,7 @@ static uint16_t bufclock;		/* Time-stamp counter for LRU */
  */
 bufptr bread(uint16_t dev, blkno_t blk, bool rewrite)
 {
-	register bufptr bp;
+	regptr bufptr bp;
 
 	/* TODO speed up the bfind/freebuf into one pass */
 	if ((bp = bfind(dev, blk)) == NULL) {
@@ -105,12 +142,12 @@ void bawrite(bufptr bp)
  *	If a writeback now is requested an an error occurs then u_error will
  *	be set and -1 returned.
  */
-int bfree(register bufptr bp, uint_fast8_t dirty)
+int bfree(regptr bufptr bp, uint_fast8_t dirty)
 {				/* dirty: 0=clean, 1=dirty (write back), 2=dirty+immediate write */
 	int ret = 0;
 	if (dirty)
 		bp->bf_dirty = true;
-
+	
 	if (dirty > 1) {	/* immediate writeback */
 		if (bdwrite(bp) != BLKSIZE) {
 			udata.u_error = EIO;
@@ -133,7 +170,7 @@ int bfree(register bufptr bp, uint_fast8_t dirty)
  */
 bufptr zerobuf(void)
 {
-	register bufptr bp;
+	regptr bufptr bp;
 
 	bp = freebuf();
 	bp->bf_dev = NO_DEVICE;
@@ -153,7 +190,7 @@ bufptr zerobuf(void)
 
 void *tmpbuf(void)
 {
-	register bufptr bp;
+	regptr bufptr bp;
 
 	bp = freebuf();
 	bp->bf_dev = NO_DEVICE;
@@ -171,8 +208,12 @@ void tmpfree(void *p)
  * Write back a buffer doing the locking outselves. This is called when
  * we do a sync or when we get a media change and need to write back
  * data.
+ *
+ * FIXME: for the simple case I don't think we can ever get called within
+ * an active I/O so the block/bunlock should be fine - but not needed. In
+ * async mode they are
  */
-static void bdput(register bufptr bp)
+static void bdput(regptr bufptr bp)
 {
 	block_s(bp);
 	if (bp->bf_dirty) {
@@ -190,7 +231,7 @@ static void bdput(register bufptr bp)
  */
 void bufsync(void)
 {
-	register bufptr bp;
+	regptr bufptr bp;
 
 	/* FIXME: this can generate a lot of d_flush calls when you have
 	   plenty of buffers */
@@ -208,10 +249,13 @@ void bufsync(void)
  */
 bufptr bfind(uint16_t dev, blkno_t blk)
 {
-	register bufptr bp;
+	regptr bufptr bp;
 
 	for (bp = bufpool; bp < bufpool_end; ++bp) {
 		if (bp->bf_dev == dev && bp->bf_blk == blk) {
+			/* FIXME: this check is only relevant for non sync stuff
+			   if it's sleeping then this is fine as we'll block here
+			   and sleep until the buffer is unlocked */
 			if (bcheck(bp))
 				panic(PANIC_WANTBSYB);
 			block(bp);
@@ -233,7 +277,7 @@ bufptr bfind(uint16_t dev, blkno_t blk)
  */
 void bdrop(uint16_t dev)
 {
-	register bufptr bp;
+	regptr bufptr bp;
 
 	for (bp = bufpool; bp < bufpool_end; ++bp) {
 		if (bp->bf_dev == dev) {
@@ -245,20 +289,31 @@ void bdrop(uint16_t dev)
 
 bufptr freebuf(void)
 {
-	register bufptr bp;
-	register bufptr oldest;
+	regptr bufptr bp;
+	regptr bufptr oldest;
 	register uint16_t oldtime;
 	uint16_t age;
 
-	/* Try to find a non-busy buffer and write out the data if it is dirty */
-	/* The age has to be computed modulo 65536, which means truncating it
-	   back to uint16_t and comparing unsigned. Where int is 16 bits the
-	   two uint16_t operands promote to unsigned int and the subtraction
-	   wraps by itself, but where int is 32 bits they promote to signed
-	   and a buffer stamped before bufclock last wrapped yields a large
-	   negative age, which fails ">= oldtime" from the first iteration
-	   onwards. Just after a wrap that is every buffer, so freebuf()
-	   returns NULL with the whole pool free. */
+	/*
+	 * The age has to be computed modulo 65536, which means truncating
+	 * it back to uint16_t and comparing unsigned.
+	 *
+	 * This used to be a bare "bufclock - bp->bf_time >= oldtime" with
+	 * oldtime an int16_t. Where int is 16 bits that is fine: the two
+	 * uint16_t operands promote to unsigned int and the subtraction
+	 * wraps, which is exactly what an LRU stamp needs. Where int is 32
+	 * bits - every ARM, and this port - they promote to signed int
+	 * instead, no wrap happens, and a buffer stamped before bufclock
+	 * last wrapped yields a large negative age. Negative fails the
+	 * ">= oldtime" test from the first iteration onwards, so every such
+	 * buffer is skipped.
+	 *
+	 * Immediately after bufclock wraps, that is all of them, and
+	 * freebuf() returns NULL with the whole pool free: "panic: no free
+	 * buffers" on a machine with twenty free buffers. It looked like a
+	 * leak for a long time and is not one - see
+	 * platform-rpipico/NOTES-buffer-panic.md.
+	 */
 	oldest = NULL;
 	oldtime = 0;
 	for (bp = bufpool; bp < bufpool_end; ++bp) {
@@ -268,8 +323,24 @@ bufptr freebuf(void)
 			oldtime = age;
 		}
 	}
-	if (!oldest)
+	/* FIXME: Once we support sleeping on disk I/O this goes away and
+	   we sleep on something - buffer going unbusy or even the oldest
+	   buffer and then check if it's still old and if not retry */
+	if (!oldest) {
+		/*
+		 * DEBUG: every buffer is pinned. Say which blocks and with
+		 * what busy count before dying, because "no free buffers"
+		 * on its own says nothing about who is holding them - and a
+		 * leak of one buffer per operation looks identical to
+		 * genuine pressure until you can see the list.
+		 */
+		for (bp = bufpool; bp < bufpool_end; ++bp)
+			kprintf("buf %d: dev %d blk %d busy %d dirty %d\n",
+				(int)(bp - bufpool), (int)bp->bf_dev,
+				(int)bp->bf_blk, (int)bp->bf_busy,
+				(int)bp->bf_dirty);
 		panic(PANIC_NOFREEB);
+	}
 
 	block(oldest);
 	if (oldest->bf_dirty) {
@@ -277,6 +348,49 @@ bufptr freebuf(void)
 		oldest->bf_dirty = false;
 	}
 	return oldest;
+}
+
+/*
+ * DEBUG: hand the buffer pool out to userspace for /dev/proc's
+ * PIOC_BUFSTAT ioctl - see include/bufstat.h and, for why any of this
+ * is here, platform-rpipico/NOTES-buffer-panic.md.
+ *
+ * The pool only needs reporting one entry at a time, which is just as
+ * well: the whole struct is nearly 400 bytes and has no business on the
+ * kernel stack.
+ */
+int bufstat_report(uint8_t *data)
+{
+	regptr bufptr bp;
+	struct bufent be;
+	uint16_t v;
+	unsigned n;
+
+	n = (NBUFS > BUFSTAT_MAX) ? BUFSTAT_MAX : NBUFS;
+
+	v = n;
+	if (uput((uint8_t *)&v, data, sizeof(v)))
+		return -1;
+	data += sizeof(v);
+	v = bufclock;
+	if (uput((uint8_t *)&v, data, sizeof(v)))
+		return -1;
+	data += sizeof(v);
+
+	for (bp = bufpool; bp < bufpool + n; ++bp) {
+		be.be_dev = bp->bf_dev;
+		be.be_blk = bp->bf_blk;
+		be.be_time = bp->bf_time;
+		be.be_busy = bp->bf_busy;
+		be.be_dirty = bp->bf_dirty;
+		be.be_pid = bp->bf_pid;
+		be.be_call = bp->bf_call;
+		be.be_pad = 0;
+		if (uput((uint8_t *)&be, data, sizeof(be)))
+			return -1;
+		data += sizeof(be);
+	}
+	return 0;
 }
 
 /*********************************************************************
@@ -299,7 +413,7 @@ udata.u_base should be consulted instead.
 Any device other than a disk will have only raw access.
 **********************************************************************/
 
-static void bdsetup(register bufptr bp)
+static void bdsetup(bufptr bp)
 {
 	udata.u_buf = bp;
 	udata.u_block = bp->bf_blk;
@@ -404,6 +518,8 @@ int d_blkoff(uint_fast8_t shift)
 
 int nxio_open(uint_fast8_t minor, uint16_t flag)
 {
+	used(minor);
+	used(flag);
 	udata.u_error = ENXIO;
 	return -1;
 }
@@ -413,22 +529,31 @@ int nxio_open(uint_fast8_t minor, uint16_t flag)
  */
 int no_open(uint_fast8_t minor, uint16_t flag)
 {
+	used(minor);
+	used(flag);
 	return 0;
 }
 
 int no_close(uint_fast8_t minor)
 {
+	used(minor);
 	return 0;
 }
 
 int no_rdwr(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
+	used(minor);
+	used(rawflag);
+	used(flag);
 	udata.u_error = EINVAL;
 	return -1;
 }
 
 int no_ioctl(uint_fast8_t minor, uarg_t a, char *b)
 {
+	used(minor);
+	used(a);
+	used(b);
 	udata.u_error = ENOTTY;
 	return -1;
 }
@@ -438,8 +563,9 @@ int no_ioctl(uint_fast8_t minor, uarg_t a, char *b)
  */
 
 /* add something to the tail of the queue. */
-bool insq(register struct s_queue *q, uint_fast8_t c)
+bool insq(struct s_queue * qp, uint_fast8_t c)
 {
+	regptr struct s_queue *q = qp;
 	bool r;
 
 	irqflags_t irq = di();
@@ -461,7 +587,7 @@ bool insq(register struct s_queue *q, uint_fast8_t c)
 /* Remove something from the head of the queue. */
 bool remq(struct s_queue * qp, uint_fast8_t *cp)
 {
-	register struct s_queue *q = qp;
+	regptr struct s_queue *q = qp;
 	bool r;
 
 	irqflags_t irq = di();
@@ -484,7 +610,7 @@ bool remq(struct s_queue * qp, uint_fast8_t *cp)
 /* Clear the queue to empty conditions.  (UZI280 addition) */
 void clrq(struct s_queue *qp)
 {
-	register struct s_queue *q = qp;
+	regptr struct s_queue *q = qp;
 	irqflags_t irq = di();
 
 	q->q_head = q->q_tail = q->q_base;
@@ -495,8 +621,9 @@ void clrq(struct s_queue *qp)
 
 
 /* Remove something from the tail; the most recently added char. */
-bool uninsq(register struct s_queue *q, uint_fast8_t *cp)
+bool uninsq(struct s_queue *qp, uint_fast8_t *cp)
 {
+	regptr struct s_queue *q = qp;
 	bool r;
 	irqflags_t irq = di();
 
@@ -514,12 +641,12 @@ bool uninsq(register struct s_queue *q, uint_fast8_t *cp)
 }
 
 /* Returns true if the queue has more characters than its wakeup number */
-bool fullq(register struct s_queue *q)
+bool fullq(struct s_queue *q)
 {
-	if (q->q_count > q->q_wakeup) // WRS: shouldn't this be >= ?
-	        return true;
-	else
-		return false;
+    if (q->q_count > q->q_wakeup) // WRS: shouldn't this be >= ?
+        return true;
+    else
+        return false;
 }
 
 /*********************************************************************
@@ -560,42 +687,54 @@ int psleep_flags(void *p, uint_fast8_t flags)
 	return 0;
 }
 
-void kputs(register const char *p)
+void kputs(const char *p)
 {
 	while (*p)
 		kputchar(*p++);
 }
 
-static unsigned decimal[] = {
-#ifdef CONFIG_32BIT
-	1000000000,
-	100000000,
-	10000000,
-	1000000,
-	100000,
-#endif
-	10000,
-	1000,
-	100,
-	10,
-	0
-};
-
-static unsigned hex[] = {
-	4096, 256, 16, 0
-};
-
-void kputval(unsigned int n, unsigned *div, uint_fast8_t zp)
+static void putdigit0(uint_fast8_t c)
 {
-	static char const digit[] = "0123456789ABCDEF";
-	register unsigned i;
-	register uint_fast8_t c;
-	while((i = *div++) != 0) {
-		if (zp |= (c = n / i))
-			kputchar(digit[c & 15]);
-		n %= i;
+	kputchar("0123456789ABCDEF"[c & 15]);
+}
+
+static void putdigit(uint_fast8_t c, unsigned char *flag)
+{
+	if (c || *flag) {
+		*flag |= c;
+		putdigit0(c);
 	}
-	kputchar(digit[n & 15]);
+}
+
+void kputhex(unsigned int v)
+{
+	putdigit0(v >> 12);
+	putdigit0(v >> 8);
+	putdigit0(v >> 4);
+	putdigit0(v);
+}
+
+void kputhexbyte(unsigned int v)
+{
+	putdigit0(v >> 4);
+	putdigit0(v);
+}
+
+void kputunum(unsigned int v)
+{
+	unsigned char n = 0;
+#ifdef CONFIG_32BIT
+	putdigit((v / 1000000000) % 10, &n);
+	putdigit((v / 100000000) % 10, &n);
+	putdigit((v / 10000000) % 10, &n);
+	putdigit((v / 1000000) % 10, &n);
+	putdigit((v / 100000) % 10, &n);
+#endif
+	putdigit((v / 10000) % 10, &n);
+	putdigit((v / 1000) % 10, &n);
+	putdigit((v / 100) % 10, &n);
+	putdigit((v / 10) % 10, &n);
+	putdigit0(v % 10);
 }
 
 void kputnum(int v)
@@ -604,20 +743,14 @@ void kputnum(int v)
 		kputchar('-');
 		v = -v;
 	}
-	kputval(v, decimal, 0);
+	kputunum(v);
 }
 
-void kputhex(unsigned v)
-{
-	kputval(v, hex, 1);
-}
-
-void kprintf(const char *fmtp, ...)
+void kprintf(const char *fmt, ...)
 {
 	va_list ap;
-	register const char *fmt = fmtp;
 
-	va_start(ap, fmtp);
+	va_start(ap, fmt);
 	while (*fmt) {
 		if (*fmt == '%') {
 			fmt++;
@@ -644,6 +777,7 @@ void kprintf(const char *fmtp, ...)
 				case 'l': /* assume an x is following */
 				{
 					long l = va_arg(ap, unsigned long);
+					/* TODO: not 32-bit safe */
 					kputhex((uint16_t)(l >> 16));
 					kputhex((uint16_t)l);
 					fmt += 2;
@@ -653,7 +787,7 @@ void kprintf(const char *fmtp, ...)
 				case '2': /* assume an x is following */
 				{
 					char c = va_arg(ap, int);
-					kputval(c, hex + 2, 1);
+					kputhexbyte(c);
 					fmt += 2;
 					continue;
 				}
@@ -672,13 +806,15 @@ void kprintf(const char *fmtp, ...)
 					else if (*fmt == 'd')
 						kputnum(v);
 					else if (*fmt == 'u')
-						kputval(v, decimal, 0);
+						kputunum(v);
+
 					fmt++;
 					continue;
 				}
 			}
 		}
-		kputchar(*fmt++);
+		kputchar(*fmt);
+		fmt++;
 	}
 
 	va_end(ap);
@@ -688,7 +824,7 @@ void kprintf(const char *fmtp, ...)
 
 void bufdump(void)
 {
-	register bufptr j;
+	bufptr j;
 
 	kprintf("\ndev\tblock\tdirty\tbusy\ttime clock %d\n", bufclock);
 	for (j = bufpool; j < bufpool_end; ++j)
@@ -698,8 +834,8 @@ void bufdump(void)
 
 void idump(void)
 {
-	register inoptr ip;
-	register ptptr pp;
+	inoptr ip;
+	ptptr pp;
 	extern struct cinode i_tab[];
 
 	kprintf("Err %d root %d\n", udata.u_error, root - i_tab);
@@ -724,7 +860,7 @@ void idump(void)
 		kprintf("%d\t%d\t0x%x\t%d\t",
 			pp - ptab, pp->p_status, pp->p_wait, pp->p_pid);
 		kprintf("%d\t%d\t0x%x%x\t0x%x%x\n",
-			pp->p_pptr - ptab, pp->p_alarm,
+			pp->p_pptr - ptab, pp->p_alarm, 
 			/* kprintf has no %lx so we write out 32-bit
 			 * values as two 16-bit values instead */
 			pp->p_sig[0].s_pending, pp->p_sig[1].s_pending,

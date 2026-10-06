@@ -1,0 +1,135 @@
+/*
+ * WHAT MAY BE READ FROM FLASH - the read-only twin of
+ * default_text_excludes.incl, and the easier of the two.
+ *
+ * Named here means flash; left out means RAM.  Empty for stage 1, so
+ * nothing has moved yet.
+ *
+ * Constant tables are the cheapest win available: they are read, never
+ * written, and most are touched at human speed.  font1 alone is 2,680
+ * bytes and the keyboard maps are more.  The ones to leave in RAM are
+ * those read per pixel or per scanline - gfx_lut is built at run time
+ * so it is .data and never a candidate, but anything the expanders
+ * touch on the scanout path belongs in RAM whatever it is.
+ *
+ * Note that with -fdata-sections each object gets .rodata.<name>, so
+ * this is per table, by name.  The trailing * on each catches the
+ * suffixes the compiler can add.
+ */
+
+/* The six USB keyboard layouts, 808 bytes each.  Read once per
+ * keypress, which is as cold as anything gets. */
+*(.rodata.USkeyValue*)
+*(.rodata.UKkeyValue*)
+*(.rodata.DEkeyValue*)
+*(.rodata.FRkeyValue*)
+*(.rodata.ESkeyValue*)
+*(.rodata.BEkeyValue*)
+
+/* The console font, 2,692 bytes.  Read per glyph, not per pixel: the
+ * scanline expanders read disp_fb, which the glyph was drawn INTO, so
+ * the font is nowhere near the scanout deadline.  It is smaller than
+ * the 16K XIP cache, so a screen of text reads it from flash once. */
+*(.rodata.font1*)
+
+/* The other eight of MMBasic's built-in fonts (fonts.c), about 25K
+ * between them.  THIS ENTRY IS WHAT MAKES THEM AFFORDABLE: leave any
+ * one of them out and it lands in RAM instead, where 25K is a quarter
+ * of what the kernel has and the link fails outright - which is how
+ * this was discovered rather than shipped.
+ *
+ * Same argument as font1: read per glyph, drawn into a buffer the
+ * scanout reads later, so nowhere near the deadline.  The largest is
+ * Inconsola at 9,124 bytes, still short of the 16K XIP cache, so a
+ * screen of one font reads it from flash once. */
+*(.rodata.Misc_12x20_LE*)
+*(.rodata.Hom_16x24_LE*)
+*(.rodata.Fnt_10x16*)
+*(.rodata.Inconsola*)
+*(.rodata.ArialNumFontPlus*)
+*(.rodata.F_6x8_LE*)
+*(.rodata.TinyFont*)
+*(.rodata.font8x10*)
+*(.rodata.font_table*)
+
+/* The maths library's tables, and the export table itself.  Same
+ * argument as the fonts: read-only, read at human speed, and shared by
+ * every program rather than linked into each one. */
+*libm.a:*(.rodata*)
+*double_math.c.o(.rodata*)
+*(.rodata.libm_table*)
+
+/*
+ * ds3231.c's strings - about 208 bytes in four .rodata.str sections -
+ * are an obvious next candidate and were briefly added here to buy 32
+ * bytes of RAM for one more boot message.  Taken out again: the message
+ * was not worth it, and the build that carried it was never actually
+ * boot-tested, so nothing here is known about whether it works.  It is
+ * a candidate, not a hazard.
+ */
+
+/* The MMBasic synth's wave tables, 8K each and read per SAMPLE in the
+ * audio IRQ - but through the XIP cache, where a steady tone walks
+ * them near-sequentially.  16K of RAM back; if sustained notes ever
+ * crackle under cache pressure, these are the first suspects.
+ * mapping[] (404 bytes, per-sample per-voice) deliberately stays in
+ * RAM. */
+*sound.c.o(.rodata.SineTable*)
+*sound.c.o(.rodata.triangletable*)
+
+/* ---- CYW43 Wi-Fi and lwIP (PC3_NET builds only).  The firmware blob
+ * the driver DMAs into the chip at init is const data - about 230K of
+ * it - and it is read once per boot, over a link that runs at a few
+ * megabits.  Flash is exactly where it belongs.  See the matching
+ * block in default_text_excludes.incl. ---- */
+*lwip*.o(.rodata*)
+*cyw43*.o(.rodata*)
+*cybt_*.o(.rodata*)
+*async_context*.o(.rodata*)
+*net_cyw43.c.o(.rodata*)
+
+/* ---- CONSTANTS, which nothing executes.
+ *
+ * Read-only data was almost entirely unclaimed until now: only libm and
+ * the network stack named any, so every kernel string and table sat in
+ * RAM.  The single largest item in the whole RAM image was the merged
+ * string pool - every kprintf format string in the kernel - which ld
+ * attributes to devices.c.o because it merges .rodata.*.str1.4 across
+ * objects and lists the first contributor.
+ *
+ * The old worry was that rawflash and dhara print while the flash is
+ * busy.  That has been true of nothing since the flash filesystem was
+ * removed, and it was already unfounded: printf.c itself is in flash,
+ * so a kprintf on such a path would have hung long ago.
+ *
+ * A constant is not code.  Nothing here can be "reached from an
+ * interrupt" in the sense the text rules mean - the worst case is one
+ * cache miss on a format string in a panic path that is already
+ * fetching its formatter from flash. ---- */
+*devices.c.o(.rodata*)
+*main.c.o(.rodata*)
+*start.c.o(.rodata*)
+*filesys.c.o(.rodata*)
+*swapper.c.o(.rodata*)
+*usbkbd.c.o(.rodata*)
+*ds3231.c.o(.rodata*)
+*inode.c.o(.rodata*)
+*devio.c.o(.rodata*)
+*process.c.o(.rodata*)
+*kdata.c.o(.rodata*)
+*console.c.o(.rodata*)
+*lineedit.c.o(.rodata*)
+*misc.c.o(.rodata*)
+*syscall_fs.c.o(.rodata*)
+*syscall_proc.c.o(.rodata*)
+/* NOT tty.c: its code is called from the UART interrupt (tty_inproc),
+   so its constants can be read from one too.  A miss there is latency
+   rather than breakage, but it is the one object in this list where
+   that is true, and it is worth about a hundred bytes. */
+
+/* ---- mbedtls tables: AES S-boxes, curve parameters, OID tables.
+ * Constants, and large ones. ---- */
+*/mbedtls/*(.rodata*)
+*pico_mbedtls*(.rodata*)
+
+*pico_rand*(.rodata*)

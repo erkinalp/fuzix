@@ -1,0 +1,45 @@
+/*
+ * Main SRAM is split in two so the process memory pool has a fixed
+ * home of its own.
+ *
+ * progbase used to be an ordinary BSS array: the linker placed it
+ * after whatever the kernel happened to contain, so every build that
+ * changed the kernel's size silently moved every process image.  That
+ * corrupted user memory in ways that looked like application bugs.
+ *
+ * RAM holds the kernel and nothing else; PROGPOOL is exactly USERMEM
+ * and runs to the top of main SRAM, where the scratch banks begin.
+ * If the kernel outgrows its half the link now fails with "region RAM
+ * overflowed" instead of quietly relocating user memory.
+ *
+ * Main SRAM is 512K and this split uses ALL of it: RAM + PROGPOOL is
+ * exactly 0x80000.  There is no slack anywhere, so the two numbers
+ * below only ever move against each other.
+ *
+ * The kernel is no longer PICO_COPY_TO_RAM.  Most of it executes from
+ * flash (linker_overrides/default_text_excludes.incl names what), which
+ * took kernel code in RAM from 90,676 bytes to 70,472 and left the
+ * region 47K larger than it needs to be.  That is where the pool grew
+ * from: 312K originally, 308K when the text primitives needed 4K, and
+ * 340K now.
+ *
+ * The kernel currently uses 160,520 bytes of the 176,128 below, so
+ * there is about 15K of headroom.  If it runs out the link fails with
+ * "region RAM overflowed", which is the point - it is a loud error, not
+ * a silent relocation of user memory.  The valve when that happens is
+ * to move more code to flash rather than to take memory back from the
+ * pool.
+ *
+ * A process ceiling is not PROGSIZE (which is the whole pool) but
+ * "leave room for the biggest neighbour to be resident" -
+ * largest_neighbour() in swapper.c.
+ *
+ * KEEP THIS IN STEP WITH TOTALMEM in the Makefile: config.h sizes
+ * progbase[] from USERMEM and the two must describe the same region.
+ * Nothing checks that they agree.
+ */
+MEMORY
+{
+    RAM(rwx)     : ORIGIN = RAM_ORIGIN,           LENGTH = 0x2C000
+    PROGPOOL(rw) : ORIGIN = RAM_ORIGIN + 0x2C000, LENGTH = 336k
+}

@@ -14,14 +14,16 @@ int statvfs(const char *path, register struct statvfs *vfs)
         return -1;
     /* Now munge the data : assuming we know the fs type */
     switch(tmp.fs.s_mounted) {
-        case 12742:
-            break;		/* Mounted Fuzix FS */
+        case 12742:			/* Mounted classic Fuzix FS: eight 64-byte inodes per block */
+            ninode = (tmp.fs.s_isize - 2) * 8;
+            break;
+        case 0xFB32:		/* Mounted FS32 Fuzix FS: two 256-byte inodes per block */
+            ninode = (uint16_t)((tmp.fs.s_isize - 2) * 2);
+            break;
         default:
             errno = EINVAL;
             return -1;
     }
-
-    ninode = (tmp.fs.s_isize - 2) * 8;
     vfs->f_bsize = 512;
     vfs->f_frsize = 512;
     vfs->f_blocks = tmp.fs.s_fsize - tmp.fs.s_isize;

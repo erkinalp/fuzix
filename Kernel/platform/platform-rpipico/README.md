@@ -17,11 +17,11 @@ you can enable swapping to the SD card for up to 15.
 
 Out of the box:
 
-- /dev/hda is the NAND flash, containing the root filesystem. It can be
-  partitioned but there's no real point, so it isn't.
+- /dev/hda is the SD card, and partition 2 is the root filesystem.
+  Fuzix understands DOS partition tables.  It is not hot swappable: the
+  card is only probed at boot.
 
-- /dev/hdb is the SD card. Fuzix understands DOS partition tables. It's not hot
-  swappable as the SD card is only probed at boot time.
+- /dev/hdb is the PSRAM disc.
 
 If you have an SD card reader, connect the SD card to the following pins:
 
@@ -76,52 +76,31 @@ You do not need to install the [Raspberry Pi Pico
 SDK](https://www.raspberrypi.org/documentation/pico/getting-started/), up to
 date version will be pulled automatically from git.
 
-In the **root folder** of the FUZIX repository run:
+To build Pico and Pico W image, run: `make TARGET=rpipico SUBTARGET=pico_w
+diskimage` To build Pico 2 and Pico 2 W, run: `make TARGET=rpipico
+SUBTARGET=pico2 diskimage`
 
-* For original Pi Pico `make TARGET=rpipico SUBTARGET=pico`
-* For Pi Pico W `make TARGET=rpipico SUBTARGET=pico`
-* For Pi Pico 2 and Pico 2 W `make TARGET=rpipico SUBTARGET=pico2 diskimage`
-
-SD card image (32MB) is located at `Images/rpipico/filesys.img`.
-
-Flash image (if not using SD card) is at `Kernel/platform/platform-rpipico/filesystem.uf2`
-
-FUZIX kernel firmware is build in `Kernel/platform/platform-rpipico/build/fuzix.uf2`.
+Go to `Kernel/platform/platform-rpipico`.  You will see `build/fuzix.uf2`.
 
 ### Installing Kernel
 
 - Push and hold the BOOTSEL button as you plug usb into your computer.
-- Copy `Kernel/platform/platform-rpipico/filesystem.uf2` onto the storage device. After copying is done, Pico
+- Copy `build/fuzix.uf2` onto the storage device. After copying is done, Pico
   will restart into FUZIX.
 - To update the kernel, repeat the same procedure.
 
-### Installing filesystem onto flash
+### The flash filesystem is gone
 
-The Pico's built-in NAND flash is supported, appearing as `/dev/hda` insize
-Fuzix (the SD card is on `/dev/hdb`).  It's mapped via the Dhara FTL library, so
-you get proper wear levelling.  The FTL library requires empty flash sectors to
-work efficiently; the Fuzix filesystem has trim support, so the FTL library gets
-notified when sectors become free, but if the filesystem gets very full and
-Dhara runs out it can get extremely slow as it constantly does garbage
-collection.
-
-To flash the image either:
-
-- Follow the same steps as for the kernel using `Kernel/platform/platform-rpipico/filesystem.uf2` file.
-- **OR** Using picotool
-  - Connect computer to UART 0 on the Pico using USB to UART adapter.
-  - Copy `filesystem.ftl` to the board by executing `picotool load
-    filesystem.ftl -t bin -o 0x10018000`.
-
-### Installing filesystem onto SD card
-
-If you want to use an SD card, note that only filesystems up to 32MB are
-supported.
-
-Filesystem image files are located in `Images/rpipico/filesys.img`.
+Earlier versions of this port put a Dhara FTL over the XIP flash and
+mounted it as `/dev/hda`. It was removed: it was never a release asset
+- the SD card has always been the root - and it pinned 7,912 bytes of
+SRAM in place, because code cannot execute from a device it is
+erasing. `config.h` has the full argument. There is no
+`filesystem.uf2` any more, and `mkftl` is not run.
 
 Partition SD card on your computer using MBR partition scheme then create 32MB
-partition. If using Linux or MacOS you can then copy `filesys.img` onto the SD card using `dd` command.
+partition. If using Linux or MacOS you can then copy `filesys.img` or
+`filesys8.img` onto the SD card using `dd` command.
 
 ``` dd if=filesystem.img of=/dev/sdXn oflag=direct bs=8192 ```
 
@@ -159,7 +138,7 @@ Then use the `swapon` command to enable swap. You can see swap usage with
 Device    Boot  Head Sector Cylinder   Head Sector Cylinder  Type  Sector count
 
 /dev/hdb1        33      3        0     38      6        1    83          4096
-/dev/hdb2        38      7        1     58      8       18    83         65536
+/dev/hda2        38      7        1     58      8       18    83         65536
 # swapon /dev/hdb1 4096
 # free
          total         used         free
@@ -177,8 +156,21 @@ You probably can swap to the NAND flash, but it's a terrible idea.
 There are many, the biggest of which are:
 
 - CPU exceptions should be mapped to signals.
+- **An inode can reach the free list twice, so the kernel can allocate
+  an inode that is a live file.** Contained by guards, not fixed. This
+  one matters - see `NOTES-inode-freelist.md`, which is written to be
+  picked up cold. If you see `i_alloc: N in free list but in use` or
+  `i_free: N freed twice`, that is this, being caught.
 
 ...and probably others.
+
+## Notes in this directory
+
+- `NOTES-inode-freelist.md` - the inode double free, open
+- `NOTES-process-memory.md` - the progbase alignment bug, solved
+- `PC3-DEVNOTES.md` - as-built notes for the Pico Computer 3
+- `PC3-GFX-DESIGN.md` - the framebuffer and GFXIOC design
+- `devtools/README.md` - driving the board over the console from a host
 
 ## Postscript
 

@@ -37,10 +37,10 @@ static uint8_t getcf(void)
 
 inoptr n_open(uint8_t *namep, inoptr *parent)
 {
-    register inoptr wd;     /* the directory we are currently searching. */
-    register inoptr ninode;
-    register uint8_t *fp;
-    register inoptr temp;
+    staticfast inoptr wd;     /* the directory we are currently searching. */
+    staticfast inoptr ninode;
+    regptr uint8_t *fp;
+    regptr inoptr temp;
     uint8_t c;
     usize_t len;
 
@@ -206,6 +206,8 @@ inoptr srch_dir(register inoptr wd, uint8_t *compname)
     int nblocks;
     uint16_t inum;
 
+    i_lock(wd);
+
     nblocks = inode_blocks(wd);
 
     for(curblock=0; curblock < nblocks; ++curblock) {
@@ -217,11 +219,13 @@ inoptr srch_dir(register inoptr wd, uint8_t *compname)
             if(namecomp(compname, d->d_name)) {
                 inum = d->d_ino;
                 brelse(buf);
+                i_unlock(wd);
                 return i_open(wd->c_dev, inum);
             }
         }
         brelse(buf);
     }
+    i_unlock(wd);
     return NULLINODE;
 }
 
@@ -231,10 +235,10 @@ inoptr srch_dir(register inoptr wd, uint8_t *compname)
  * root of the mounted filesystem.
  */
 
-inoptr srch_mt(inoptr ino)
+inoptr srch_mt(register inoptr ino)
 {
-    register struct mount *m = &fs_tab[0];
     register uint_fast8_t j;
+    register struct mount *m = &fs_tab[0];
 
     for(j=0; j < NMOUNTS; ++j){
         if(m->m_dev != NO_DEVICE &&  m->m_mntpt == ino) {
@@ -247,15 +251,6 @@ inoptr srch_mt(inoptr ino)
 }
 
 
-/* Most of the time we open the first argument with no
- * parent info needed. So we have a helper
- */
-
-inoptr n_open_argn(void)
-{
-    return n_open((uint8_t *)udata.u_argn, NULL);
-}
-
 /* I_open is given an inode number and a device number,
  * and makes an entry in the inode table for them, or
  * increases it reference count if it is already there.
@@ -266,12 +261,13 @@ inoptr n_open_argn(void)
  * inodes.
  */
 
-inoptr i_open(uint16_t dev, uint16_t ino)
+inoptr i_open(register uint16_t dev, uint16_t ino)
 {
     register inoptr nindex;
     register inoptr j;
     struct mount *m;
     bool isnew = false;
+    bool cached = false;
 
     validchk(dev, PANIC_IOPEN);
 
@@ -300,6 +296,7 @@ inoptr i_open(uint16_t dev, uint16_t ino)
 
         if(j->c_dev == dev && j->c_num == ino) {
             nindex = j;
+            cached = true;
             goto found;
         }
     }
@@ -307,11 +304,14 @@ inoptr i_open(uint16_t dev, uint16_t ino)
 
     if(!nindex){      /* No unrefed slots in inode table */
         udata.u_error = ENFILE;
-        return(NULLINODE);
+        goto lost;
     }
 
     if (breadi(dev, ino, &nindex->c_node))
-        return NULLINODE;
+        goto lost;
+#ifdef CONFIG_FS_TRIPWIRE_DEEP
+    ino_blocks_check(dev, ino, &nindex->c_node, "read");
+#endif
 
     nindex->c_dev = dev;
     nindex->c_num = ino;
@@ -320,23 +320,88 @@ inoptr i_open(uint16_t dev, uint16_t ino)
     nindex->c_flags = (m->m_flags & MS_RDONLY) ? CRDONLY : 0;
 found:
     if(isnew) {
+        /*
+         * A freshly allocated inode has to be checked against the
+         * disk, not against whatever this table entry still holds
+         * from the last file that used this inode number.
+         *
+         * The loop above takes a matching entry whatever its
+         * reference count, and that path does not read the inode - so
+         * a newly allocated number that happened to be cached was
+         * validated against a stale copy. The in-core inode and the
+         * disk then disagree, and the next i_deref frees an inode
+         * that is really in use, putting a live file on the free
+         * list.
+         */
+        if (cached) {
+            /*
+             * ...unless the entry is in use. If i_alloc has handed out
+             * an inode that is open, the in-core copy belongs to the
+             * file using it and holds block pointers and a size that
+             * are not on disk yet. Overwriting it here loses all of
+             * that, and the stale copy is then written back at close -
+             * a 24K file was destroyed exactly this way. Refuse the
+             * allocation instead and leave the open file alone.
+             */
+            if (nindex->c_refs)
+                goto badino;
+            if (breadi(dev, ino, &nindex->c_node))
+                return NULLINODE;
+        }
         if(nindex->c_node.i_nlink || nindex->c_node.i_mode & F_MASK)
             goto badino;
     } else {
         if(!(nindex->c_node.i_nlink && nindex->c_node.i_mode & F_MASK))
             goto badino;
     }
+    /* Coming back into use from unreferenced: a pipe's stream
+       positions start fresh.  A recycled slot otherwise hands a new
+       FIFO the positions of a dead one - and while any opener holds
+       the inode (c_refs >= 1) the stream survives the per-message
+       writers a FIFO client typically is. */
+    if (nindex->c_refs == 0) {
+        nindex->c_pipe_roff = 0;
+        nindex->c_pipe_woff = 0;
+    }
     nindex->c_refs++;
     return nindex;
 
 badino:
-    kputs("i_open: bad disk inode\n");
+    /*
+     * Say which inode and what was wrong with it. The bare message
+     * this replaces gave no way to tell an allocator handing out a
+     * live inode from a directory entry pointing at a dead one, and
+     * the caller turns this into ENFILE - "File table overflow" -
+     * which sends you looking at the wrong thing entirely.
+     */
+    kprintf("i_open: bad inode %u %s mode %x nlink %u\n",
+            (uint16_t)ino, isnew ? "new" : "old",
+            (uint16_t)nindex->c_node.i_mode,
+            (uint16_t)nindex->c_node.i_nlink);
+    return NULLINODE;
+
+lost:
+    /*
+     * We allocated an inode and are now failing for an unrelated
+     * reason. Give it back, or it stays marked in use with nothing
+     * pointing at it and s_tinode drifts down by one every time. That
+     * is the "free inode count in superblock is N, should be N+31"
+     * fsck reports after a heavy run.
+     *
+     * Only on these paths. A badino failure with isnew means the inode
+     * we were handed is a live file, and freeing it again is precisely
+     * the thing being fixed.
+     */
+    if (isnew)
+        i_free(dev, ino);
     return NULLINODE;
 }
 
 bool emptydir(register inoptr wd)
 {
     struct direct curentry;
+
+    i_islocked(wd);
 
     udata.u_offset =  2 * DIR_LEN;	/* . .. ignored */
 
@@ -365,18 +430,12 @@ bool emptydir(register inoptr wd)
  * or the user did not have write permission.
  */
 
-/* This needs a proper home */
-void namecpy(register uint8_t *to, register uint8_t *from, unsigned len)
-{
-    while(*from && len--)
-        *to++ = *from++;
-    while(len--)
-        *to++ = 0;
-}
-
 bool ch_link(register inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nindex)
 {
     struct direct curentry;
+    register int i;
+
+    i_islocked(wd);
 
     if (wd->c_flags & CRDONLY) {
         udata.u_error = EROFS;
@@ -416,7 +475,13 @@ bool ch_link(register inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nind
         return false;                  /* Entry not found */
     }
 
-    namecpy(curentry.d_name, newname, FILENAME_LEN);
+    memcpy(curentry.d_name, newname, FILENAME_LEN);
+    /* FIXME: add strncpy and use for this */
+    for(i = 0; i < FILENAME_LEN; ++i)
+        if(curentry.d_name[i] == '\0')
+            break;
+    for(; i < FILENAME_LEN; ++i)
+        curentry.d_name[i] = '\0';
 
     if(nindex)
         curentry.d_ino = nindex->c_num;
@@ -451,7 +516,7 @@ bool ch_link(register inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nind
  * TODO: This generates crap code on most compilers so we probably ought to
  * turn it into platform asm code.
  */
-bool namecomp(register uint8_t *n1, register uint8_t *n2) // return true if n1 == n2
+bool namecomp(uint8_t *n1, uint8_t *n2) // return true if n1 == n2
 {
     uint_fast8_t n; // do we have enough variables called n?
 
@@ -511,6 +576,8 @@ inoptr newfile(register inoptr pino, uint8_t *name)
         goto nogood;
     }
 
+    i_lock(pino);	/* Lock in tree order */
+    i_lock(ino);
     /* This does not implement BSD style "sticky" groups */
     nindex->c_node.i_uid = udata.u_euid;
     nindex->c_node.i_gid = udata.u_egid;
@@ -518,20 +585,24 @@ inoptr newfile(register inoptr pino, uint8_t *name)
     nindex->c_node.i_mode = F_REG;   /* For the time being */
     nindex->c_node.i_nlink = 1;
     nindex->c_node.i_size = 0;
-    for (j = 0; j < 20; j++) {
-        nindex->c_node.i_addr[j] = 0;
-    }
+    /* All pointers, and the reserved regions the format requires to be
+       written as zero - the slot may hold stale bytes from a previous
+       life of this inode on disk. */
+    memset(nindex->c_node.i_addr, 0, sizeof(nindex->c_node.i_addr));
+    memset(nindex->c_node.i_timeh, 0, sizeof(nindex->c_node.i_timeh));
+    nindex->c_node.i_pad = 0;
+    /* The on-disk reserved tail is not in core; bwritei zeroes it */
     wr_inode(nindex);
     if (!ch_link(pino, (uint8_t *)"", name, nindex)) {
         i_deref(nindex);
 	/* ch_link sets udata.u_error */
         goto nogood;
     }
-    i_deref(pino);
+    i_unlock_deref(pino);
     return nindex;
 
 nogood:
-    i_deref(pino);
+    i_unlock_deref(pino);
     return NULLINODE;
 }
 
@@ -540,6 +611,82 @@ nogood:
  * table.  Also time-stamp the superblock of dev, and mark it modified.
  * Used when freeing and allocating blocks and inodes.
  */
+
+#ifdef CONFIG_FS_TRIPWIRE_DEEP
+/*
+ *	Superblock tripwire.
+ *
+ *	Filesystem corruption on this port has twice been discovered long
+ *	after the fact, by blk_alloc or i_alloc finding nonsense and by
+ *	fsck afterwards - by which time the damage is done and there is
+ *	nothing left to say who did it.  This checks the superblock's
+ *	invariants at every filesystem operation instead, so the first
+ *	operation after the damage stops the machine with the field named
+ *	rather than the hundredth one destroying a file.
+ *
+ *	It checks invariants rather than comparing against a saved copy:
+ *	half of a superblock changes legitimately on every allocation, so
+ *	a byte compare would cry wolf constantly, and it would cost 900
+ *	bytes of kernel memory this platform does not have spare.
+ *
+ *	Everything below must hold for any superblock the kernel is
+ *	willing to allocate from.  If one does not, the filesystem is
+ *	already damaged and going further writes the damage to the card.
+ */
+static void sb_validate(struct mount *mnt, const char *where)
+{
+    fsptr fs = &mnt->m_fs;
+    const char *why = NULL;
+    uint32_t bad = 0;
+    int i;
+
+    if (fs->s_mounted != SMOUNTED) {
+        why = "magic"; bad = fs->s_mounted;
+    } else if (fs->s_version != FS32_VERSION) {
+        why = "version"; bad = fs->s_version;
+    } else if (fs->s_isize < 2 || fs->s_isize >= fs->s_fsize) {
+        why = "isize"; bad = fs->s_isize;
+    } else if (fs->s_nfree > FILESYS_TABSIZE) {
+        why = "nfree"; bad = fs->s_nfree;
+    } else if (fs->s_ninode < 0 || fs->s_ninode > FILESYS_TABSIZE) {
+        why = "ninode"; bad = (uint16_t)fs->s_ninode;
+    } else if (fs->s_tfree > fs->s_fsize) {
+        why = "tfree"; bad = fs->s_tfree;
+    } else {
+        /* A free block must be zero (the end of the list) or lie in
+           the data area - never in the superblock or the inodes. */
+        for (i = 0; i < fs->s_nfree; i++) {
+            blkno_t b = fs->s_free[i];
+            if (b && (b < fs->s_isize || b >= fs->s_fsize)) {
+                why = "free"; bad = b;
+                break;
+            }
+        }
+        if (!why) {
+            for (i = 0; i < fs->s_ninode; i++) {
+                uint16_t n = fs->s_inode[i];
+                if (n < 2 || n >= (fs->s_isize - 2) * INO_PER_BLOCK) {
+                    why = "inode"; bad = n;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (why) {
+        kprintf("\nsuperblock tripwire: dev %u bad %s = %u at %s\n",
+                mnt->m_dev, why, bad, where);
+        kprintf("  mounted %u isize %u fsize %u nfree %u ninode %d\n",
+                mnt->m_fs.s_mounted, mnt->m_fs.s_isize, mnt->m_fs.s_fsize,
+                mnt->m_fs.s_nfree, mnt->m_fs.s_ninode);
+        kprintf("  tfree %u tinode %u fmod %u\n",
+                mnt->m_fs.s_tfree, mnt->m_fs.s_tinode, mnt->m_fs.s_fmod);
+        panic("superblock");
+    }
+}
+#else
+#define sb_validate(mnt, where) do { } while (0)
+#endif
 
 fsptr getdev(uint16_t dev)
 {
@@ -553,6 +700,9 @@ fsptr getdev(uint16_t dev)
         /* Return needed to persuade SDCC all is ok */
         return NULL;
     }
+    /* Every filesystem operation comes through here, so this is the
+       one place that sees them all. */
+    sb_validate(mnt, "getdev");
     if (!(mnt->m_flags & MS_RDONLY)) {
         rdtime(&t);
         mnt->m_fs.s_time = t.low;
@@ -577,6 +727,14 @@ bool inline baddev(fsptr dev)
  * This will need to happen under the superblock lock once we do sleeping
  */
 
+/*
+ *	DEBUG: which code path put each free list entry there - 'F' for
+ *	i_free, 'S' for the disk scan. When i_alloc finds a live inode on
+ *	the list this says where it came from, which is the one thing the
+ *	message on its own could never tell us. Indexed the same as
+ *	dev->s_inode[]; single device is fine for the purpose.
+ */
+
 uint16_t i_alloc(uint16_t devno)
 {
     staticfast fsptr dev;
@@ -584,21 +742,63 @@ uint16_t i_alloc(uint16_t devno)
     register struct dinode *di;
     staticfast uint16_t j;
     register struct blkbuf *buf;
+    staticfast struct mount *mnt;
     uint16_t k;
     unsigned ino;
+    uint16_t ret;
 
-    if(baddev(dev = getdev(devno)))
-        goto corrupt;
+    if(baddev(dev = getdev(devno))) {
+        /* Before the lock is held, so report and leave directly */
+        kputs("i_alloc: corrupt superblock\n");
+        dev->s_mounted = 1;
+        udata.u_error = ENOSPC;
+        return 0;
+    }
+
+    /*
+     * V7's s_ilock, which this function's own comment asked for. The
+     * rebuild below refills s_inode[] from index 0 and only assigns
+     * s_ninode when it has finished, and it sleeps in block I/O to get
+     * there. Two processes creating files at once therefore ran two
+     * rebuilds into one array: the second overwrote entries the first
+     * had already handed out, and those inodes came back round as free
+     * while they were live files.
+     */
+    mnt = fs_tab_get(devno);
+    while (mnt->m_ilock)
+        psleep(&mnt->m_ilock);
+    mnt->m_ilock = 1;
 
 tryagain:
-    if(dev->s_ninode) {
+    while(dev->s_ninode) {
+        struct dinode check;
         if(!(dev->s_tinode))
             goto corrupt;
         ino = dev->s_inode[--dev->s_ninode];
-        if(ino < 2 || ino >=(dev->s_isize-2)*8)
+        if(ino < 2 || ino >=(dev->s_isize-2)*INO_PER_BLOCK)
             goto corrupt;
+        /*
+         * The free list is a cache written by whoever last had the
+         * filesystem, and it can be wrong: an entry may name an inode
+         * that is now a live file. Handing that out corrupts the file
+         * that owns it, so check the inode on disk before believing
+         * the list. The block is almost always in the buffer cache,
+         * and being wrong here is expensive enough to be worth a read.
+         */
+        if (breadi(devno, ino, &check) == 0 &&
+            (check.i_mode || check.i_nlink)) {
+            kprintf("i_alloc: %u in free list but in use (mode %x nlink %u)\n",
+                    (uint16_t)ino,
+                    (uint16_t)check.i_mode, (uint16_t)check.i_nlink);
+            /* It was never free, so the count that said it was is one
+               too high. Repair it rather than carrying the error. */
+            if (dev->s_tinode)
+                --dev->s_tinode;
+            continue;		/* try the next entry */
+        }
         --dev->s_tinode;
-        return(ino);
+        ret = ino;
+        goto done_unlock;
     }
     /* We must scan the inodes, and fill up the table */
 
@@ -610,9 +810,34 @@ tryagain:
             goto corrupt;
         for(j=0; j < INO_PER_BLOCK; j++) {
             /* Optimisation: add offsetof and use that to reduce blkptr range */
-            di = blkptr(buf, sizeof(struct dinode) * j, sizeof(struct dinode));
-            if(!(di->i_mode || di->i_nlink))
-                dev->s_inode[k++] = INO_PER_BLOCK * (blk - 2) + j;
+            di = blkptr(buf, DINODE_SIZE * j, sizeof(struct dinode));
+            if(!(di->i_mode || di->i_nlink)) {
+                register inoptr itp;
+                ino = INO_PER_BLOCK * (blk - 2) + j;
+                /*
+                 * An inode that is in core is not free, whatever the
+                 * disk says. The in-core copy is the newer one and the
+                 * disk has simply not caught up: _pipe() sets i_mode
+                 * to F_PIPE in core and never writes it, newfile() has
+                 * a window between i_open() and wr_inode(), and sync()
+                 * above only flushes entries with c_refs > 0.
+                 *
+                 * Without this the scan puts live objects on the free
+                 * list and i_alloc hands them out a second time. That
+                 * is the inode double free: the pipes a shell creates
+                 * for every command are the common case, which is why
+                 * it took a compiler driver to provoke it.
+                 *
+                 * V7's ialloc() has exactly this check and it is the
+                 * only thing protecting it, since V7 does not write a
+                 * newly allocated inode to disk either.
+                 */
+                for (itp = i_tab; itp < i_tab + ITABSIZE; itp++)
+                    if (itp->c_dev == devno && itp->c_num == ino)
+                        goto skip;
+                dev->s_inode[k++] = ino;
+            }
+skip:
             if(k == FILESYS_TABSIZE) {
                 brelse(buf);
                 goto done;
@@ -622,11 +847,15 @@ tryagain:
     }
 
 done:
+    /* Each (block, slot) is visited exactly once, so the scan cannot
+       produce an internal duplicate; the in-core check above is what
+       stops it duplicating something that is already live. */
     if(!k) {
         if(dev->s_tinode)
             goto corrupt;
         udata.u_error = ENOSPC;
-        return(0);
+        ret = 0;
+        goto done_unlock;
     }
     dev->s_ninode = k;
     goto tryagain;
@@ -635,7 +864,12 @@ corrupt:
     kputs("i_alloc: corrupt superblock\n");
     dev->s_mounted = 1;
     udata.u_error = ENOSPC;
-    return(0);
+    ret = 0;
+
+done_unlock:
+    mnt->m_ilock = 0;
+    wakeup(&mnt->m_ilock);
+    return ret;
 }
 
 
@@ -649,16 +883,59 @@ corrupt:
 void i_free(uint16_t devno, uint16_t ino)
 {
     register fsptr dev;
+    struct mount *mnt;
+    uint16_t i;		/* DEBUG */
 
     if(baddev(dev = getdev(devno)))
         return;
 
-    if(ino < 2 || ino >=(dev->s_isize-2)*8)
+    if(ino < 2 || ino >=(dev->s_isize-2)*INO_PER_BLOCK)
         panic(PANIC_IFREE_BADI);
 
+    /*
+     * If a rebuild is in progress, keep away from the list entirely -
+     * this is what V7's ifree() does. The rebuild refills s_inode[]
+     * from index 0 and assigns s_ninode at the end, so anything pushed
+     * while it runs is simply overwritten, and the inode is lost from
+     * the cache while still counted as allocated. The inode is already
+     * clear on disk, so the next scan will find it; the cache is only
+     * a cache.
+     */
+    mnt = fs_tab_get(devno);
+    if (mnt && mnt->m_ilock) {
+        ++dev->s_tinode;
+        return;
+    }
+
+    /*
+     * An inode may appear on the free list at most once. Nothing here
+     * ever checked, and i_deref does reach its freeing branch twice
+     * for the same inode - so the list ended up holding it twice, and
+     * the second allocation handed out a live file. That is the fault
+     * behind "i_open: bad disk inode", which the create path then
+     * reports as the entirely misleading ENFILE.
+     *
+     * Enforce the invariant where it is broken. Freeing something
+     * already free is a no-op, not a reason to add it again. The list
+     * is at most FILESYS_TABSIZE entries, so the scan is cheap next to
+     * the block I/O around it.
+     *
+     * This is a guard, not a cure: the double deref that provokes it
+     * is still there and still worth finding. It is safe to fix here
+     * because the invariant is the thing that matters - an allocator
+     * must never hand out the same object twice.
+     */
+    for (i = 0; i < dev->s_ninode; i++) {
+        if (dev->s_inode[i] == ino) {
+            kprintf("i_free: %u freed twice\n", (uint16_t)ino);
+            return;
+        }
+    }
+
     ++dev->s_tinode;
-    if(dev->s_ninode < FILESYS_TABSIZE)
+    if(dev->s_ninode < FILESYS_TABSIZE) {
         dev->s_inode[dev->s_ninode++] = ino;
+    }
 }
 
 
@@ -697,9 +974,16 @@ blkno_t blk_alloc(uint16_t devno)
         buf = bread(devno, newno, 0);
         if (buf == NULL)
             goto corrupt;
-        blktok(&dev->s_nfree, buf, 0,
-            sizeof(dev->s_nfree) + FILESYS_TABSIZE * sizeof(blkno_t));
-        /* This assumes no padding: this is an UZI era assumption */
+        /*
+         * The chain block is the explicit fblk layout of
+         * FS32-FORMAT.md - count at 0, pad at 2, entries at 4 - never
+         * the classic memory-overlay from &s_nfree, whose shape was an
+         * accident of struct packing (and in the new superblock
+         * s_tinode sits between the two fields, so the overlay would
+         * be wrong as well as fragile).  Two copies, one per field.
+         */
+        blktok(&dev->s_nfree, buf, 0, sizeof(dev->s_nfree));
+        blktok(dev->s_free, buf, 4, sizeof(dev->s_free));
         brelse(buf);
     }
 
@@ -753,9 +1037,15 @@ void blk_free(uint16_t devno, blkno_t blk)
     if(dev->s_nfree == FILESYS_TABSIZE) {
         buf = bread(devno, blk, 1);
         if (buf) {
-            /* nfree must directly preceed the blocks and without padding. That's
-               the assumption UZI always had */
-            blkfromk(&dev->s_nfree, buf, 0, sizeof(int) + 50 * sizeof(blkno_t));
+            /* Explicit fblk layout: count at 0, pad at 2, entries at
+               4.  See the matching read in blk_alloc().  Zero the
+               whole block first: the rewrite buffer holds whatever
+               block it last cached, and writing only the fblk region
+               would leak 300 bytes of somebody's data into a free
+               block. */
+            blkzero(buf);
+            blkfromk(&dev->s_nfree, buf, 0, sizeof(dev->s_nfree));
+            blkfromk(dev->s_free, buf, 4, sizeof(dev->s_free));
             bawrite(buf);
             dev->s_nfree = 0;
         } else
@@ -773,13 +1063,12 @@ void blk_free(uint16_t devno, blkno_t blk)
 
 int_fast8_t oft_alloc(void)
 {
-    register struct oft *ofp;
-    register uint_fast8_t j = 0;
+    register uint_fast8_t j;
 
-    for(ofp = of_tab; ofp < of_tab + OFTSIZE ; ++ofp, ++j) {
-        if(ofp->o_refs == 0) {
-            ofp->o_refs = 1;
-            ofp->o_inode = NULLINODE;
+    for(j=0; j < OFTSIZE ; ++j) {
+        if(of_tab[j].o_refs == 0) {
+            of_tab[j].o_refs = 1;
+            of_tab[j].o_inode = NULLINODE;
             return j;
         }
     }
@@ -830,12 +1119,12 @@ void oft_deref(uint_fast8_t of)
 
 int_fast8_t uf_alloc_n(uint_fast8_t base)
 {
-    register uint8_t *p = udata.u_files;
+    register uint_fast8_t j;
 
-    while(p < udata.u_files + UFTSIZE) {
-        if(*p == NO_FILE)
-            return p - udata.u_files;
-        p++;
+    for(j=base; j < UFTSIZE ; ++j) {
+        if(udata.u_files[j] == NO_FILE) {
+            return j;
+        }
     }
     udata.u_error = EMFILE;
     return -1;
@@ -853,6 +1142,31 @@ int_fast8_t uf_alloc(void)
  * links, the inode itself and its blocks(if not a device) is freed.
  */
 
+/*
+ *	Compare this with V7's iput(), which is where it comes from. Four
+ *	things had drifted, and together they are the inode double free:
+ *
+ *	  * V7 does all of the destruction with i_count still 1 and only
+ *	    decrements at the very end. This decremented first, so from
+ *	    f_trunc() - which does block I/O - until the end of the
+ *	    function the table entry read as unreferenced and i_open()
+ *	    would hand it out as a free slot to whoever ran next.
+ *	  * V7 frees on i_nlink <= 0 alone. This also required CDIRTY, so
+ *	    an inode whose last link and last reference went away without
+ *	    anything having dirtied it was never returned to the free list
+ *	    and never had its mode cleared on disk - it stayed allocated
+ *	    with nothing pointing at it.
+ *	  * V7 finishes with "ip->i_flag = 0; ip->i_number = 0;" - the
+ *	    cache entry is dead and can never be found again. This left
+ *	    c_num set, so a later i_open could still match the entry by
+ *	    number and validate against a copy of an inode that no longer
+ *	    described anything. That is where the in-core inode and the
+ *	    disk came to disagree.
+ *	  * V7 holds ILOCK across itrunc. i_lock() is a no-op in this
+ *	    configuration (kernel.h), so there is no lock to hold; keeping
+ *	    the reference is what stands in for it.
+ */
+
 void i_deref(register inoptr ino)
 {
     uint_fast8_t mode = getmode(ino);
@@ -865,26 +1179,59 @@ void i_deref(register inoptr ino)
     if (mode == MODE_R(F_PIPE))
         wakeup((uint8_t *)ino);
 
-    /* If the inode has no links and no refs, it must have
-       its blocks freed. */
-
-    if(!(--ino->c_refs || ino->c_node.i_nlink))
-        /*
-           SN (mcy)
-           */
-        if (mode == MODE_R(F_REG) || mode == MODE_R(F_DIR) || mode == MODE_R(F_PIPE))
-            f_trunc(ino);
-
-    /* If the inode was modified, we must write it to disk. */
-    if(!(ino->c_refs) && (ino->c_flags & CDIRTY))
-    {
-        if(!(ino->c_node.i_nlink))
-        {
+    if (ino->c_refs == 1) {
+        /* Last reference. Do not drop it until the object is gone. */
+        if (!ino->c_node.i_nlink && !(ino->c_flags & CRDONLY)) {
+            /* No links and no other users: the file ceases to exist */
+            if (mode == MODE_R(F_REG) || mode == MODE_R(F_DIR) ||
+                mode == MODE_R(F_PIPE))
+                f_trunc(ino);
+            else
+                /*
+                 * Everything else reaches the disk with whatever its
+                 * block list holds, and f_trunc_blocks() - which
+                 * zeroes each pointer as it frees the block - is the
+                 * only thing that ever clears it.  So the invariant
+                 * every other path depends on, that a FREE inode has
+                 * a zero block list, held only for the three modes
+                 * above.  i_open() accepts an inode as fresh on
+                 * "i_mode == 0 && i_nlink == 0" alone and hands the
+                 * caller i_addr[] unexamined, so a stale pointer
+                 * becomes one of the new file's data blocks and
+                 * blk_free() panics on it when that file dies.
+                 *
+                 * A device inode keeps its device number in
+                 * i_addr[0], so unlinking one has always been able to
+                 * do this; sockets kept the socket number there and
+                 * did it every time one was closed.
+                 */
+                memset(ino->c_node.i_addr, 0,
+                       sizeof(ino->c_node.i_addr));
             ino->c_node.i_mode = 0;
+            /* Zeroing the mode has to reach the disk, or i_alloc's
+               scan will not see the inode as free either */
+            ino->c_flags |= CDIRTY;
+            wr_inode(ino);
+            /*
+             * Only now is it safe to list it. Freeing before the
+             * cleared inode reached the disk left a window in which
+             * the list said "free" and the disk still described a live
+             * file, which is what i_alloc's validation reads.
+             */
             i_free(ino->c_dev, ino->c_num);
         }
-        wr_inode(ino);
+
+        /* If the inode was modified, we must write it to disk. */
+        if (ino->c_flags & CDIRTY)
+            wr_inode(ino);
+
+        if (!ino->c_node.i_nlink) {
+            /* Dead. Make the entry unfindable, as V7 does. */
+            ino->c_num = 0;
+            ino->c_flags = 0;
+        }
     }
+    ino->c_refs--;
 }
 
 void corrupt_fs(uint16_t devno)
@@ -903,6 +1250,9 @@ void wr_inode(register inoptr ino)
     blkno_t blkno;
 */
     magic(ino);
+#ifdef CONFIG_FS_TRIPWIRE_DEEP
+    ino_blocks_check(ino->c_dev, ino->c_num, &ino->c_node, "write");
+#endif
 
     if (bwritei(ino))
         corrupt_fs(ino->c_dev);
@@ -931,63 +1281,74 @@ uint16_t devnum(inoptr ino)
  *	very important so that they end up on the freelist in the
  *	order we want to allocate them.
  */
-int f_trunc_blocks(register inoptr ino, uint16_t nblock)
+int f_trunc_blocks(register inoptr ino, blkno_t nblock)
 {
     register uint16_t dev;
     register int_fast8_t j;
-    uint16_t map1 = 0;
-    uint16_t map2 = 0;
+    blkno_t keep;
+    uint_fast8_t dkeep;
 
     if (ino->c_flags & CRDONLY) {
         udata.u_error = EROFS;
         return -1;
     }
 
-    /* Block offsets are
-        0-17 direct
-        18 256 blocks (18-273)
-        19 256 * 256 blocks (274-65810)
-
-        (We only allow 65535 block offset in order to keep a lot of stuff
-         uint16_t - FIXME to fix u writei())
-
-        We don't support triple indirect blocks.
+    /* FS32 block offsets are
+        0..39                direct
+        40..167              single indirect
+        168..16551           double indirect
+        16552..2113703       triple indirect
 
         When we are called nblock is the number of blocks that will
-        remain in the file when we truncate it
+        remain in the file when we truncate it.
 
-        We set map1 to the number of blocks we must purge for single
-        indirect. We set map2 for the number of blocks we must purge
-        of double indirect.
+        For each indirect tree we hand freeblk() the number of DATA
+        blocks to RETAIN in that subtree; it frees everything above
+        that, zeroes the pointers to what it freed, and frees the root
+        itself only when nothing is retained.  A fully-retained tree is
+        not touched at all.
 
-        freeblk frees full subblocks above the block passed, and then frees
-        blocks >> 8 on the last iteration to partially clear the last set
+        (The classic version packed per-level purge counts into a
+        uint16 and its internal-buffer variant freed the retained
+        children too - partial truncate was broken upstream.  This
+        rewrite is the fix as well as the port; see FS32-FORMAT.md.)
+
+        History note: full truncation leaving a root pointer behind was
+        the 2026-08-02 corruption - SAVE IMAGE rewriting a 451-block
+        file reused a freed double-indirect root.  The "keep == 0 ->
+        clear the pointer" lines below are that lesson, now applied to
+        all three roots.
     */
 
-    if (nblock > 17 && nblock < 274)
-        map1 = (nblock - 18) << 8;
-    else if (nblock > 273)
-        map2 = nblock - 273;
     dev = ino->c_dev;
 
-    /* FIXME: ideally zero the indirect pointers before we write the
-       free lists */
+    /* Triple indirect: data blocks TWO_IND_END.. */
+    keep = nblock > TWO_IND_END ? nblock - TWO_IND_END : 0;
+    if (keep < (blkno_t)IND_PER_BLOCK * IND_PER_BLOCK * IND_PER_BLOCK) {
+        freeblk(dev, ino->c_node.i_addr[DIRECT_BLOCKS + 2], 3, keep);
+        if (keep == 0)
+            ino->c_node.i_addr[DIRECT_BLOCKS + 2] = 0;
+    }
 
-    /* First deallocate the double indirect blocks */
-    freeblk(dev, ino->c_node.i_addr[19], 2, map2);
-    if (map2 == 0)
-        ino->c_node.i_addr[19] = 0;
+    /* Double indirect: data blocks ONE_IND_END..TWO_IND_END-1 */
+    keep = nblock > ONE_IND_END ? nblock - ONE_IND_END : 0;
+    if (keep < (blkno_t)IND_PER_BLOCK * IND_PER_BLOCK) {
+        freeblk(dev, ino->c_node.i_addr[DIRECT_BLOCKS + 1], 2, keep);
+        if (keep == 0)
+            ino->c_node.i_addr[DIRECT_BLOCKS + 1] = 0;
+    }
 
-    /* Also deallocate the indirect blocks */
-    freeblk(dev, ino->c_node.i_addr[18], 1, map1);
-    if (map1 == 0 && map2 == 0)	/* ???? should this just be if map1 */
-        ino->c_node.i_addr[18] = 0;
+    /* Single indirect: data blocks DIRECT_BLOCKS..ONE_IND_END-1 */
+    keep = nblock > DIRECT_BLOCKS ? nblock - DIRECT_BLOCKS : 0;
+    if (keep < IND_PER_BLOCK) {
+        freeblk(dev, ino->c_node.i_addr[DIRECT_BLOCKS], 1, keep);
+        if (keep == 0)
+            ino->c_node.i_addr[DIRECT_BLOCKS] = 0;
+    }
 
     /* Finally, free the direct blocks */
-    /* FIXME: use pointers for efficiency ? */
-    /* At this point nblock is definitely < 0x8000 so forcing a signed
-       compare does what we want */
-    for(j = 17; j >= (int)nblock; --j) {
+    dkeep = nblock > DIRECT_BLOCKS ? DIRECT_BLOCKS : (uint_fast8_t)nblock;
+    for(j = DIRECT_BLOCKS - 1; j >= (int_fast8_t)dkeep; --j) {
         freeblk(dev, ino->c_node.i_addr[j], 0, 0);
         ino->c_node.i_addr[j] = 0;
     }
@@ -999,7 +1360,7 @@ int f_trunc_blocks(register inoptr ino, uint16_t nblock)
 
 /* Truncate a file back to nothing using f_trunc_blocks and then write
    the inode size as 0 */
-int f_trunc(register inoptr ino)
+int f_trunc(regptr inoptr ino)
 {
     /* Is it worth checking size already 0 ? */
     if (f_trunc_blocks(ino, 0))
@@ -1016,32 +1377,60 @@ int f_trunc(register inoptr ino)
 
    This is annoying and it would be nice one day to find a clean solution */
 
+/*
+ * nkeep is the number of DATA blocks to retain in the subtree below
+ * blk.  Children wholly below the boundary are never touched; the
+ * child straddling it recurses with the remainder; everything above is
+ * freed and its pointer zeroed, so a retained root never keeps a
+ * pointer to a freed block (the 2026-08-02 corruption class).  The
+ * root itself is freed only when nkeep == 0.
+ *
+ * (The classic version freed the retained children too and always
+ * freed the root - partial truncate was broken upstream.  Its external
+ * variant also read entries through an uninitialised pointer.)
+ */
 #ifdef CONFIG_BLKBUF_EXTERNAL
-void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, uint16_t nblock)
+void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, blkno_t nkeep)
 {
     struct blkbuf *buf;
-    blkno_t bn;
+    blkno_t e;
     int16_t j;
-    int_fast8_t nblock1 = nblock >> 8;
 
     if(!blk)
         return;
 
     if(level){
+        blkno_t cap = 1;	/* data blocks per child subtree */
+        uint_fast8_t l;
+        int16_t kfull;
+        blkno_t rem;
+
+        for (l = 1; l < level; l++)
+            cap *= IND_PER_BLOCK;
+        kfull = nkeep / cap;
+        rem = nkeep % cap;
+
         buf = bread(dev, blk, 0);
         if (buf == NULL) {
             corrupt_fs(dev);
             return;
         }
-        for(j = BLKSIZE / 2 - 1; j >= nblock1; --j) {
-            uint8_t b = 0;
-            if (j == nblock1)
-                b = nblock & 0xFF;
-            blktok(&bn, buf, j * sizeof(blkno_t), sizeof(blkno_t));
-            freeblk(dev, bn, level - 1, b);
+        for(j = IND_PER_BLOCK - 1; j >= kfull; --j) {
+            blkno_t ck = (j == kfull) ? rem : 0;
+            blktok(&e, buf, j * sizeof(blkno_t), sizeof(blkno_t));
+            freeblk(dev, e, level - 1, ck);
+            if (ck == 0 && e) {
+                e = 0;
+                blkfromk(&e, buf, j * sizeof(blkno_t), sizeof(blkno_t));
+            }
+        }
+        if (nkeep) {
+            bawrite(buf);
+            return;		/* root retained */
         }
         brelse(buf);
-    }
+    } else if (nkeep)
+        return;			/* retained data block */
 #ifdef CONFIG_TRIM
     d_ioctl(dev, HDIO_TRIM, (void*)&blk);
 #endif
@@ -1050,34 +1439,45 @@ void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, uint16_t nblock)
 
 #else
 
-void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, uint16_t nblock)
+void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, blkno_t nkeep)
 {
     struct blkbuf *buf;
-    register blkno_t *bn;
-    register int16_t j;
-    int_fast8_t nblock1 = nblock >> 8;
+    regptr blkno_t *bn;
+    int16_t j;
 
     if(!blk)
         return;
 
     if(level){
+        blkno_t cap = 1;	/* data blocks per child subtree */
+        uint_fast8_t l;
+        int16_t kfull;
+        blkno_t rem;
+
+        for (l = 1; l < level; l++)
+            cap *= IND_PER_BLOCK;
+        kfull = nkeep / cap;
+        rem = nkeep % cap;
+
         buf = bread(dev, blk, 0);
         if (buf == NULL) {
             corrupt_fs(dev);
             return;
         }
         bn = blkptr(buf, 0, BLKSIZE);
-        for(j = BLKSIZE / 2 - 1; j >= 0; --j) {
-            /* When we hit nblock1 we are doing the final partial clear, so
-               only tell the child freeblk to do a partial clear */
-            uint_fast8_t b = 0;
-            if (j == nblock1)
-                b = nblock & 0xFF;
-            /* FIXME: bn[j] would be better as a pointer */
-            freeblk(dev, bn[j], level-1, b);
+        for(j = IND_PER_BLOCK - 1; j >= kfull; --j) {
+            blkno_t ck = (j == kfull) ? rem : 0;
+            freeblk(dev, bn[j], level - 1, ck);
+            if (ck == 0)
+                bn[j] = 0;
+        }
+        if (nkeep) {
+            bawrite(buf);
+            return;		/* root retained */
         }
         brelse(buf);
-    }
+    } else if (nkeep)
+        return;			/* retained data block */
 #ifdef CONFIG_TRIM
     d_ioctl(dev, HDIO_TRIM, (void*)&blk);
 #endif
@@ -1088,7 +1488,59 @@ void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, uint16_t nblock)
 /* Validblk panics if the given block number is not a valid
  *  data block for the given device.
  */
+#ifdef CONFIG_FS_TRIPWIRE_DEEP
+/*
+ *	Inode block-list tripwire.
+ *
+ *	validblk(blk_free) caught the corruption naming block 50 - a block
+ *	inside the INODE area, reached from a file's block list while
+ *	truncating it. That says an inode (or one of its indirect blocks)
+ *	holds a bad pointer, but not WHERE it went wrong, and those are two
+ *	entirely different bugs:
+ *
+ *	  - bad as it comes off the disk  -> an earlier WRITE put garbage
+ *	    there, so the fault is in the write path;
+ *	  - good on disk, bad later	  -> something scribbled on the
+ *	    in-core inode table, so the fault is memory corruption.
+ *
+ *	So check the list at both ends: as i_open reads it, and as wr_inode
+ *	is about to write it back. Whichever fires first decides which of
+ *	those two searches to start. Only regular files and directories -
+ *	a device inode keeps its device number in i_addr[0].
+ */
+void ino_blocks_check(uint16_t dev, uint16_t inum, const dinode *d,
+                      const char *where)
+{
+    register struct mount *mnt;
+    uint16_t mode = d->i_mode & F_MASK;
+    int i;
+
+    if (mode != F_REG && mode != F_DIR)
+        return;
+    mnt = fs_tab_get(dev);
+    if (mnt == NULL || mnt->m_fs.s_mounted == 0)
+        return;
+
+    for (i = 0; i < DIRECT_BLOCKS + 3; i++) {
+        blkno_t b = d->i_addr[i];
+        if (b == 0)
+            continue;
+        if (b < mnt->m_fs.s_isize || b >= mnt->m_fs.s_fsize) {
+            kprintf("\ninode tripwire(%s): dev %u inode %u i_addr[%d] = %u"
+                    " outside %u..%u (mode %x size %u)\n",
+                    where, dev, inum, i, (unsigned)b,
+                    (unsigned)mnt->m_fs.s_isize,
+                    (unsigned)mnt->m_fs.s_fsize,
+                    (unsigned)d->i_mode, (unsigned)d->i_size);
+            panic("inoblk");
+        }
+    }
+}
+
+void validblk_at(uint16_t dev, register blkno_t num, const char *who)
+#else
 void validblk(uint16_t dev, register blkno_t num)
+#endif
 {
     register struct mount *mnt;
 
@@ -1099,8 +1551,22 @@ void validblk(uint16_t dev, register blkno_t num)
         return;
     }
 
-    if(num < mnt->m_fs.s_isize || num >= mnt->m_fs.s_fsize)
+    if(num < mnt->m_fs.s_isize || num >= mnt->m_fs.s_fsize) {
+#ifdef CONFIG_FS_TRIPWIRE_DEEP
+        /* Which caller, and what the number was, separates the two
+           ways this happens: blk_alloc means the free list handed out
+           a bad block - and since the superblock's copy is checked at
+           every operation, a bad one there means the refill read from
+           disk brought in garbage.  blk_free means an INODE holds a
+           bad block pointer, which is a different fault entirely. */
+        kprintf("\nvalidblk(%s): dev %u blk %u outside %u..%u"
+                " (nfree %u, tfree %u)\n",
+                who, mnt->m_dev, (unsigned)num,
+                (unsigned)mnt->m_fs.s_isize, (unsigned)mnt->m_fs.s_fsize,
+                (unsigned)mnt->m_fs.s_nfree, (unsigned)mnt->m_fs.s_tfree);
+#endif
         panic(PANIC_VALIDBLK_INV);
+    }
 }
 
 
@@ -1253,11 +1719,38 @@ struct mount *fmount(uint16_t dev, register inoptr ino, uint16_t flags)
 #endif
 
     /* See if there really is a filesystem on the device */
-    if(fp->s_mounted != SMOUNTED  ||  fp->s_isize >= fp->s_fsize ||
-        fp->s_shift > FS_MAX_SHIFT) {
+    if (fp->s_mounted == SMOUNTED_CLASSIC) {
+        kputs("mount: classic (pre-FS32) filesystem - reformat needed\n");
         udata.u_error = EINVAL;
         return NULL;
     }
+    if(fp->s_mounted != SMOUNTED || fp->s_version != FS32_VERSION ||
+        fp->s_isize >= fp->s_fsize || fp->s_shift != 0) {
+        udata.u_error = EINVAL;
+        return NULL;
+    }
+
+    /*
+     * The free inode list in the superblock is only a cache of inodes
+     * that were free when it was written. Do not trust it: discard it
+     * and let i_alloc rebuild it from the disk on first use.
+     *
+     * Anything that writes the filesystem while we are not looking
+     * invalidates it, and two things routinely do. ucp builds the
+     * image on the host, and fsck runs from rc against the root we
+     * have *already* mounted - it sets s_ninode to 0 on disk for
+     * exactly this reason, but we read the superblock before it ran
+     * and would otherwise keep using the stale copy, and write it back
+     * over fsck's correction on the next sync.
+     *
+     * The symptom when this goes wrong is i_alloc handing out an inode
+     * that is a live file, which surfaces as "i_open: bad disk inode"
+     * and then, misleadingly, ENFILE - "File table overflow" - from
+     * the create path, on a filesystem fsck calls clean.
+     *
+     * The cost is one inode scan after each mount.
+     */
+    fp->s_ninode = 0;
 
     if (fp->s_fmod == FMOD_DIRTY) {
         kputs("warning: mounting dirty file system, forcing r/o.\n");

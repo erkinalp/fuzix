@@ -27,7 +27,10 @@ char *token_txn(int);
 void pr_indent(int);
 void hash_line(void);
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
+#ifdef _WIN32
+#define _ltoa cpp_ltoa		/* the Windows C runtime has a three-argument _ltoa */
+#endif
 const char *_ltoa(long v)
 {
 	static char buf[32];
@@ -250,7 +253,12 @@ FILE *open_include(char *fname, char *mode, int checkrel)
 			*++p = 0;
 		else
 			*(p = buf) = 0;
-		strlcpy(p, fname, p - buf);
+		/* The bound is the space REMAINING after the directory
+		   prefix, not the prefix length: the old p - buf
+		   truncated every source-relative include, and for a
+		   source with no '/' it passed 0 - which a libc whose
+		   strlcpy mishandles size 0 turns into a runaway copy. */
+		strlcpy(p, fname, 256 - (p - buf));
 
 		fd = fopen(buf, mode);
 	}

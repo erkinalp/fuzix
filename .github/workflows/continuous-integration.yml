@@ -78,7 +78,9 @@ jobs:
         git clone --depth 1 https://codeberg.org/EtchedPixels/Fuzix-Bintools.git ~/Fuzix-Bintools
         (cd ~/Fuzix-Bintools && make -j`nproc` && make install)
         git clone --depth 1 https://codeberg.org/EtchedPixels/Fuzix-Compiler-Kit.git ~/Fuzix-Compiler-Kit
-        (cd ~/Fuzix-Compiler-Kit && make bootstrap -j`nproc` && PATH=/opt/fcc/bin:$PATH make install -j`nproc`)
+        # FCK's bootstrap/install targets race under -j (bootinst can run
+        # before the cc binary exists); keep them serial.
+        (cd ~/Fuzix-Compiler-Kit && make bootstrap && PATH=/opt/fcc/bin:$PATH make install)
         echo "/opt/fcc/bin" >> $GITHUB_PATH
     - name: make
       run: ${{ env.setup_sh }} && make ${{ env.cross_cc }} ${{ env.target }} ${{ env.sub_target }} ${{ env.flags }} -j`nproc`

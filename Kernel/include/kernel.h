@@ -31,6 +31,16 @@ From UZI by Doug Braun and UZI280 by Stefan Nitschke.
 #define regptr
 #endif
 
+/* Inode locking is a no-op unless the platform asks for sleeping locks */
+#ifndef CONFIG_BLOCK_SLEEP
+#define i_unlock(x)	do {} while(0)
+#define i_lock(x)	do {} while(0)
+#define i_islocked(x)	do {} while(0)
+#define i_unlock_deref(x)	i_deref(x)
+#define n_open_lock(a,b)	n_open((a),(b))
+#define getinode_lock(x)	getinode(x)
+#endif
+
 #define min(a,b) ( (a) < (b) ? (a) : (b) )
 #define max(a,b) ( (a) > (b) ? (a) : (b) )
 #define aligndown(v,a) (uint8_t*)((intptr_t)(v) & ~((a)-1))

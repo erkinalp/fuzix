@@ -52,5 +52,5 @@ int lpr_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 		out(LPSTON, 1);
 		out(LPSTROFF, 1);
 	}
-	return pe - p;
+	return udata.u_count;
 }

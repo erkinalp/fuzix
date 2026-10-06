@@ -58,7 +58,7 @@ int lpr_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 #endif
 		irqrestore(irq);
 	}
-	return pe - p;
+	return udata.u_count;
 }
 
 int lpr_ioctl(uint_fast8_t minor, uarg_t arg, char *ptr)

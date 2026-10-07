@@ -7,7 +7,7 @@ due to bugs in the ZXUNO we have to use the DIVMMC space for the low 16K which
 restricts process size and generally messes things up.
 
 Kernel
-0000-3FFF	DIVMMC 0 and 3 (low 8K RO) Common
+0000-3FFF	DIVMMC 0 and 3 (low 8K RO) Common and read only data + font
 4000-7FFF	Bank 5
 8000-BFFF	Bank 2 (8 on SE)
 C000-FFFF	Bank 3 (7 when doing video)

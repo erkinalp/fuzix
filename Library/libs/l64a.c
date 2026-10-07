@@ -6,8 +6,9 @@ static char str[] = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu
 
 char *l64a(long l)
 {
-  uint32_t n = l;
-  char *p = buf;
+  register char *p = buf;
+  register uint32_t n = l;
+
 
   while(n && p < buf + 6) {
     *p++ = str[n & 63];
@@ -17,4 +18,3 @@ char *l64a(long l)
   return buf;
 }
 
-    

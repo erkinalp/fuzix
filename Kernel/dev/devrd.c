@@ -26,8 +26,6 @@ static const uint32_t dev_start[NUM_DEV_RD] = {
 /* implements both rd_read and rd_write */
 int rd_transfer(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
-    used(flag);
-
     /* check device exists; do not allow writes to ROM */
     if (minor == RD_MINOR_ROM && rd_reverse) {
         udata.u_error = EROFS;
@@ -56,8 +54,6 @@ int rd_transfer(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 
 int rd_open(uint_fast8_t minor, uint16_t flags)
 {
-    flags; /* unused */
-
     switch(minor){
 #if DEV_RD_RAM_PAGES > 0
         case RD_MINOR_RAM:

@@ -44,3 +44,4 @@ struct exec {
 #define MID_ARMM0	0x03E0		/* 32bit ARM */
 #define MID_ARMM4	0x03E4		/* We can deal with ARM26 when we get there */
 #define MID_RISCV32	0x03F0
+#define MID_FUZIXZ8000	0x03B0		/* Flat Fuzix Z8001 segmented binaries */

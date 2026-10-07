@@ -2,19 +2,44 @@
 #include <kdata.h>
 #include <printf.h>
 
+extern uint8_t bufdata[];
+
+
 /*
- *	Must live in CODE3. We share this with TRS80model 1 so we ought
- *	to extract it for Z80.
+ * Allocate a buffer for scratch use by the kernel. This buffer can then
+ * be freed with tmpfree. We will be given a buffer where bp->__bf_data
+ * points to a page in our bank only accessible in our bank. This requires
+ * care we put all users of tmpbuf into this bank (exec16, exec, user copy)
  */
+void *tmpbuf(void)
+{
+	register bufptr bp;
+	extern uint16_t bufclock;
+
+	bp = freebuf();
+	bp->bf_dev = NO_DEVICE;
+	bp->bf_time = ++bufclock;	/* Time stamp it */
+	return bp->__bf_data;
+}
+
+void tmpfree(void *p)
+{
+        /* We need to work back from the data pointer to the buffer
+           number. */
+        uint16_t off = ((uint8_t *)p - bufdata) >> 9;
+        struct blkbuf *buf = bufpool + off;
+	brelse(buf);
+}
+
 
 void blktok(void *kaddr, struct blkbuf *buf, uint16_t off, uint16_t len)
 {
-    __builtin_memcpy(kaddr, buf->__bf_data + off, len);
+    memcpy(kaddr, buf->__bf_data + off, len);
 }
 
 void blkfromk(void *kaddr, struct blkbuf *buf, uint16_t off, uint16_t len)
 {
-    __builtin_memcpy(buf->__bf_data + off, kaddr, len);
+    memcpy(buf->__bf_data + off, kaddr, len);
 }
 
 /*
@@ -40,16 +65,14 @@ void *blkptr(struct blkbuf *buf, uint16_t offset, uint16_t len)
 {
     if (len > 64)
         panic("blkptr");
-    __builtin_memcpy(scratchbuf, buf->__bf_data + offset, len);
+    memcpy(scratchbuf, buf->__bf_data + offset, len);
     return scratchbuf;
 }
 
 void blkzero(struct blkbuf *buf)
 {
-    __builtin_memset(buf->__bf_data, 0, BLKSIZE);
+    memset(buf->__bf_data, 0, BLKSIZE);
 }
-
-extern uint8_t bufdata[];
 
 /* This is called at start up to assign data to the first buffers, and then
    again to assign data to the extra allocated buffers */
@@ -66,39 +89,4 @@ void bufsetup(void)
         bdnext += BLKSIZE;
     }
     bnext = bp;
-}
-
-/*
- *	Scratch buffers for syscall arguments - until we can rework
- *	execve and realloc to avoid this need. We can in theory put
- *	the second tmpbuf into bank3 private space
- */
-
-static uint8_t tmp[2][BLKSIZE];
-static uint8_t tfree = 3;
-
-void tmpfree(void *p)
-{
-  if (p == tmp[0]) {
-      tfree |= 1;
-      return;
-  }
-  if (p == tmp[1]) {
-      tfree |= 2;
-      return;
-  }
-  panic("tmpfree");
-}
-
-void *tmpbuf(void)
-{
-   if (tfree & 1) {
-       tfree &= ~1;
-       return tmp[0];
-   }
-   if (tfree & 2) {
-       tfree &= ~2;
-       return tmp[1];
-   }
-   panic("tmpbuf");
 }

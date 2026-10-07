@@ -13,5 +13,6 @@ __setjmp:
 	pla		; return address
 	sta 0,x		; save PC
 	pha		; put it back
-	sty 2,x		; save SP
+	tya
+	sta 2,x		; save SP
 	rts

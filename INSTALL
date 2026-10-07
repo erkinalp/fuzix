@@ -3,15 +3,11 @@ Edit the top level Makefile and set TARGET
 Read Kernel/platform/platform-$ARCH/README.md
 Adjust anything it recommends for your platform
 
-The Z80 build tools get stuck in /opt/fcc as will others in future. Right now
-/opt/fcc isn't moveable (yes we suck) but you can create that directory and
-chown it to the building user.
+The Fuzix build tools get stuck in /opt/fcc. Right now /opt/fcc isn't moveable
+(yes we suck) but you can create that directory and chown it to the building
+user.
 
 Make sure you have the needed compilers on your path
-If you are running cc65 remember you also need CC65_HOME set properly!
-
-If you are using the lwtools gcc for 6809 ensure that $(pwd)/Build/tools is
-on your path.
 
 Cross fingers, type "make"
 
@@ -19,8 +15,8 @@ This should give you a build of libraries, user and kernel.
 Standalone/filesystem-src contains some scripts to build filesystems
 fuzix.org contains a bunch ready to download
 
-For Z80 your VM needs at least 16GB including swap because sdcc is a bit of a
-memory monster.
+For some Z80 your VM needs at least 16GB including swap because some kernels
+are still using a customised SDCC and SDCC is a bit of a memory monster.
 
 Fuzix expects yacc to be yacc not Bison. if your system for some reason thinks
 that executing yacc should run bison you'll have a build failure. For Debian

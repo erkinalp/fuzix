@@ -27,11 +27,12 @@ struct header{
 /* This needs to be packed if your compiler adds padding */
 struct RRtail{
     uint16_t type;
-    uint16_t class;
-    uint32_t ttl;
     uint16_t rdlen;
 };
 
+#define RRTAIL_LEN 10
+#define DNS_TYPE_A     1
+#define DNS_CLASS_IN   1
 
 int fd;
 char buf[1024];
@@ -45,7 +46,6 @@ void alarm_handler( int signum ){
 
 int send_question( char *name ){
     struct header *p=( struct header *)buf;
-    struct RRtail *t;
     
     char *i = name;
     char *o = buf + sizeof(struct header);
@@ -70,13 +70,13 @@ int send_question( char *name ){
     }
     *l = o - l - 1;
     *o++ = 0;
-    /* fill out rest of RR */
-    t = (struct RRtail *)o;
+    /* Avoid unaligned accesses when the encoded DNS name is not word aligned. */
     /* type: A record */
-    t->type = htons(1);
+    *o++ = DNS_TYPE_A >> 8;
+    *o++ = DNS_TYPE_A & 0xFF;
     /* class: inet */
-    t->class = htons(1);
-    o += 4;
+    *o++ = DNS_CLASS_IN >> 8;
+    *o++ = DNS_CLASS_IN & 0xFF;
     
     write( fd, buf, (int)(o - buf) );
     return 0;
@@ -102,8 +102,10 @@ void print_name( char *ptr ){
 
 
 void print_entry( char **pptr, int no ){
-    struct RRtail *t;
-    int i,j;
+    uint16_t type;
+    uint16_t rdlen;
+/* Compiler warning, removed unused variable 'j'*/
+    int i;
     char *ptr = *pptr;
     struct in_addr addr;
     for( i = 0; i < no; i++ ){
@@ -120,29 +122,34 @@ void print_entry( char **pptr, int no ){
 	    ptr += *ptr + 1;
 	}
 	
-	t = (struct RRtail *)ptr;
-	ptr += sizeof( struct RRtail);
+         /*
+         * Do not cast packet data to RRtail.
+         *  DNS resource records are not guaranteed to be naturally aligned.
+         */
+        type  = (ptr[0] << 8) | ptr[1];
+        rdlen = (ptr[8] << 8) | ptr[9];
+        ptr += RRTAIL_LEN;
 
 	/* cname */
-	if( ntohs(t->type) == 6 ){
+	if( type == 6 ){
 	    printf( "SOA   ");
 	    print_name( ptr );
-	    ptr += ntohs(t->rdlen);
+            ptr += rdlen;
 	}
-	else if( ntohs(t->type) == 5 ){
+	else if( type == 5 ){
 	    printf( "CNAME ");
 	    print_name( ptr );
-	    ptr += ntohs(t->rdlen);
+	    ptr += rdlen;
 	}
-	else if( ntohs(t->type) == 1 ){
+	else if( type == 1 ){
 	    printf( "A     ");
             memcpy(&addr, ptr, sizeof(struct in_addr));
             printf("%s", inet_ntoa(addr));
-	    ptr += ntohs(t->rdlen);
+	    ptr += rdlen;
 	}
 	else{
 	    printf( "???   ");
-	    ptr += ntohs(t->rdlen);
+            ptr += rdlen;
 	}
 	printf("\n");
     }

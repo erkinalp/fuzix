@@ -33,7 +33,6 @@ struct link{
     uint16_t rsize[NSOCKBUF]; /* number of bytes to recv in buffers */
 };
 
-
 #if 0	// already in fuzix-conf.h
 typedef uint8_t uip_tcp_appstate_t; /* index to link info */
 typedef uint8_t uip_udp_appstate_t;
@@ -43,5 +42,7 @@ void netd_udp_appcall( void );
 
 extern int knet;  /* fd of kernel's network inface */
 extern uint8_t has_arp;
+
+extern void arguments(int, const char *[]);
 
 #endif /* NETD_H */

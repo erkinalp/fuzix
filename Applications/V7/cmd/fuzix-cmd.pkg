@@ -25,6 +25,7 @@ f 0755 /usr/bin/look          look
 f 0755 /usr/bin/makekey       makekey
 f 0755 /usr/bin/mesg          mesg
 f 0755 /usr/bin/newgrp        newgrp
+f 0755 /usr/bin/nice          nice
 ##f 0755 /usr/bin/pr            pr
 f 0755 /usr/bin/ptx           ptx
 f 0755 /usr/bin/rev           rev

@@ -1,1 +1,1 @@
-include cpu-z80/rules.mk
+include cpu-z80u/rules.mk

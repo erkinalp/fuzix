@@ -19,8 +19,8 @@ struct uart16x50 {
 	uint8_t scr;
 };
 
-static volatile struct uart16x50 * const uart = (struct uart16x50 *)0xFEC0;
-static volatile uint8_t * const ptm = (uint8_t *)0xFE60;
+#define uart ((volatile struct uart16x50 *)0xFEC0)
+#define ptm  ((volatile uint8_t *)0xFE60)
 
 static unsigned char tbuf1[TTYSIZ];
 static unsigned char tbuf2[TTYSIZ];
@@ -135,7 +135,7 @@ void tty_data_consumed(uint_fast8_t minor)
 }
 
 void tty_poll(uint8_t minor, struct uart16x50 volatile *u)
-{	
+{
 	uint8_t msr;
 
 	/* Should be IRQ driven but we might not be so poll anyway if
@@ -165,7 +165,7 @@ void plt_interrupt(void)
 {
 	tty_interrupt();
 	if (ptm[1] & 0x80) {	/* Timer interrupts present, must be timer 3 */
-		ptm[6];	/* Clear the interrupt */
+		ptm[6];		/* Clear the interrupt */
 		tick++;
 		while(tick) {
 			timer_interrupt();
@@ -177,10 +177,11 @@ void plt_interrupt(void)
 
 void plt_reinterrupt(void)
 {
+	/* We don't clear the event until we did the tty interrupt so this
+	   should be safe */
 	tty_interrupt();
 	if (ptm[1] & 0x80) {
 		ptm[6];
 		tick++;
 	}
-	wakeup(&plt_interrupt);
 }

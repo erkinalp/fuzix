@@ -1,6 +1,7 @@
 #include <kernel.h>
 #include <printf.h>
 #include <kdata.h>
+#include <bufstat.h>
 #include <stdarg.h>
 
 /* Error checking */
@@ -45,8 +46,21 @@ static uint16_t bufclock;		/* Time-stamp counter for LRU */
 
 #define bisbusy(x)	((x)->bf_busy == BF_BUSY)
 
+/*
+ * DEBUG: stamp a buffer with whoever is pinning it, so that a buffer
+ * still held by nobody in particular can be traced back to the syscall
+ * that walked off and left it. See include/bufstat.h.
+ */
+static void bufown(bufptr bp)
+{
+#ifdef CONFIG_BUFSTAT_DEBUG
+	bp->bf_pid = udata.u_ptab ? udata.u_ptab->p_pid : 0;
+	bp->bf_call = udata.u_callno;
+#endif
+}
+
 #ifndef CONFIG_BLOCK_SLEEP
-#define	block(x)	((x)->bf_busy = BF_BUSY)
+#define	block(x)	((x)->bf_busy = BF_BUSY, bufown(x))
 #define bunlock(x)	((x)->bf_busy = BF_FREE)
 #define bcheck(x)	bisbusy(x)
 #define block_s(x)
@@ -58,6 +72,7 @@ static void block(bufptr bp)
 	while (bp->bf_busy == BF_BUSY)
 		psleep_nosig(bp);
 	bp->bf_busy = BF_BUSY;
+	bufown(bp);
 }
 
 static void bunlock(bufptr bp)
@@ -278,22 +293,56 @@ bufptr freebuf(void)
 {
 	regptr bufptr bp;
 	regptr bufptr oldest;
-	register int16_t oldtime;
+	register uint16_t oldtime;
+	uint16_t age;
 
-	/* Try to find a non-busy buffer and write out the data if it is dirty */
+	/*
+	 * The age has to be computed modulo 65536, which means truncating
+	 * it back to uint16_t and comparing unsigned.
+	 *
+	 * This used to be a bare "bufclock - bp->bf_time >= oldtime" with
+	 * oldtime an int16_t. Where int is 16 bits that is fine: the two
+	 * uint16_t operands promote to unsigned int and the subtraction
+	 * wraps, which is exactly what an LRU stamp needs. Where int is 32
+	 * bits - every ARM, and this port - they promote to signed int
+	 * instead, no wrap happens, and a buffer stamped before bufclock
+	 * last wrapped yields a large negative age. Negative fails the
+	 * ">= oldtime" test from the first iteration onwards, so every such
+	 * buffer is skipped.
+	 *
+	 * Immediately after bufclock wraps, that is all of them, and
+	 * freebuf() returns NULL with the whole pool free: "panic: no free
+	 * buffers" on a machine with twenty free buffers. It looked like a
+	 * leak for a long time and is not one - see
+	 * platform-rpipico/NOTES-buffer-panic.md.
+	 */
 	oldest = NULL;
 	oldtime = 0;
 	for (bp = bufpool; bp < bufpool_end; ++bp) {
-		if (bufclock - bp->bf_time >= oldtime && !bisbusy(bp)) {
+		age = bufclock - bp->bf_time;
+		if (age >= oldtime && !bisbusy(bp)) {
 			oldest = bp;
-			oldtime = bufclock - bp->bf_time;
+			oldtime = age;
 		}
 	}
 	/* FIXME: Once we support sleeping on disk I/O this goes away and
 	   we sleep on something - buffer going unbusy or even the oldest
 	   buffer and then check if it's still old and if not retry */
-	if (!oldest)
+	if (!oldest) {
+		/*
+		 * DEBUG: every buffer is pinned. Say which blocks and with
+		 * what busy count before dying, because "no free buffers"
+		 * on its own says nothing about who is holding them - and a
+		 * leak of one buffer per operation looks identical to
+		 * genuine pressure until you can see the list.
+		 */
+		for (bp = bufpool; bp < bufpool_end; ++bp)
+			kprintf("buf %d: dev %d blk %d busy %d dirty %d\n",
+				(int)(bp - bufpool), (int)bp->bf_dev,
+				(int)bp->bf_blk, (int)bp->bf_busy,
+				(int)bp->bf_dirty);
 		panic(PANIC_NOFREEB);
+	}
 
 	block(oldest);
 	if (oldest->bf_dirty) {
@@ -301,6 +350,61 @@ bufptr freebuf(void)
 		oldest->bf_dirty = false;
 	}
 	return oldest;
+}
+
+/*
+ * DEBUG: hand the buffer pool out to userspace for /dev/proc's
+ * PIOC_BUFSTAT ioctl - see include/bufstat.h and, for why any of this
+ * is here, platform-rpipico/NOTES-buffer-panic.md.
+ *
+ * The pool only needs reporting one entry at a time, which is just as
+ * well: the whole struct is nearly 400 bytes and has no business on the
+ * kernel stack.
+ */
+int bufstat_report(uint8_t *data)
+{
+	regptr bufptr bp;
+	struct bufent be;
+	uint16_t v;
+	unsigned n;
+
+#ifdef CONFIG_DYNAMIC_BUFPOOL
+	/* dynamic pools have no compile-time NBUFS; count live entries */
+	n = bufpool_end - bufpool;
+	if (n > BUFSTAT_MAX)
+		n = BUFSTAT_MAX;
+#else
+	n = (NBUFS > BUFSTAT_MAX) ? BUFSTAT_MAX : NBUFS;
+#endif
+
+	v = n;
+	if (uput((uint8_t *)&v, data, sizeof(v)))
+		return -1;
+	data += sizeof(v);
+	v = bufclock;
+	if (uput((uint8_t *)&v, data, sizeof(v)))
+		return -1;
+	data += sizeof(v);
+
+	for (bp = bufpool; bp < bufpool + n; ++bp) {
+		be.be_dev = bp->bf_dev;
+		be.be_blk = bp->bf_blk;
+		be.be_time = bp->bf_time;
+		be.be_busy = bp->bf_busy;
+		be.be_dirty = bp->bf_dirty;
+#ifdef CONFIG_BUFSTAT_DEBUG
+		be.be_pid = bp->bf_pid;
+		be.be_call = bp->bf_call;
+#else
+		be.be_pid = 0;
+		be.be_call = 0;
+#endif
+		be.be_pad = 0;
+		if (uput((uint8_t *)&be, data, sizeof(be)))
+			return -1;
+		data += sizeof(be);
+	}
+	return 0;
 }
 
 /*********************************************************************
@@ -553,7 +657,7 @@ bool uninsq(struct s_queue *qp, uint_fast8_t *cp)
 /* Returns true if the queue has more characters than its wakeup number */
 bool fullq(struct s_queue *q)
 {
-    if (q->q_count > q->q_wakeup) // WRS: shouldn't this be >= ?
+    if (q->q_count >= q->q_wakeup)
         return true;
     else
         return false;

@@ -15,6 +15,14 @@ static void symbol_bss(struct symbol *);
 struct symbol symtab[MAXSYM];
 struct symbol *last_sym = symtab - 1;
 struct symbol *local_top = symtab;
+/*
+ *	Where the current block's symbols start. Everything above this was
+ *	declared in this block; everything below is an enclosing block, a
+ *	parameter or a global. Redeclaring a name from below is shadowing,
+ *	which is legal C - redeclaring one from above is a duplicate.
+ *	statement_block() maintains this.
+ */
+struct symbol *block_base = symtab;
 
 struct symbol *symbol_ref(unsigned type)
 {
@@ -50,7 +58,16 @@ struct symbol *find_symbol_by_class(unsigned name, unsigned class)
 	   by scope */
 	while (s >= symtab) {
 		if (s->name == name && S_STORAGE(s->infonext) == class) {
-			if (s->infonext < S_STATIC)
+			/* S_TAGLOCAL is how a typedef or tag says "block
+			   scope"; its storage class cannot, being above
+			   S_STATIC. Without this the loop falls into the
+			   gmatch branch below, which - because the walk is
+			   backwards - keeps overwriting and ends up
+			   returning the *outermost* match. A block typedef
+			   shadowing a file scope one then had no effect:
+			   sizeof(t) gave the outer type. */
+			if (s->infonext < S_STATIC ||
+			    (s->infonext & S_TAGLOCAL))
 				return s;
 			else	/* Still need to look for a local */
 				gmatch = s;
@@ -64,9 +81,17 @@ void pop_local_symbols(struct symbol *top)
 {
 	struct symbol *s = top + 1;
 	while (s <= last_sym) {
-		if (S_STORAGE(s->infonext) < S_STATIC) {
+		unsigned st = S_STORAGE(s->infonext);
+		if (st < S_STATIC) {
 			/* Write out any storage if needed */
 			symbol_bss(s);
+			s->infonext = S_FREE;
+			s->name = 0;
+		} else if ((st == S_STRUCT || st == S_UNION ||
+			    st == S_TYPEDEF) &&
+			   (s->infonext & S_TAGLOCAL)) {
+			/* A tag or typedef declared inside this block goes
+			   with it */
 			s->infonext = S_FREE;
 			s->name = 0;
 		}
@@ -86,7 +111,7 @@ struct symbol *mark_local_symbols(void)
 struct symbol *alloc_symbol(unsigned name, unsigned local)
 {
 	struct symbol *s = local_top;
-	while (s <= &symtab[MAXSYM]) {
+	while (s < &symtab[MAXSYM]) {	/* [MAXSYM] is one past the end */
 		if (s->infonext == S_FREE) {
 			if (local && local_top < s)
 				local_top = s;
@@ -123,8 +148,15 @@ struct symbol *update_symbol(struct symbol *sym, unsigned name, unsigned storage
 			error("invalid name");
 		else if (symst < S_STATIC || !local) {
 			if (sym->type != type) {
+				unsigned keep;
 				if (IS_ARRAY(type) && IS_ARRAY(sym->type))
 					sym->type = array_compatible(type, sym->type);
+				else if (type_func_compatible(sym->type, type,
+							      &keep))
+					/* A prototype and a K&R definition of
+					   the same function. Keep whichever
+					   states the arguments. */
+					sym->type = keep;
 				else
 					typemismatch();
 			}
@@ -177,10 +209,58 @@ struct symbol *update_symbol_by_name(unsigned name, unsigned storage,
 	   it - we create a local one masking it */
 	if (sym && global == 0 && sym->infonext >= S_STATIC)
 		sym = NULL;
-	/* Local symbols don't duplicate. TODO awareness of block level */
-	if (sym && !global)
-		error("duplicate name");
+	/*
+	 * A local may not be declared twice in the same block, but it may
+	 * perfectly well shadow one from an enclosing block, or a
+	 * parameter. Only the first is an error; the second has to become
+	 * a new symbol rather than an update of the outer one, or the two
+	 * names end up sharing storage.
+	 *
+	 * Passing NULL is what makes it a new symbol, and it also side
+	 * steps update_symbol's storage class check - shadowing a
+	 * parameter with an auto is not a "storage class mismatch".
+	 */
+	if (sym && !global) {
+		if (sym > block_base)
+			error("duplicate name");
+		else
+			sym = NULL;
+	}
 	return update_symbol(sym, name, storage, type);
+}
+
+/*
+ *	A typedef declared inside a function body is scoped to its block,
+ *	exactly as a struct tag is - see update_struct(). Two things follow
+ *	and neither is handled by the generic path:
+ *
+ *	It must be allocated *local* so that local_top moves past it and an
+ *	inner block's pop cannot reach back over it, and it must carry
+ *	S_TAGLOCAL so pop_local_symbols() frees it at all - S_TYPEDEF sorts
+ *	above S_STATIC, which otherwise means "permanent".
+ *
+ *	And it must never update an outer typedef of the same name. An
+ *	inner "typedef char foo;" shadows a file scope "typedef int foo;"
+ *	and both have to survive until the block ends, so a match found
+ *	outside this block means allocate, not overwrite.
+ */
+struct symbol *update_typedef(unsigned name, unsigned type)
+{
+	struct symbol *sym;
+
+	if (!in_funcbody)
+		return update_symbol_by_name(name, S_TYPEDEF, type);
+
+	sym = find_symbol_by_class(name, S_TYPEDEF);
+	if (sym && sym > block_base && (sym->infonext & S_TAGLOCAL)) {
+		error("duplicate name");
+		return sym;
+	}
+	sym = alloc_symbol(name, 1);
+	sym->type = type;
+	sym->infonext = S_TYPEDEF | S_TAGLOCAL;
+	sym->data.idx = 0;
+	return sym;
 }
 
 /*
@@ -209,12 +289,25 @@ static struct symbol *do_type_match(unsigned st, unsigned rtype, unsigned *idx)
 	return sym;
 }
 
+/*
+ *	Intern an index list: the dimensions of an array type, or the
+ *	argument template of a function type.  Both start with their own
+ *	length, and that word has to be checked BEFORE the comparison -
+ *	without it the memcmp reads len words out of a list that may be
+ *	shorter, past the end of the stored copy, and can match on the
+ *	rubbish beyond it and hand back somebody else's dimensions.  A
+ *	three-dimensional array comparing against a one-dimensional one
+ *	is enough to do it.
+ */
 unsigned *sym_find_idx(unsigned storage, unsigned *idx, unsigned len)
 {
 	struct symbol *sym = symtab;
 	unsigned blen = len * sizeof(unsigned);
 	while (sym <= last_sym) {
-		if (S_STORAGE(sym->infonext) == storage && memcmp(sym->data.idx, idx, blen) == 0)
+		if (S_STORAGE(sym->infonext) == storage &&
+		    sym->data.idx != NULL &&
+		    sym->data.idx[0] == idx[0] &&
+		    memcmp(sym->data.idx, idx, blen) == 0)
 			return sym->data.idx;
 		sym++;
 	}
@@ -317,22 +410,35 @@ unsigned array_compatible(unsigned t1, unsigned t2)
 
 static struct symbol *find_struct(unsigned name)
 {
-	struct symbol *sym = symtab;
+	struct symbol *sym = last_sym;
 	/* Anonymous structs are unique each time */
 	if (name == 0)
 		return 0;
-	while(sym <= last_sym) {
+	/* Backwards, so the innermost declaration of a tag wins - the same
+	   rule find_symbol uses for ordinary identifiers. Searching
+	   forwards returned the outermost, so a tag redeclared in an inner
+	   block could never be seen. */
+	while(sym >= symtab) {
 		if (sym->name == name) {
 			unsigned st = S_STORAGE(sym->infonext);
 			if (st == S_STRUCT || st == S_UNION)
 				return sym;
 		}
-		sym++;
+		sym--;
 	}
 	return NULL;
 }
 
-struct symbol *update_struct(unsigned name, unsigned t)
+/*
+ *	Look up or create a struct/union tag.
+ *
+ *	"defining" says a body follows - "struct T { ... }" rather than a
+ *	mention of T. That is the difference between using the tag from
+ *	whatever scope declared it and declaring a new one here: an inner
+ *	block may define its own T, and it is a distinct type from the
+ *	outer one rather than a redefinition of it.
+ */
+struct symbol *update_struct(unsigned name, unsigned t, unsigned defining)
 {
 	struct symbol *sym;
 	if (t)
@@ -340,9 +446,36 @@ struct symbol *update_struct(unsigned name, unsigned t)
 	else
 		t = S_UNION;
 	sym = find_struct(name);
+	/*
+	 * A body makes this a definition. If the tag we found belongs to
+	 * an enclosing scope we want a new one; only a tag declared in
+	 * *this* scope is a redefinition, which struct_declaration then
+	 * reports.
+	 *
+	 * Which scope it belongs to cannot be decided by position alone:
+	 * a file scope tag sits above symtab while block_base may still be
+	 * symtab. So ask the flag first - a tag without S_TAGLOCAL is at
+	 * file scope, and redefining it from inside a function always
+	 * makes a new one - and only compare positions between two tags
+	 * that are both block local, where block_base does mean something.
+	 */
+	if (sym && defining) {
+		if (!(sym->infonext & S_TAGLOCAL)) {
+			if (in_funcbody)
+				sym = NULL;
+		} else if (sym <= block_base)
+			sym = NULL;
+	}
 	if (sym == NULL) {
-		sym = alloc_symbol(name, 0);	/* TODO scoping */
-		sym->infonext = t;
+		/*
+		 * A tag declared inside a function body dies with its block.
+		 * Allocated as local so that local_top moves past it: that
+		 * is what makes the mark an enclosing block took cover it,
+		 * and stops an inner block's pop reaching back and freeing
+		 * a tag that belongs to the block outside it.
+		 */
+		sym = alloc_symbol(name, in_funcbody ? 1 : 0);
+		sym->infonext = t | (in_funcbody ? S_TAGLOCAL : 0);
 		sym->data.idx = NULL;	/* Not yet known */
 	} else {
 		if (S_STORAGE(sym->infonext) != t)

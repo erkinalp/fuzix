@@ -28,10 +28,8 @@ uint8_t sio_r[] = {
 
 static uint8_t sleeping;
 
-static void sio2_setup(uint8_t minor, uint8_t flags)
+static void sio2_setup(uint_fast8_t minor, uint_fast8_t flags)
 {
-	used(flags);
-
 	struct termios *t = &ttydata[minor].termios;
 	uint8_t r;
 	/* Set bits per character */
@@ -49,22 +47,22 @@ static void sio2_setup(uint8_t minor, uint8_t flags)
 	sio_flow[2 - minor] = (t->c_cflag & CRTSCTS);
 }
 
-void tty_setup(uint8_t minor, uint8_t flags)
+void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 {
 	sio2_setup(minor, flags);
 	sio2_otir(SIO0_BASE + 4 - minor);	/* minor is 1 or 2 */
 	/* We need to do CTS/RTS support and baud setting yet */
 }
 
-int tty_carrier(uint8_t minor)
+int tty_carrier(uint_fast8_t minor)
 {
         uint8_t c;
 	if (minor == 2) {
-		SIOA_C = 0;
-		c = SIOA_C;
+		out(SIOA_C, 0);
+		c = in(SIOA_C);
 	} else {
-		SIOB_C = 0;
-		c = SIOB_C;
+		out(SIOB_C, 0);
+		c = in(SIOB_C);
 	}
 	if (c & 0x8)
 		return 1;
@@ -111,7 +109,7 @@ void tty_drain_sio(void)
 
 }
 
-void tty_putc(uint8_t minor, unsigned char c)
+void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 {
 	if (minor == 1)
 		siob_txqueue(c);
@@ -120,7 +118,7 @@ void tty_putc(uint8_t minor, unsigned char c)
 }
 
 /* We will need this for SIO once we implement flow control signals */
-void tty_sleeping(uint8_t minor)
+void tty_sleeping(uint_fast8_t minor)
 {
 	sleeping |= (1 << minor);
 }
@@ -134,7 +132,7 @@ void tty_sleeping(uint8_t minor)
    Need to review this we should be ok as the IRQ handler always leaves
    us pointing at RR0 */
 
-ttyready_t tty_writeready(uint8_t minor)
+ttyready_t tty_writeready(uint_fast8_t minor)
 {
 	if (minor == 1 && sio_txl[1] >= 127)
 		return TTY_READY_SOON;
@@ -143,19 +141,19 @@ ttyready_t tty_writeready(uint8_t minor)
 	return TTY_READY_NOW;
 }
 
-void tty_data_consumed(uint8_t minor)
+void tty_data_consumed(uint_fast8_t minor)
 {
 	used(minor);
 }
 
 /* kernel writes to system console -- never sleep! */
-void kputchar(char c)
+void kputchar(uint_fast8_t c)
 {
 	/* Can't use the normal paths as we must survive interrupts off */
 	/* FIXME: would be nicer to just disable tx int and re-enable it ? */
 	irqflags_t irq = di();
-	while(!(SIOB_C & 0x04));
-	SIOB_D = c;
+	while(!(in(SIOB_C) & 0x04));
+	out(SIOB_D, c);
 	if (c == '\n')
 		kputchar('\r');
 	irqrestore(irq);

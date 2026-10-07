@@ -25,7 +25,7 @@ plt_reboot:
 	    jmp (a0)
 
 init_early:
-	    lea.l udata_block,a5	; udata ptr
+	    lea.l udata_swap,a5		; udata ptr
 	    move.l a5,udata_shadow	; shadow copy for entry/exit
             rts
 
@@ -108,7 +108,13 @@ map_save:
 
 outchar:
 outcharw:
-	; FIXME
+	movem.l d0/d1,-(sp)
+wait:
+	move.b (0x30001),d1
+	and.b #2,d1
+	beq wait
+	move.b d0,(0x30000)
+	movem.l (sp)+,d0/d1
 	rts
 
 ;

@@ -3,8 +3,11 @@
 
 extern void tty_interrupt(void);
 extern void kbd_interrupt(void);
-extern int trstty_close(uint8_t minor);
+extern int trstty_close(uint_fast8_t minor);
 extern void vtbuf_init(void);
+extern void vt_swap(void);
+extern void keyscan(void);
+extern uint8_t anykey(void);
 
 #define KEY_ROWS	8
 #define KEY_COLS	8

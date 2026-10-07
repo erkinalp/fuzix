@@ -5,7 +5,7 @@
 
 int memcmp(const void *mem1, const void *mem2, size_t len)
 {
-	const signed char *p1 = mem1, *p2 = mem2;
+	register const signed char *p1 = mem1, *p2 = mem2;
 
 	if (!len)
 		return 0;

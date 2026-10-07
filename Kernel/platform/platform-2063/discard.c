@@ -10,7 +10,7 @@ void map_init(void)
 {
 }
 
-__sfr __at 0x81 vdp_c;
+#define VDP_C	0x81
 
 static void nap(void)
 {
@@ -22,11 +22,11 @@ static uint8_t probe_tms9918a(void)
 	uint8_t v;
 
 	/* Should clear top bit */
-	v = vdp_c;
+	v = in(VDP_C);
 
 	/* Should see the top bit go high */
 	do {
-		v = vdp_c & 0x80;
+		v = in(VDP_C) & 0x80;
 	} while(--ct && !(v & 0x80));
 
 	if (ct == 0)
@@ -35,7 +35,7 @@ static uint8_t probe_tms9918a(void)
 	nap();
 
 	/* Reading the F bit should have cleared it */
-	if (vdp_c & 0x80)
+	if (in(VDP_C) & 0x80)
 		return 0;
 	return 1;
 }

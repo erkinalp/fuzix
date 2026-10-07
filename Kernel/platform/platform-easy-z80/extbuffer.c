@@ -2,12 +2,13 @@
 #include <kdata.h>
 #include <printf.h>
 
+extern uint8_t *bsrc;
 extern uint8_t *bdest;
 extern uint16_t blen;
-extern void do_blkzero(uint8_t *ptr) __z88dk_fastcall;
-extern void do_blkcopyk(uint8_t *src) __z88dk_fastcall;
-extern void do_blkcopyul(uint8_t *src) __z88dk_fastcall;
-extern void do_blkcopyuh(uint8_t *src) __z88dk_fastcall;
+extern void do_blkzero(void);
+extern void do_blkcopyk(void);
+extern void do_blkcopyul(void);
+extern void do_blkcopyuh(void);
 
 /*
  *	Must live in CODE2
@@ -15,16 +16,18 @@ extern void do_blkcopyuh(uint8_t *src) __z88dk_fastcall;
 
 void blktok(void *kaddr, struct blkbuf *buf, uint16_t off, uint16_t len)
 {
+    bsrc = buf->__bf_data + off;
     bdest = kaddr;
     blen = len;
-    do_blkcopyk(buf->__bf_data + off);
+    do_blkcopyk();
 }
 
 void blkfromk(void *kaddr, struct blkbuf *buf, uint16_t off, uint16_t len)
 {
+    bsrc = kaddr;
     bdest = buf->__bf_data + off;
     blen = len;
-    do_blkcopyk(kaddr);
+    do_blkcopyk();
 }
 
 /* FIXME: work out a nice way to share the logic */
@@ -34,48 +37,54 @@ void blktou(void *uaddr, struct blkbuf *buf, uint16_t off, uint16_t len)
     bdest = uaddr;
     blen = len;
     /* If it's all below 16K or all over 32K then use the 0x4000 window */
-    if ((uint16_t)uaddr + len < 0x4000 || (uint16_t)uaddr > 0x8000) {
-        do_blkcopyul(buf->__bf_data + off);
+    if ((uint16_t)uaddr + len < 0x4000 || (uint16_t)uaddr >= 0x8000) {
+        bsrc = buf->__bf_data + off;
+        do_blkcopyul();
         return;
     }
     /* If it's all below 0x8000 then use the 0x8000 window */
     if ((uint16_t)uaddr + len < 0x8000) {
-        do_blkcopyuh(buf->__bf_data + off + 0x4000);
+        bsrc = buf->__bf_data + off + 0x4000;
+        do_blkcopyuh();
         return;
     }
     /* Split case */
     split = 0x8000 - (uint16_t)uaddr;
     blen = split;
-    do_blkcopyuh(buf->__bf_data + off + 0x4000);
+    bsrc = buf->__bf_data + off + 0x4000;
+    do_blkcopyuh();
     blen = len - split;
     bdest += split;
-    do_blkcopyul(buf->__bf_data + off + split);
+    bsrc = buf->__bf_data + off + split;
+    do_blkcopyul();
 }
 
 void blkfromu(void *uaddr, struct blkbuf *buf, uint16_t off, uint16_t len)
 {
     uint16_t split;
+    bsrc = uaddr;
     bdest = buf->__bf_data + off;
     blen = len;
     /* If it's all below 16K or all over 32K then use the 0x4000 window */
     if ((uint16_t)uaddr + len < 0x4000 || (uint16_t)uaddr > 0x8000) {
-        do_blkcopyul(uaddr);
+        do_blkcopyul();
         return;
     }
     /* If it's all below 0x8000 then use the 0x8000 window */
     if ((uint16_t)uaddr + len < 0x8000) {
         bdest += 0x4000;
-        do_blkcopyuh(uaddr);
+        do_blkcopyuh();
         return;
     }
     /* Split case */
-    split = 0x8000 - uaddr;
+    split = 0x8000 - (uint16_t)uaddr;
     blen = split;
     bdest += 0x4000;
-    do_blkcopyuh(uaddr);
+    do_blkcopyuh();
     blen = len - split;
     bdest += split- 0x4000;
-    do_blkcopyul((uint8_t *)uaddr + split);
+    bsrc += split;
+    do_blkcopyul();
 }
 
 static uint8_t scratchbuf[64];
@@ -85,15 +94,17 @@ void *blkptr(struct blkbuf *buf, uint16_t offset, uint16_t len)
 {
     if (len > 64)
         panic("blkptr");
+    bsrc = buf->__bf_data + offset;
     bdest = scratchbuf;
     blen = sizeof(scratchbuf);
-    do_blkcopyk(buf->__bf_data + offset);
+    do_blkcopyk();
     return scratchbuf;
 }
 
 void blkzero(struct blkbuf *buf)
 {
-    do_blkzero(buf->__bf_data);
+    bsrc = buf->__bf_data;
+    do_blkzero();
 }
 
 /*

@@ -35,7 +35,4 @@ done
 #
 set -e
 #
-cc65c816 -s $ARGS -o "$TARGET".b1 -M
-dd if="$TARGET".b1 of="$TARGET" bs=256 skip=1
-#$FUZIX_ROOT/Library/tools/binman816 "$TARGET"
-rm -f "$TARGET.b1"
+fcc -m65c816 -s $ARGS -o "$TARGET" -M

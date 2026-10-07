@@ -4,15 +4,15 @@
 #include <devinput.h>
 #include <ps2mouse.h>
 
-__sfr __at 0xA8 js1;
-__sfr __at 0xA9 js2;
+#define JS1	0xA8
+#define JS2	0xA9
 
 static uint8_t js_data[2]= {255, 255};
 
-uint8_t read_js(uint8_t *slot, uint8_t n, uint8_t r)
+uint8_t read_js(uint8_t *slot, uint8_t n)
 {
     uint8_t d = 0;
-    r &= 63;
+    uint8_t r = in(JS1 + n) & 63;
     if (r == js_data[n])
         return 0;
     js_data[n] = r;
@@ -34,9 +34,9 @@ uint8_t read_js(uint8_t *slot, uint8_t n, uint8_t r)
 
 int plt_input_read(uint8_t *slot)
 {
-    if (read_js(slot, 0, js1))
+    if (read_js(slot, 0))
         return 2;
-    if (read_js(slot, 1, js2))
+    if (read_js(slot, 1))
         return 2;
     return 0;
 }
@@ -48,12 +48,12 @@ void plt_input_wait(void)
 
 void poll_input(void)
 {
-    if ((js1 & 63) != js_data[0] ||
-        ((js2 & 63) != js_data[1]))
+    if ((in(JS1) & 63) != js_data[0] ||
+        ((in(JS2) & 63) != js_data[1]))
             wakeup(js_data);
 }
 
-int plt_input_write(uint8_t flag)
+int plt_input_write(uint_fast8_t flag)
 {
     flag;
     udata.u_error = EINVAL;

@@ -1,117 +1,82 @@
-        .module crt0
+# 1 "crt0.S"
+# 1 "kernelu.def"
+; UZI mnemonics for memory addresses etc
 
-	;
-	;	High space - read only 
-	;
+; We stick it straight after the tag
+U_DATA                      .equ 0x0080       ; (this is struct u_data from kernel.h)
+U_DATA__TOTALSIZE           .equ 0x200        ; 256+256+256 bytes.
 
-        .area _CODE
-	.area _CODE2
-	;
-	;	Tru and keep code in the top 32K
-	;
+Z80_TYPE		    .equ 1
 
+PROGBASE		    .equ 0x7800
+PROGLOAD		    .equ 0x7800
 
-	;
-	;	Our common lives low
-	;
-	.area _COMMONDATA
-        .area _COMMONMEM
-	.area _CODE3
-	.area _FONT
-        .area _VIDEO		; must end below 0x4000
-        .area _INITIALIZED
-        .area _HOME
-	.area _CONST
+NBUFS			    .equ 5
 
-	;
-	;	Beyond this point we just zero.
-	;
-
-        .area _DATA
-        .area _BSEG
-        .area _BSS
-        .area _HEAP
-        .area _GSINIT
-        .area _GSFINAL
-	;
-	;	Finally the buffers so they can expand
-	;
-	.area _BUFFERS
-
-        .area _DISCARD
-	; Somewhere to throw it out of the way
-        .area _INITIALIZER
-
-
-
-        ; imported symbols
-        .globl _fuzix_main
-        .globl init_early
-        .globl init_hardware
-	.globl l__BUFFERS
-	.globl s__BUFFERS
-	.globl l__DATA
-	.globl s__DATA
-        .globl kstack_top
-
-        .globl unix_syscall_entry
-        .globl nmi_handler
-        .globl interrupt_handler
-
-	.include "kernel.def"
-	.include "../../cpu-z80/kernel-z80.def"
-
+Z80_MMU_HOOKS		    .equ 0
+# 1 "../../cpu-z80u/kernel-z80.def"
+ 
+# 26
+ 
+# 44
+ 
+# 4 "crt0.S"
 	;
         ; startup code
 	;
 	; We loaded the rest of the kernel from disk and jumped here
 	;
 
-        .area _CODE
+	.code
 
-	.globl _start
+	.export	_start
 
 _start:
-
         di
 
 	;  We need to wipe the BSS but the rest of the job is done.
 
-	ld hl, #s__DATA
-	ld de, #s__DATA+1
-	ld bc, #l__DATA-1
-	ld (hl), #0
+	ld	hl, __bss
+	ld	de, __bss + 1
+	ld	bc, __bss_size - 1
+	ld	(hl), 0
 	ldir
-	ld hl, #s__BUFFERS
-	ld de, #s__BUFFERS+1
-	ld bc, #l__BUFFERS-1
-	ld (hl), #0
+	ld	hl, __buffers
+	ld	de, __buffers + 1
+	ld	bc, __buffers_size - 1
+	ld	(hl), 0
 	ldir
 
-        ld sp, #kstack_top
+        ld	sp, kstack_top
 
         ; Configure memory map
-        call init_early
+        call	init_early
 
         ; Hardware setup
-        call init_hardware
+        call	init_hardware
 
         ; Call the C main routine
-        call _fuzix_main
+        call	_fuzix_main
     
         ; main shouldn't return, but if it does...
         di
 stop:   halt
-        jr stop
+        jr	stop
 
-	.area _BUFFERS
 ;
 ; Buffers (we use asm to set this up as we need them in a special segment
 ; so we can recover the discard memory into the buffer pool
 ;
 
-	.globl _bufpool
-	.area _BUFFERS
+	.buffers
+	.export _bufpool
 
 _bufpool:
-	.ds BUFSIZE * NBUFS
+	.ds 520  * NBUFS
+
+; Force pad the binary
+
+	.abs
+	.org	0xFFFF
+
+	.byte	0

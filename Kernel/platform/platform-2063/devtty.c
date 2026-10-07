@@ -18,12 +18,12 @@ static uint8_t tmsinkpaper[5] = { 0, 0xF4 };
 static uint8_t tmsborder[5]  = {0, 0x04 };
 uint8_t vtattr_cap;
 uint8_t vidmode;
-uint8_t inputtty = 1;
 uint8_t outputtty = 1;
 static uint8_t vswitch;
 int8_t vt_tright = 39;
 int8_t vt_twidth = 40;
 uint16_t vdpport = 0x2881;	/* 40 chars wide port 0x81 */
+uint16_t inputtty;		/* Only one tty setup but need this */
 
 static uint8_t sleeping;
 
@@ -93,11 +93,11 @@ static void sio2_setup(uint8_t minor, uint8_t flags)
 	r = 0xC4;
 
 	if (minor == 1) {
-		CTC_CH1 = 0x55;
-		CTC_CH1 = siobaud[baud];
+		out(CTC_CH(1), 0x55);
+		out(CTC_CH(1), siobaud[baud]);
 	} else {
-		CTC_CH2 = 0x55;
-		CTC_CH2 = siobaud[baud];
+		out(CTC_CH(2), 0x55);
+		out(CTC_CH(2), siobaud[baud]);
 	}
 	if (baud >= B600)	/* Use x16 clock and CTC divider */
 		r = 0x44;
@@ -114,13 +114,13 @@ static void sio2_setup(uint8_t minor, uint8_t flags)
 	sio_r[5] = 0x8A | ((t->c_cflag & CSIZE) << 1);
 }
 
-void tty_setup(uint8_t minor, uint8_t flags)
+void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 {
 	sio2_setup(minor, flags);
 	sio2_otir(sio2_cmap[minor]);
 }
 
-int tty_carrier(uint8_t minor)
+int tty_carrier(uint_fast8_t minor)
 {
         uint8_t c;
         uint8_t port;
@@ -166,52 +166,54 @@ void tty_drain_sio(void)
 	}
 }
 
-void tty_putc(uint8_t minor, unsigned char c)
+void tty_putc(uint_fast8_t minor, uint_fast8_t ch)
 {
 	irqflags_t irqflags = di();
+	uint8_t c = ch;
 
 	switch(minor) {
 	case 1:
 		if (minor == 1 && !vswitch && vdptype != 0xFF)
 			vtoutput(&c, 1);
-		sioa_txqueue(c);
+		sioa_txqueue(ch);
 		break;
 	case 2:
-		siob_txqueue(c);
+		siob_txqueue(ch);
 		break;
 	}
 	irqrestore(irqflags);
 }
 
-void tty_sleeping(uint8_t minor)
+void tty_sleeping(uint_fast8_t minor)
 {
 	sleeping |= (1 << minor);
 }
 
-ttyready_t tty_writeready(uint8_t minor)
+ttyready_t tty_writeready(uint_fast8_t minor)
 {
 	if (sio_txl[minor - 1] < 128)
 		return TTY_READY_NOW;
 	return TTY_READY_SOON;
 }
 
-void tty_data_consumed(uint8_t minor)
+void tty_data_consumed(uint_fast8_t minor)
 {
 	used(minor);
 }
 
 /* kernel writes to system console -- never sleep! */
 
-void kputchar(char c)
+void kputchar(uint_fast8_t ch)
 {
 	/* Can't use the normal paths as we must survive interrupts off */
 	irqflags_t irq = di();
+	uint8_t c = ch;
 
-	while(!(SIOA_C & 0x04));
-	SIOA_D = c;
+	while(!(in(SIOA_C) & 0x04));
+	out(SIOA_D, ch);
 	if (vdptype != 0xFF)
 		vtoutput(&c, 1);
-	if (c == '\n')
+	if (ch == '\n')
 		kputchar('\r');
 
 	irqrestore(irq);
@@ -380,7 +382,7 @@ static uint8_t igrb_to_msx(uint8_t c)
 }
 
 
-int vdptty_ioctl(uint8_t minor, uarg_t arg, char *ptr)
+int vdptty_ioctl(uint_fast8_t minor, uarg_t arg, char *ptr)
 {
   unsigned i = 0;
   uint_fast8_t is_wr = 0;

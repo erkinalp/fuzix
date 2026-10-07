@@ -10,6 +10,12 @@ to CF.
 One option might be to just reserve a bank for the udata stash and claim 512
 bytes of user space back ?
 
+# 3vZ80
+
+A similar design of system with a different boot process. Once it's booted
+however things look pretty much identical except that there is no provision
+for an external bus, which makes timer ticks annoying.
+
 ## Memory map
 
 Kernel
@@ -27,7 +33,7 @@ Currently this build supports
 
 - Onboard not-quite ACIA including interrupt
 - Onboard CF
-- External Wifi
+- External Wifi (ZRC only)
 - DS1302 clock
 
 It really needs a time source adding, perhaps also more serial devices

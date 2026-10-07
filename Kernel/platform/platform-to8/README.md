@@ -1,5 +1,9 @@
 # Fuzix for the Thomson TO8 and TO9+
 
+Currently broken by the compiler change. We need to rework things to get
+everything to fit back into memory and probably need to do banked buffers
+and maybe banked code to achieve that.
+
 ## Supported Hardware
 -	Thomson TO8/TO9+/TO9D (512K needed currently)
 -	Keyboard

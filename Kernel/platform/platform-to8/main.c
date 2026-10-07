@@ -6,6 +6,7 @@
 #include <devtty.h>
 #include <devinput.h>
 #include <sd.h>
+#include <thomson-sd.h>
 
 uint8_t membanks;
 uint8_t in_bios;

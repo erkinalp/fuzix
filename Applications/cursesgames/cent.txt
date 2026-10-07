@@ -1,0 +1,48 @@
+
+
+			 Welcome to Centipede!
+
+    The object of this game is to survive as long as you can and get as many
+points as possible. You are situated in a strange garden, and there are
+different forms of life there. The main part of the game is the centipede,
+which starts up on the top of the screen, and moves across, coming down when it
+hits something. There are many mushrooms scattered about, blocking your way.
+You can shoot these 3 times to destroy them. There are other creatures such
+as fleas, scorpions, and spiders. You have to hit fleas twice to destroy them.
+    You get 1 shot. You can fire again as soon as hits something, or after it
+goes off the top of the screen. You are represented on the screen by an
+exclamation point (!), and your shot by an asterisk (*). Anything that moves
+on the screen can kill you, so be careful. You start off with 3 men (lives),
+and get a free man for every 12,000 points that you score. You can move within
+the region on the bottom of the screen below the horizontal dashes.
+
+    Other details of the game you will find out by playing.
+
+	Controls: (default)
+	<space> <enter>         fire
+	   4 h                  move left
+	   6 l                  move right
+	   2 k                  move down
+	   8 j                  move up
+	   7                    move up and left
+	   9                    move up and right
+	   1                    move down and left
+	   3                    move down and right
+	 <tab>                  make the game pause
+	   ^C                   quit
+	   ^\                   emergency quit (if all else fails)
+
+	Scoring:
+	   O                    centipede head          100
+	   o                    centipede body          10
+	   P p . X x ,          mushroom                1
+	   @                    flea                    200
+	`oo'--/                 scorpion                1,000
+
+	 /\  /\                                        /300
+	 /\oo/\                 spider                < 600
+						       \900
+
+			Good luck!
+
+Centipede is a trademark of Atari Corporation.

@@ -1,9 +1,5 @@
 /* System level configuration */
 
-/* Set this if you have the RC2014 CF adapter at 0x10/0x90 */
-#define CONFIG_RC2014_CF
-/* Set this if you have the 8255 IDE adapter (mutually exclusive of RC2014_CF) */
-#undef CONFIG_RC2014_PPIDE
 /* Set this if you have the floppy interface */
 #undef CONFIG_RC2014_FLOPPY
 
@@ -11,13 +7,6 @@
  *	Turn selections into system level defines
  */
 
-#ifdef CONFIG_RC2014_CF
-#define CONFIG_IDE
-#endif
-#ifdef CONFIG_RC2014_PPIDE
-#define CONFIG_IDE
-#define CONFIG_PPIDE
-#endif
 #ifdef CONFIG_RC2014_FLOPPY
 #define CONFIG_FLOPPY
 #endif
@@ -44,16 +33,16 @@
 #define TICKSPERSEC 50      /* Ticks per second */
 #define PROGBASE    0x0000  /* also data base */
 #define PROGLOAD    0x0100  /* also data base */
-#define PROGTOP     0xEE00  /* Top of program, base of U_DATA copy */
+#define PROGTOP     0xEC00  /* Top of program, base of U_DATA copy */
 #define KERNTOP     0xC000  /* Top of kernel (first 3 banks), base of shared bank */
 
 /* Adjust copy_common if you touch the above */
 
 /*#define SWAPDEV     (swap_dev) */	/* A variable for dynamic, or a device major/minor */
 extern uint16_t swap_dev;
-#define SWAP_SIZE   0x78 	/* Program + udata in blocks */
+#define SWAP_SIZE   0x77 	/* Program + udata in blocks */
 #define SWAPBASE    0x0000	/* start at the base of user mem */
-#define SWAPTOP	    0xF000	/* Swap out udata and program */
+#define SWAPTOP	    0xEE00	/* Swap out udata and program */
 #define MAX_SWAPS   16	    	/* We will size if from the partition */
 /* Swap will be set up when a suitably labelled partition is seen */
 /*#define CONFIG_DYNAMIC_SWAP */
@@ -70,12 +59,17 @@ extern uint16_t swap_dev;
 
 /* We need a tidier way to do this from the loader */
 #define CMDLINE	NULL  /* Location of root dev name */
-#define BOOTDEVICENAMES "hd#,fd,,rd"
+#define BOOTDEVICENAMES "hd#,fd"
 
 #define NBUFS    32       /* Number of block buffers, keep in line with space reserved in zeta-v2.s */
 #define NMOUNTS	 4	  /* Number of mounts at a time */
 
-#define MAX_BLKDEV 2	    /* 2 IDE */
+#define CONFIG_TD
+#define CONFIG_TD_NUM	1
+#define CONFIG_TD_IDE
+#define CONFIG_TINYIDE_8BIT
+#define CONFIG_TINYIDE_INDIRECT
+#define IDE_IS_8BIT(x)	1
 
 /* On-board DS1302, we can read the time of day from it */
 #define CONFIG_RTC_DS1302

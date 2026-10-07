@@ -22,7 +22,6 @@ extern void *memmove(void *dest, const void *src, size_t n);
 
 extern int16_t strlen(const char *p);
 
-#define regptr register
 #define	staticfast
 
 /* User's structure for times() system call */
@@ -31,8 +30,8 @@ typedef unsigned long clock_t;
 typedef union {            /* this structure is endian dependent */
     clock_t  full;         /* 32-bit count of ticks since boot */
     struct {
-      uint16_t low;         /* 16-bit count of ticks since boot */
-      uint16_t high;
+      uint16_t high;         /* 16-bit count of ticks since boot */
+      uint16_t low;
     } h;
 } ticks_t;
 
@@ -41,6 +40,7 @@ typedef union {            /* this structure is endian dependent */
 #define cpu_to_le16(x)	swab(x)
 #define le16_to_cpu(x)	swab(x)
 #define cpu_to_le32(x)	swab32(x)
+#define regptr register
 #define le32_to_cpu(x)	swab32(x)
 
 #define ntohs(x)	(x)

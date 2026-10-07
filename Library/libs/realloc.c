@@ -22,7 +22,7 @@
  */
 void *realloc(void *ptr, size_t size)
 {
-	struct memh *mh = MH(ptr);
+	register struct memh *mh = MH(ptr);
 	void *np;
 	size_t nblocks;
 

@@ -123,19 +123,19 @@ static ptptr swapvictim(ptptr p, int notself)
 	do {
 		if (c->p_page && c != udata.u_ptab) {	/* No point swapping someone in swap! */
 			/* We swapped it in but have not run it yet. Avoid thrashing */
-			if (c->p_flags & PFL_SWAPIN)
-				continue;
-			/* Find the last entry before us */
-			if (c->p_status == P_READY)
-				r = c;
-			if (c->p_status > P_READY
-			    && c->p_status <= P_FORKING) {
-				/* relative position in order of waits, bigger is longer, can wrap but
-				   shouldn't really matter to us much if it does */
-				s = (waitno - c->p_waitno);
-				if (s >= sc) {
-					sc = s;
-					f = c;
+			if (!(c->p_flags & PFL_SWAPIN)) {
+				/* Find the last entry before us */
+				if (c->p_status == P_READY)
+					r = c;
+				if (c->p_status > P_READY
+				    && c->p_status <= P_FORKING) {
+					/* relative position in order of waits, bigger is longer, can wrap but
+					   shouldn't really matter to us much if it does */
+					s = (waitno - c->p_waitno);
+					if (s >= sc) {
+						sc = s;
+						f = c;
+					}
 				}
 			}
 		}
@@ -159,7 +159,6 @@ static ptptr swapvictim(ptptr p, int notself)
 		return udata.u_ptab;
 	return r;
 #else
-	used(p);
 	if (notself)
 		panic(PANIC_NOTSELF);
 	return udata.u_ptab;
@@ -200,6 +199,8 @@ void swapper2(register ptptr p, uint16_t map)
 	p->p_flags &= ~PFL_BATCH;
 }
 
+#ifndef CONFIG_SWAPPER
+
 /*
  *	Called from switchin when we discover that we want to run
  *	a swapped process. We let pagemap_alloc cause any needed swap
@@ -207,10 +208,71 @@ void swapper2(register ptptr p, uint16_t map)
  */
 void swapper(register ptptr p)
 {
-        uint16_t map = p->p_page2;
 	pagemap_alloc(p);	/* May cause a swapout. May also destroy
                                    the old value of p->page2 */
-	swapper2(p, map);
+	swapper2(p, p->p_page2);
 }
+
+#else
+
+/*
+ *	On smaller ports we do swapping in the context of the tasks. That
+ *	does get a bit exciting in some cases and isn't great for interrupt
+ *	response but it does save us a load of memory and special magic for
+ *	udata blocks in banked memory.
+ *
+ *	On bigger systems (eg 68K) there's a real advanage to having a
+ *	separate swapper task that does the swapping work for us.
+ */
+
+ptptr swapproc;
+
+/* We are always run as the next task if swapout is needed and we are never
+   paged out */
+void swaptask(void)
+{
+    irqflags_t irqf;
+    ptptr p;
+
+    swapproc = udata.u_ptab;
+    kprintf("Starting swap daemon.\n");
+    /* TODO: hook to discard the mm mappings we inherited of kernel init
+       page */
+
+    /* No signals except kill */
+    swapproc->p_sig[0].s_ignored = 0xFDFF;
+    swapproc->p_sig[1].s_ignored = 0xFFFF;
+
+    /* Dump our inherited mappings */
+    pagemap_free(swapproc);
+
+    while(1) {
+        irqf = di();
+        p = swapnext;
+        if (p == NULL) {
+            switchout();
+            /* Interrupts now enabled */
+            continue;
+        }
+        swapnext = NULL;
+        irqrestore(irqf);
+        /* Swap in the task we need. If needed it'll also swap out
+           a task to make room */
+        swapper(p);
+    }
+}
+
+/* On a system with a swap task this triggers an asynchronous swap in. When
+   we take this path the scheduler will schedule the swapper whenever
+   swapnext is true */
+void swapper(ptptr p)
+{
+	if (swapnext)
+		panic("2swap");
+	swapnext = p;
+	pwake(swapproc);
+}
+
+#endif
 
 #endif

@@ -13,7 +13,7 @@ unsigned one_typedef(unsigned type, unsigned name)
 		junk();
 		return 0;
 	}
-	update_symbol_by_name(name, S_TYPEDEF, type);
+	update_typedef(name, type);
 	return 1;
 }
 
@@ -51,7 +51,17 @@ unsigned one_declaration(unsigned s, unsigned type, unsigned name, unsigned defs
 	if ((s == S_AUTO || s == S_REGISTER) && defstorage == S_EXTDEF)
 		error("no automatic globals");
 
-	if (IS_FUNCTION(type) && !PTR(type) && s == S_EXTDEF)
+	/*
+	 * A declaration of a function - as opposed to a pointer to one -
+	 * never has storage, whatever the surrounding default is. At file
+	 * scope that default is S_EXTDEF; inside a block it is S_AUTO, and
+	 * "int f(char *);" there used to fall through to assign_storage()
+	 * below and fail with "can't size type" (c-testsuite 00078). C89
+	 * allows only extern on a block scope function declarator anyway,
+	 * so mapping the default to S_EXTERN is what it means.
+	 */
+	if (IS_FUNCTION(type) && !PTR(type) &&
+	    (s == S_EXTDEF || s == S_AUTO || s == S_REGISTER))
 		s = S_EXTERN;
 
 	if (s == S_REGISTER) {
@@ -75,6 +85,16 @@ unsigned one_declaration(unsigned s, unsigned type, unsigned name, unsigned defs
 
 	if (s != S_EXTERN && (PTR(type) || !IS_FUNCTION(type)) && match(T_EQ)) {
 		unsigned label = sym->name;
+		/*
+		 * "int a[] = { ... };" on the stack. assign_storage above
+		 * reserved nothing, because the type has no dimension yet -
+		 * only the initializer knows how long the array is. The
+		 * *start* of the slot is known now though, which is all the
+		 * initializer needs to store into it, so reserve the size
+		 * afterwards once the type has been completed.
+		 */
+		unsigned unsized = (s == S_AUTO && IS_ARRAY(type) &&
+				    array_dimension(type, 1) == 0);
 		if (s == S_LSTATIC)
 			label = sym->data.offset;
 		if (sym->infonext & INITIALIZED)
@@ -82,9 +102,19 @@ unsigned one_declaration(unsigned s, unsigned type, unsigned name, unsigned defs
 		sym->infonext |= INITIALIZED;
 		if (s >= S_LSTATIC)
 		        header(H_DATA, label, target_alignof(type, s));
-		initializers(sym, type, s);
+		initializers(sym, type, s, 0);
 		if (s >= S_LSTATIC)
 		        footer(H_DATA, label, 0);
+		if (unsized) {
+			/* Same alignment and the frame has not moved, so
+			   this hands back the offset the stores already
+			   used - and now reserves the space. If something
+			   else claimed frame space while the initializer
+			   was being parsed the two would overlap, so check
+			   rather than quietly generating an alias. */
+			if (assign_storage(sym->type, S_AUTO) != sym->data.offset)
+				error("frame moved during initializer");
+		}
 	}
 	return 1;
 }

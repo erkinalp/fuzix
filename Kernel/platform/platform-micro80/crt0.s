@@ -1,94 +1,69 @@
+# 1 "crt0.S"
 ;
 ;	We are loaded from CP/M at the moment
 ;
-	        .module crt0
+# 1 "kernelu.def"
+; FUZIX mnemonics for memory addresses etc
 
-	        ; Ordering of segments for the linker.
-	        ; WRS: Note we list all our segments here, even though
-	        ; we don't use them all, because their ordering is set
-	        ; when they are first seen.
+U_DATA__TOTALSIZE	.equ	0x200	; 256+256 bytes @ 0xC000
+Z80_TYPE		.equ	0	; CMOS
+
+Z80_MMU_HOOKS		.equ 0
+
+CONFIG_SWAP		.equ 1
+
+PROGBASE		.equ	0x1000
+PROGLOAD		.equ	0x1000
+
+; Mnemonics for I/O ports etc
+
+; Z80 CTC ports
+CTC_CH0		.equ	0x10	; CTC channel 0 and interrupt vector
+CTC_CH1		.equ	0x11	; CTC channel 1 (periodic interrupts)
+CTC_CH2		.equ	0x12	; CTC channel 2
+CTC_CH3		.equ	0x13	; CTC channel 3
 
 
-	        .area _CODE
-	        .area _CODE2
-	        .area _HOME     ; compiler stores __mullong etc in here if you use them
-	        .area _CONST
-	        .area _INITIALIZED
-	        .area _DATA
-	        .area _BSEG
-	        .area _BSS
-	        .area _GSINIT      ; unused
-	        .area _GSFINAL     ; unused
-	        .area _HEAP
-	        ; note that areas below here may be overwritten by the heap at runtime, so
-	        ; put initialisation stuff in here
-	        .area _BUFFERS     ; _BUFFERS grows to consume all before it (up to KERNTOP)
-	        .area _DISCARD
-		; These get overwritten and don't matter
-	        .area _INITIALIZER ; binman copies this to the right place for us
+SIOA_D		.equ	0x18
+SIOA_C		.equ	0x19
+SIOB_D		.equ	0x1A
+SIOB_C		.equ	0x1B
+RTS_LOW		.equ	0xEA
 
-		.area _BOOT
-		.area _COMMONMEM
-		.area _SERIALDATA
-
-		.area _SERIAL
-
-	        ; imported symbols
-	        .globl _fuzix_main
-	        .globl init_hardware
-	        .globl s__INITIALIZER
-	        .globl s__COMMONMEM
-	        .globl l__COMMONMEM
-	        .globl s__DISCARD
-	        .globl l__DISCARD
-	        .globl s__DATA
-	        .globl l__DATA
-	        .globl s__BUFFERS
-	        .globl l__BUFFERS
-	        .globl kstack_top
-
-		.globl interrupt_handler
-		.globl nmi_handler
-
-		.include "kernel.def"
-
+PIOA_D		.equ	0x1C
+PIOA_C		.equ	0x1D
+PIOB_D		.equ	0x1E
+PIOB_C		.equ	0x1F
+# 6 "crt0.S"
 ;
 ;	We don't want our image packed
 ;
-		.area _PAGE0
+		.code
 ;
 ;	Runs from 0x0100
 ;
-		.area _BOOT
-
 		di
 
-		ld sp, #kstack_top
+		ld sp, kstack_top
 		; Zero the data area
-		ld hl, #s__DATA
-		ld de, #s__DATA + 1
-		ld bc, #l__DATA - 1
-		ld (hl), #0
+		ld hl, __bss
+		ld de, __bss + 1
+		ld bc, __bss_size - 1
+		ld (hl), 0
 		ldir
 		; Zero buffers area
-		ld hl, #s__BUFFERS
-		ld de, #s__BUFFERS + 1
-		ld bc, #l__BUFFERS - 1
-		ld (hl), #0
+		ld hl, __buffers
+		ld de, __buffers + 1
+		ld bc, __buffers_size - 1
+		ld (hl), 0
 		ldir
 
         	; Hardware setup
 	        call init_hardware
 
-		jp launch
-
-		.area _CODE
-launch:
 	        ; Call the C main routine
 	        call _fuzix_main
-    
 	        ; fuzix_main() shouldn't return, but if it does...
 	        di
 stop:		halt
 		jr stop
-

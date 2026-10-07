@@ -3,7 +3,7 @@ TO8/9+ Fuzix
 
 Memory Map:
 
-0000-3FFF	Banked RAM 	0-31	(can be catridge ROM)
+0000-3FFF	Banked RAM 	0-31	(can be cartridge ROM)
 4000-5FFF	2 x 8K bank	Bank 0 in 2 8K chunks (some modes need 1 some 2 some use 2 banks)
 6000-9FFF	Banked RAM
 6000-60FF	Reserved for firmware (in bank mapped only ?)

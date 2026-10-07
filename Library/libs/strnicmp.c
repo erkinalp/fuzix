@@ -9,7 +9,7 @@
 
 /********************** Function strnicmp ************************************/
 
-int strnicmp(const char *s, const char *d, size_t l)
+int strnicmp(register const char *s, register const char *d, size_t l)
 {
 	while (l-- != 0) {
 		unsigned char sc = *(const uchar *) s++, dc = *(const uchar *) d++;

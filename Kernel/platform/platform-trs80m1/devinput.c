@@ -4,11 +4,12 @@
 #include <devgfx.h>
 #include <devinput.h>
 
-__sfr __at 0x00 stick;
+#define STICK	0x00
 static uint8_t old_stick;
 
-__sfr __at 0x7C chroma0;
-__sfr __at 0x7E chroma1;
+#define CHROMA0	0x7C
+#define CHROMA1	0x7E
+
 static uint8_t old_cj[2];
 
 static char buf[32];
@@ -44,10 +45,10 @@ static int chroma_js(uint8_t *slot, uint8_t n, uint8_t v)
     *slot = k;
     return 2;
 }
-     
+
 int plt_input_read(uint8_t *slot)
 {
-    uint8_t r, k;
+    uint_fast8_t r, k;
     if (remq(&kqueue, &r)) {
         remq(&kqueue, &k);
 	*slot++ = KEYPRESS_CODE | r;
@@ -56,16 +57,16 @@ int plt_input_read(uint8_t *slot)
     }
 
     if (has_chroma) {
-        if (chroma_js(slot, 0, ~chroma0))
+        if (chroma_js(slot, 0, ~in(CHROMA0)))
 	    return 2;
-        if (chroma_js(slot, 1, ~chroma1))
+        if (chroma_js(slot, 1, ~in(CHROMA1)))
 	    return 2;
     }
     /* Clashes with Alpha joystick */
     if (has_hrg1)
         return 0;
 
-    r = ~stick;
+    r = ~in(STICK);
     if (r == old_stick)
         return 0;
 
@@ -97,7 +98,7 @@ void plt_input_wait(void)
     psleep(&kqueue);	/* We wake this on timers so it works for sticks */
 }
 
-int plt_input_write(uint8_t flag)
+int plt_input_write(uint_fast8_t flag)
 {
     flag;
     udata.u_error = EINVAL;
@@ -106,7 +107,7 @@ int plt_input_write(uint8_t flag)
 
 void poll_input(void)
 {
-    if ((!has_hrg1 && ~stick != old_stick) || 
-	(has_chroma && (old_cj[0] != ~chroma0 || old_cj[1] != ~chroma1)))
+    if ((!has_hrg1 && ~in(STICK) != old_stick) ||
+	(has_chroma && (old_cj[0] != ~in(CHROMA0) || old_cj[1] != ~in(CHROMA1))))
 	    wakeup(&kqueue);
 }

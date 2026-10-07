@@ -72,8 +72,8 @@ static void sio2_setup(uint_fast8_t minor, uint_fast8_t flags)
 
 	r = 0xC4;
 	if (ctc_present && minor == 2) {
-		CTC_CH1 = 0x55;
-		CTC_CH1 = siobaud[baud];
+		out(CTC_CH(1), 0x55);
+		out(CTC_CH(1), siobaud[baud]);
 		if (baud > B600)	/* Use x16 clock and CTC divider */
 			r = 0x44;
 	} else
@@ -121,8 +121,10 @@ void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 			break;
 		case CS7|PARENB|CSTOPB:
 			r = 0x82;
+			break;
 		case CS7|PARENB|PARODD|CSTOPB:
 			r = 0x86;
+			break;
 		case CS8|CSTOPB:
 			r = 0x92;
 			break;
@@ -137,7 +139,7 @@ void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 			r = 0x9E;
 			break;
 		}
-		ACIA_C = r;
+		out(ACIA_C, r);
 	}
 }
 
@@ -158,36 +160,36 @@ int tty_carrier(uint_fast8_t minor)
 	return 0;
 }
 
-void tty_pollirq_sio0(void)
+void tty_irq_sio0(void)
 {
 	static uint8_t old_ca, old_cb;
 	uint8_t ca, cb;
 	uint8_t progress;
 
 	/* Check for an interrupt */
-	SIOA_C = 0;
-	if (!(SIOA_C & 2))
+	out(SIOA_C, 0);
+	if (!(in(SIOA_C) & 2))
 		return;
 
 	/* FIXME: need to process error/event interrupts as we can get
 	   spurious characters or lines on an unused SIO floating */
 	do {
 		progress = 0;
-		SIOA_C = 0;		// read register 0
-		ca = SIOA_C;
+		out(SIOA_C, 0);		// read register 0
+		ca = in(SIOA_C);
 		/* Input pending */
 		if (ca & 1) {
 			progress = 1;
-			tty_inproc(1, SIOA_D);
+			tty_inproc(1, in(SIOA_D));
 		}
 		/* Break */
 		if (ca & 2)
-			SIOA_C = 2 << 5;
+			out(SIOA_C, 2 << 5);
 		/* Output pending */
 		if ((ca & 4) && (sleeping & 2)) {
 			tty_outproc(2);
 			sleeping &= ~2;
-			SIOA_C = 5 << 3;	// reg 0 CMD 5 - reset transmit interrupt pending
+			out(SIOA_C, 5 << 3);	// reg 0 CMD 5 - reset transmit interrupt pending
 		}
 		/* Carrier changed */
 		if ((ca ^ old_ca) & 8) {
@@ -196,16 +198,16 @@ void tty_pollirq_sio0(void)
 			else
 				tty_carrier_drop(1);
 		}
-		SIOB_C = 0;		// read register 0
-		cb = SIOB_C;
+		out(SIOB_C, 0);		// read register 0
+		cb = in(SIOB_C);
 		if (cb & 1) {
-			tty_inproc(2, SIOB_D);
+			tty_inproc(2, in(SIOB_D));
 			progress = 1;
 		}
 		if ((cb & 4) && (sleeping & 8)) {
 			tty_outproc(3);
 			sleeping &= ~8;
-			SIOB_C = 5 << 3;	// reg 0 CMD 5 - reset transmit interrupt pending
+			out(SIOB_C, 5 << 3);	// reg 0 CMD 5 - reset transmit interrupt pending
 		}
 		if ((cb ^ old_cb) & 8) {
 			if (cb & 8)
@@ -216,36 +218,36 @@ void tty_pollirq_sio0(void)
 	} while(progress);
 }
 
-void tty_pollirq_sio1(void)
+void tty_irq_sio1(void)
 {
 	static uint8_t old_ca, old_cb;
 	uint8_t ca, cb;
 	uint8_t progress;
 
 	/* Check for an interrupt */
-	SIOC_C = 0;
-	if (!(SIOC_C & 2))
+	out(SIOC_C, 0);
+	if (!(in(SIOC_C) & 2))
 		return;
 
 	/* FIXME: need to process error/event interrupts as we can get
 	   spurious characters or lines on an unused SIO floating */
 	do {
 		progress = 0;
-		SIOC_C = 0;		// read register 0
-		ca = SIOC_C;
+		out(SIOC_C, 0);		// read register 0
+		ca = in(SIOC_C);
 		/* Input pending */
 		if (ca & 1) {
 			progress = 1;
-			tty_inproc(3, SIOC_D);
+			tty_inproc(3, in(SIOC_D));
 		}
 		/* Break */
 		if (ca & 2)
-			SIOC_C = 2 << 5;
+			out(SIOC_C, 2 << 5);
 		/* Output pending */
 		if ((ca & 4) && (sleeping & 8)) {
 			tty_outproc(3);
 			sleeping &= ~8;
-			SIOC_C = 5 << 3;	// reg 0 CMD 5 - reset transmit interrupt pending
+			out(SIOC_C, 5 << 3);	// reg 0 CMD 5 - reset transmit interrupt pending
 		}
 		/* Carrier changed */
 		if ((ca ^ old_ca) & 8) {
@@ -254,16 +256,16 @@ void tty_pollirq_sio1(void)
 			else
 				tty_carrier_drop(3);
 		}
-		SIOD_C = 0;		// read register 0
-		cb = SIOD_C;
+		out(SIOD_C, 0);		// read register 0
+		cb = in(SIOD_C);
 		if (cb & 1) {
-			tty_inproc(4, SIOD_D);
+			tty_inproc(4, in(SIOD_D));
 			progress = 1;
 		}
 		if ((cb & 4) && (sleeping & 16)) {
 			tty_outproc(4);
 			sleeping &= ~16;
-			SIOD_C = 5 << 3;	// reg 0 CMD 5 - reset transmit interrupt pending
+			out(SIOD_C, 5 << 3);	// reg 0 CMD 5 - reset transmit interrupt pending
 		}
 		if ((cb ^ old_cb) & 8) {
 			if (cb & 8)
@@ -274,13 +276,13 @@ void tty_pollirq_sio1(void)
 	} while(progress);
 }
 
-void tty_pollirq_acia(void)
+void tty_irq_acia(void)
 {
 	uint8_t ca;
 
-	ca = ACIA_C;
+	ca = in(ACIA_C);
 	if (ca & 1) {
-		tty_inproc(1, ACIA_D);
+		tty_inproc(1, in(ACIA_D));
 	}
 	if ((ca & 2) && sleeping) {
 		tty_outproc(1);
@@ -291,7 +293,7 @@ void tty_pollirq_acia(void)
 void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 {
 	if (acia_present)
-		ACIA_D = c;
+		out(ACIA_D, c);
 	else {
 		uint8_t port = SIO0_BASE + 1 + 2 * (minor - 1);
 		out(port, c);
@@ -318,7 +320,7 @@ ttyready_t tty_writeready(uint_fast8_t minor)
 	uint8_t port;
 
 	if (acia_present) {
-		c = ACIA_C;
+		c = in(ACIA_C);
 		if (c & 0x02)	/* THRE? */
 			return TTY_READY_NOW;
 		return TTY_READY_SOON;

@@ -13,15 +13,15 @@
 #include <devgfx.h>
 #include "trs80.h"
 
-__sfr __at 0x00 hrg_off;
-__sfr __at 0x04 hrg_data;
-__sfr __at 0x79 vdps;
-__sfr __at 0x7C chromajs0;
-__sfr __at 0x82 gfx_data;
-__sfr __at 0x83 gfx_ctrl;
-__sfr __at 0xEC le18_data;
-__sfr __at 0xEF le18_ctrl;
-__sfr __at 0xFF ioctrl;
+#define HRG_OFF		0x00
+#define HRG_DATA	0x04
+#define VDPS		0x79
+#define CHROMAJS0	0x7C
+#define GFX_DATA	0x82
+#define GFX_CTRL	0x83
+#define LE18_DATA	0xEC
+#define LE18_CTRL	0xEF
+#define IOCTRL		0xFF
 
 uint8_t trs80_udg;
 
@@ -167,7 +167,7 @@ static uint8_t displaymap[4] = {0, 0, 0, 0};
 static int8_t udg_ioctl(uarg_t arg, char *ptr);
 
 /* TODO: Arbitrate graphics between tty 1 and tty 2 */
-int gfx_ioctl(uint8_t minor, uarg_t arg, char *ptr)
+int gfx_ioctl(uint_fast8_t minor, uarg_t arg, char *ptr)
 {
   uint8_t m;
 
@@ -194,13 +194,13 @@ int gfx_ioctl(uint8_t minor, uarg_t arg, char *ptr)
        memory wipes and the like first */
     if (video_mode == 0) {
       if (displaymap[1] == 1)
-        gfx_ctrl = 0;
+        out(GFX_CTRL, 0);
       else if (displaymap[1] == 2)
-        ioctrl = 0x20;
+        out(IOCTRL, 0x20);
       else if (displaymap[1] == 3)
-        hrg_off = 1;
+        out(HRG_OFF, 1);
       else if (displaymap[1] == 5)
-        le18_ctrl = 0;
+        out(LE18_CTRL, 0);
     }
     return 0;
   case GFXIOC_UNMAP:
@@ -218,23 +218,23 @@ void gfx_init(void)
   if (trs80_model == TRS80_MODEL1 || trs80_model == VIDEOGENIE) {
     /* HRG1B support. Might be good to also support 80-Grafix as a UDG
        module */
-    if (hrg_data != 0xFF) {	/* We ought to test more carefully */
+    if (in(HRG_DATA) != 0xFF) {	/* We ought to test more carefully */
       max_mode = 1;
       displaymap[1] = 3;
       has_hrg1 = 1;
     }
     /* LE-18 */
-    if(trs80_model == VIDEOGENIE && le18_data != 0xFF) {
+    if(trs80_model == VIDEOGENIE && in(LE18_DATA) != 0xFF) {
       displaymap[++max_mode] = 5;
       trsdisplay[5].mode = max_mode;
     }
   } else if (trs80_model == TRS80_MODEL3) {
     /* The model 3 might have an 80-Grafix UDG card, or a Graphyx
        or a Tandy card */
-    uint8_t *fb = (uint8_t *)0x3C00;
+    volatile uint8_t *fb = (uint8_t *)0x3C00;
     uint8_t c = *fb;
     *fb = 128;
-    ioctrl = 0xB2;
+    out(IOCTRL, 0xB2);
     if (*fb != 128) {
       /* Hopeful */
       *fb = 128;
@@ -244,9 +244,9 @@ void gfx_init(void)
         max_mode = 1;
       } /* else add UDG support FIXME */
     }
-    ioctrl = 0x20;
+    out(IOCTRL, 0x20);
     *fb = c;
-    if (max_mode == 0 && gfx_data != 0xFF) {
+    if (max_mode == 0 && in(GFX_DATA) != 0xFF) {
       max_mode = 1;
       displaymap[1] = 1;
     }
@@ -255,7 +255,7 @@ void gfx_init(void)
      on the external bus. 70-7C is also a common location for RTC clocks
      which makes detection trickier. The clock will show 0 in the upper
      bits, the joystick port will not */
-  if (vdps != 0xFF && (chromajs0 & 0xC0) == 0xC0) {
+  if (in(VDPS) != 0xFF && (in(CHROMAJS0) & 0xC0) == 0xC0) {
     displaymap[++max_mode] = 4;
     trsdisplay[4].mode = max_mode;
     has_chroma = 1;
@@ -285,12 +285,12 @@ static struct fontinfo fonti[4] = {
   { 128, 255, 128, 255, FONT_INFO_6X12P16 }
 };
 
-__sfr __at 130 trshg_nowrite;
-__sfr __at 140 trshg_write;
-__sfr __at 150 trshg_gfxoff;
-__sfr __at 155 trshg_gfxon;
-__sfr __at 0xFE pcg80;
-__sfr __at 0xFF p80gfx;
+#define TRSHG_NOWRITE	130
+#define TRSHG_WRITE	140
+#define TRSHG_GFXOFF	150
+#define TRSHG_GFXON	155
+#define PCG80		0xFE
+#define P80GFX		0xFF
 
 static uint8_t old_pcg80;
 static uint8_t old_p80gfx;
@@ -304,11 +304,11 @@ static void load_char_pcg80(uint8_t ch, uint8_t *cdata)
   uint8_t *addr = (uint8_t *)0x3C00 + ((ch & 0x3F) << 4);
   uint8_t i;
 
-  pcg80 = old_pcg80 | 0x60 | bank;	/* Programming mode on */
+  out(PCG80, old_pcg80 | 0x60 | bank);	/* Programming mode on */
 
   for (i = 0; i < 16; i++)
     *addr++ = *cdata++ << 1 | 0x80;
-  pcg80 = old_pcg80;
+  out(PCG80, old_pcg80);
 }
 
 static void load_char_80gfx(uint8_t ch, uint8_t *cdata)
@@ -316,10 +316,10 @@ static void load_char_80gfx(uint8_t ch, uint8_t *cdata)
   uint8_t *addr = (uint8_t *)0x3C00 + ((ch & 0x3F) << 4);
   uint8_t i;
 
-  p80gfx = old_p80gfx | 0x60;
+  out(P80GFX, old_p80gfx | 0x60);
   for (i = 0; i < 16; i++)
     *addr++ = *cdata++ << 1 | 0x80;
-  p80gfx = old_p80gfx;
+  out(P80GFX, old_p80gfx);
 }
 
 static void load_char_trs(uint8_t ch, uint8_t *cdata)
@@ -327,10 +327,10 @@ static void load_char_trs(uint8_t ch, uint8_t *cdata)
   uint8_t *addr = (uint8_t *)0x3C00 + ((ch & 0x3F) << 4);
   uint8_t i;
 
-  trshg_write = 1;
+  out(TRSHG_WRITE, 1);
   for (i = 0; i < 16; i++)
     *addr++ = *cdata++ << 1 | 0x80;
-  trshg_nowrite = 1;
+  out(TRSHG_NOWRITE, 1);
 }
 
 void (*load_char[4])(uint8_t, uint8_t *) = {
@@ -348,16 +348,16 @@ static void udg_config(void)
       old_pcg80 |= 0x80;	/* 128-255 soft font */
     if (udgflag & SOFTFONT_ALL)
       old_pcg80 |= 0x88;
-    pcg80 = old_pcg80 | 0x20;
+    out(PCG80, old_pcg80 | 0x20);
     break;
   case UDG_80GFX:
     if (udgflag & SOFTFONT_UDG)
       old_p80gfx |= 0x80;
-    p80gfx = old_p80gfx | 0x20;
+    out(P80GFX, old_p80gfx | 0x20);
     break;
   case UDG_MICROFIRMA:
     if (udgflag & SOFTFONT_UDG)
-      trshg_gfxon = 1;
+      out(TRSHG_GFXON, 1);
     break;
   }
 }
@@ -395,11 +395,11 @@ static int8_t udg_ioctl(uarg_t arg, char *ptr)
     /* Fall through */
   case VTSETFONT:
     for (i = base; i <= limit; i++) {
-      uint8_t c[16];
-      if (uget(c, ptr, 16) == -1)
+      uint8_t cbit[16];
+      if (uget(cbit, ptr, 16) == -1)
         return -1;
       ptr += 16;
-      load_char[trs80_udg](i, c);
+      load_char[trs80_udg](i, cbit);
     }
     if (arg == VTSETUDG)
       udgflag |= SOFTFONT_UDG;

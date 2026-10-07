@@ -41,8 +41,8 @@
 	    .globl null_handler
 	    .globl _init_hardware_c
 
-	    .globl _fuzixbios_serial_txready
-	    .globl _fuzixbios_serial_tx
+	    .globl _fuzixbios_ser_txr
+	    .globl _fuzixbios_ser_tx
 	    .globl _fuzixbios_reboot
 	    .globl _fuzixbios_monitor
 	    .globl _fuzixbios_set_bank
@@ -247,12 +247,12 @@ outchar:
 	    push af
 txwait:
 	    ld l,#0
-	    call _fuzixbios_serial_txready
+	    call _fuzixbios_ser_txr
 	    ld a,l
 	    or a
 	    jr z,txwait
 	    pop af
-	    call _fuzixbios_serial_tx
+	    call _fuzixbios_ser_tx
 	    pop hl
 	    pop de
 	    pop bc

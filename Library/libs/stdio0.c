@@ -9,7 +9,7 @@
 #include "stdio-l.h"
 
 /* This needs to live with __stdio_init vars as they depend upon one another */
-int fflush(FILE * fp)
+int fflush(register FILE * fp)
 {
 	unsigned char *bstart;
 	int len, cc, rv = 0;
@@ -99,7 +99,7 @@ FILE stderr[1] = {
 
 STATIC void __stdio_close_all(void)
 {
-	FILE *fp = __IO_list;
+	register FILE *fp = __IO_list;
 
 	fflush(stdout);
 	fflush(stderr);

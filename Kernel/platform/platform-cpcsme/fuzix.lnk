@@ -35,11 +35,16 @@ syscall_net.rel
 tty.rel
 vt.rel
 mm.rel
+swap.rel
 memalloc_none.rel
 bankfixed.rel
 devsys.rel
 devinput.rel
 network.rel
+platform/platform-cpcsme/m4board.rel
+platform/platform-cpcsme/devm4board.rel
+platform/platform-cpcsme/ds12885.rel
+platform/platform-cpcsme/ds12885_z80.rel
 platform/platform-cpcsme/devtty.rel
 platform/platform-cpcsme/td_block_io.rel
 platform/platform-cpcsme/tinyide.rel
@@ -55,4 +60,5 @@ platform/platform-cpcsme/fdc765.rel
 platform/platform-cpcsme/net_native.rel
 platform/platform-cpcsme/net_w5x00.rel
 platform/platform-cpcsme/wiznet.rel
+platform/platform-cpcsme/net_m4board.rel
 -e

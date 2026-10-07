@@ -2,7 +2,7 @@
 #include <unistd.h>
 #include <errno.h>
 
-int clock_getres(clockid_t clk_id, struct timespec *res)
+int clock_getres(clockid_t clk_id, register struct timespec *res)
 {
   switch(clk_id) {
   case CLOCK_REALTIME:

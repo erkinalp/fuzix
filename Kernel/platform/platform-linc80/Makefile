@@ -1,4 +1,4 @@
-ASRCS = crt0.s tricks.s commonmem.s linc80.s piospi.s piosd.s
+ASRCS = crt0.S tricks.S commonmem.S linc80.S piospi.S piosd.S serial.S
 CSRCS = devices.c main.c devtty.c sd.c
 DISCARD_CSRCS = discard.c
 DISCARD_DSRCS = ../../dev/tinyide_discard.c ../../dev/tinysd_discard.c
@@ -6,52 +6,68 @@ DISCARD_DSRCS += ../../dev/tinydisk_discard.c
 DSRCS = ../../dev/tinyide.c ../../dev/tinydisk.c ../../dev/tinysd.c
 NSRCS = 
 
-AOBJS = $(ASRCS:.s=.rel)
-COBJS = $(CSRCS:.c=.rel)
-DISCARD_COBJS = $(DISCARD_CSRCS:.c=.rel)
-DISCARD_DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DISCARD_DSRCS))
-DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DSRCS))
+AOBJS = $(ASRCS:.S=.o)
+COBJS = $(CSRCS:.c=.o)
+DISCARD_COBJS = $(DISCARD_CSRCS:.c=.o)
+DISCARD_DOBJS = $(patsubst ../../dev/%.c,%.o, $(DISCARD_DSRCS))
+DOBJS = $(patsubst ../../dev/%.c,%.o, $(DSRCS))
 
 OBJS  = $(AOBJS) $(COBJS) $(DOBJS) $(DISCARD_DOBJS) $(DISCARD_COBJS) $(NOBJS)
 
 CROSS_CCOPTS += -I../../dev/ -I../../dev/net/
 
-JUNK = *.rel *.lst *.asm *.sym *.rst *.map *.ihx *.bin
-
 all:	$(OBJS)
 
-$(AOBJS): %.rel: %.s
+serial.S: serialgen serial.hdr
+	./serialgen >serial.S
+
+$(AOBJS): %.o: %.S
 	$(CROSS_AS) $(ASOPTS) $<
 
-$(COBJS): %.rel: %.c
+$(COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DOBJS): %.rel: ../../dev/%.c
+$(DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DISCARD_COBJS): %.rel: %.c
+$(DISCARD_COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(DISCARD_DOBJS): %.rel: ../../dev/%.c
+$(DISCARD_DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(NOBJS): %.rel: ../../dev/net/%.c
+$(NOBJS): %.o: ../../dev/net/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
 clean:
-	rm -f $(OBJS) $(JUNK)  core *~ fuzix.com loader.tmp
+	rm -f $(OBJS) core *~ fuzix.com loader.tmp
 
 image:  loader.bin
+	$(CROSS_LD) -b -S 0x300 -f SsCLDBbX -o ../../fuzix.bin \
+	crt0.o commonmem.o linc80.o ../../start.o \
+	../../version.o ../../cpu-z80u/lowlevel-z80u.o \
+	../../usermem.o ../../cpu-z80u/usermem_std-z80u.o tricks.o main.o discard.o \
+	../../timer.o ../../kdata.o devices.o ../../devio.o \
+	../../filesys.o ../../blk512.o ../../process.o \
+	../../inode.o ../../syscall_exec.o ../../syscall_exec16.o \
+	../../syscall_fs.o ../../syscall_fs2.o ../../syscall_fs3.o \
+	../../syscall_proc.o ../../syscall_other.o ../../syscall_net.o \
+	../../network.o ../../tty.o ../../vt.o ../../font/font6x8.o \
+	../../mm.o ../../mm/memalloc_none.o \
+	../../swap.o ../../mm/simple.o ../../devsys.o sd.o piospi.o piosd.o \
+	devtty.o serial.o ../../dev/tinydisk.o ../../dev/tinydisk_discard.o \
+	../../dev/tinysd.o ../../dev/tinysd_discard.o \
+	../../dev/tinyide.o ../../dev/tinyide_discard.o \
+	/opt/fcc/lib/z80/libz80.a -m fuzix.tmpmap
+	perl -lpe '$$_=hex' fuzix.tmpmap | paste -d" " - fuzix.tmpmap  |  sort -n |  cut -d" " -f 2- >../../fuzix.map
 	dd if=../../fuzix.bin of=fuzix.com bs=256 skip=1 count=248
 
-loader.bin: loader.s
-	sdasz80 -o loader.s
-	sdldz80 -i loader.rel
-	makebin -s 65536 loader.ihx loader.tmp
+loader.bin: loader.S
+	fcc -mz80 -c loader.S
+	ldz80 -b loader.o -o loader.tmp
 	dd if=loader.tmp bs=256 skip=208 of=loader.bin
 
-piospi.rel: ../../dev/z80softspi.s
-linc80.rel: ../../dev/z80sio.s
+piospi.o: ../../dev/z80usoftspi.S
 
 IMAGES = $(FUZIX_ROOT)/Images/$(TARGET)
 

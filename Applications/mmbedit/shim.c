@@ -1,0 +1,608 @@
+/* mmbedit shim: terminal, keyboard and file I/O between MMBasic's
+ * editor and Fuzix.
+ *
+ * The keyboard is the interesting half.  MMBasic's editor expects
+ * MMInkey() to hand back one code per key - 0x91 for F1, 0x80 for UP -
+ * but a terminal sends escape sequences, and it has to be a terminal:
+ * the console is shared with a serial line, and TeraTerm cannot send
+ * 0x91.  inkey() below reassembles them.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <signal.h>
+#include <termios.h>
+#include <sys/ioctl.h>
+#include "mmbedit.h"
+
+#ifdef _WIN32
+/* The console on Windows: pc3w_read honours the VMIN/VTIME set below,
+   where the C runtime's read would wait for a whole line. */
+int pc3w_read(int fd, void *buf, size_t n);
+#define read_console(p) pc3w_read(0, (p), 1)
+#else
+#define read_console(p) read(0, (p), 1)
+#endif
+
+int scr_rows = 40, scr_cols = 80;
+
+static struct termios saved;
+static int raw_active;
+
+/* --- the display mode ------------------------------------------------ *
+ *
+ * The editor draws on the text console, which is what MMBasic calls
+ * MODE 1 and the kernel calls 0xFF - its 640x480 one-bit surface.  A
+ * BASIC program that ended in MODE 2 leaves the screen 320x240 in 16
+ * colours, and editing on that is a mess: the console is not what is
+ * being scanned out, so the editor draws where nobody can see it.
+ *
+ * So take the console for the duration and give the mode back on the
+ * way out, whichever way out that is.  Kernel numbering, mirrored from
+ * the platform's pico_ioctl.h, which is the authority.
+ */
+#define GFXIOC_MODE   0x0003
+#define GFXIOC_INFO   0x000E
+#define GFX_CONSOLE   0xFF              /* MMBasic MODE 1 */
+
+struct gfx_info {
+    unsigned short width, height, stride;
+    unsigned char bpp, mode;
+};
+
+static int gfx_fd = -1;
+static int mode_saved = -1;             /* -1 = nothing to put back */
+
+/* The mode we found, or -1 if the question cannot be asked - an older
+   kernel without GFXIOC_INFO, or no /dev/sys at all.  Not an error: the
+   editor works fine on a console that cannot tell us about itself. */
+static int mode_get(void)
+{
+    struct gfx_info gi;
+
+    if (gfx_fd < 0)
+        gfx_fd = open("/dev/sys", O_RDWR);
+    if (gfx_fd < 0)
+        return -1;
+    if (ioctl(gfx_fd, GFXIOC_INFO, &gi) < 0)
+        return -1;
+    return gi.mode;
+}
+
+static void mode_set(int m)
+{
+    int k = m;
+
+    if (gfx_fd >= 0)
+        (void)ioctl(gfx_fd, GFXIOC_MODE, &k);
+}
+
+/* Called from term_close, so every exit path restores - including the
+   signal handler, which is the one that matters: a program killed in a
+   graphics mode would otherwise leave the machine unusable. */
+static void mode_restore(void)
+{
+    if (mode_saved >= 0) {
+        mode_set(mode_saved);
+        mode_saved = -1;
+    }
+    if (gfx_fd >= 0) {
+        close(gfx_fd);
+        gfx_fd = -1;
+    }
+}
+
+/* --- terminal ------------------------------------------------------------- */
+
+static void on_signal(int sig)
+{
+    term_close();
+    _exit(128 + sig);
+}
+
+int term_open(void)
+{
+    struct termios t;
+    struct winsize ws;
+
+    if (tcgetattr(0, &saved) < 0)
+        return -1;
+    t = saved;
+    /* ISIG stays ON deliberately.  MMBasic's editor binds Ctrl-Q, W
+     * and Y but never Ctrl-C, so nothing is lost - and it means a
+     * wedged input loop can always be broken out of, with on_signal
+     * putting the terminal back.  An editor that can strand the
+     * terminal is worse than an editor missing a key. */
+    t.c_lflag &= ~(ICANON | ECHO);
+    t.c_iflag &= ~(ICRNL | IXON);
+    t.c_oflag &= ~OPOST;
+    /* VMIN 0 / VTIME 1: read returns the moment a byte arrives, or
+     * empty after 100ms.  That gives inkey() its non-blocking poll AND
+     * the gap that separates a bare ESC from the start of a sequence,
+     * with one termios setting and no per-key syscalls. */
+    t.c_cc[VMIN] = 0;
+    t.c_cc[VTIME] = 1;
+    if (tcsetattr(0, TCSANOW, &t) < 0)
+        return -1;
+    raw_active = 1;
+
+    /* Never leave the terminal raw if we are killed. */
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+    signal(SIGHUP, on_signal);
+    signal(SIGQUIT, on_signal);
+
+    /* Before the size question, not after: the geometry belongs to the
+       mode, and asking first would size the editor to the one we are
+       about to leave. */
+    {
+        int m = mode_get();
+
+        if (m >= 0 && m != GFX_CONSOLE) {
+            mode_saved = m;
+            mode_set(GFX_CONSOLE);
+        }
+    }
+
+    if (ioctl(0, TIOCGWINSZ, &ws) == 0 && ws.ws_row && ws.ws_col) {
+        scr_rows = ws.ws_row;
+        scr_cols = ws.ws_col;
+    }
+    return 0;
+}
+
+void term_close(void)
+{
+    if (!raw_active)
+        return;
+    raw_active = 0;
+    scr_wrap(1);
+    scr_cursor(1);
+    scr_normal();
+    scr_flush();
+    tcsetattr(0, TCSANOW, &saved);
+    mode_restore();
+}
+
+/* --- output --------------------------------------------------------------- */
+/* Buffered: a full repaint is ~3K of escapes and characters, and one
+ * write beats three thousand. */
+static char obuf[2048];
+static int olen;
+
+void scr_flush(void)
+{
+    if (olen) {
+        write(1, obuf, olen);
+        olen = 0;
+    }
+}
+
+void scr_putc(char c)
+{
+    if (olen == sizeof(obuf))
+        scr_flush();
+    obuf[olen++] = c;
+}
+
+void scr_puts(const char *s)
+{
+    while (*s)
+        scr_putc(*s++);
+}
+
+static void scr_num(int n)
+{
+    char b[8];
+    int i = 0;
+    if (n <= 0) {
+        scr_putc('0');
+        return;
+    }
+    while (n && i < (int)sizeof(b)) {
+        b[i++] = '0' + n % 10;
+        n /= 10;
+    }
+    while (i)
+        scr_putc(b[--i]);
+}
+
+void scr_cls(void)      { scr_puts("\033[2J\033[H"); }
+void scr_eol(void)      { scr_puts("\033[K"); }
+void scr_normal(void)   { scr_puts("\033[0m"); }
+void scr_inverse(int on) { scr_puts(on ? "\033[7m" : "\033[27m"); }
+void scr_cursor(int on) { scr_puts(on ? "\033[?25h" : "\033[?25l"); }
+void scr_wrap(int on)   { scr_puts(on ? "\033[?7h" : "\033[?7l"); }
+
+void scr_goto(int row, int col)
+{
+    scr_puts("\033[");
+    scr_num(row + 1);
+    scr_putc(';');
+    scr_num(col + 1);
+    scr_putc('H');
+}
+
+void scr_colour(int fg, int bg)
+{
+    if (fg >= 0) {
+        scr_puts("\033[");
+        scr_num(30 + (fg & 7));
+        scr_putc('m');
+    }
+    if (bg >= 0) {
+        scr_puts("\033[");
+        scr_num(40 + (bg & 7));
+        scr_putc('m');
+    }
+}
+
+/* --- keyboard ------------------------------------------------------------- */
+/* One byte of pushback is enough: the only time we over-read is an ESC
+ * followed by something that turns out not to be a sequence. */
+static int pushed = -1;
+
+static int readb(void)
+{
+    unsigned char c;
+    if (pushed >= 0) {
+        int r = pushed;
+        pushed = -1;
+        return r;
+    }
+    scr_flush();                    /* never wait on input with output pending */
+    if (read_console(&c) != 1)
+        return -1;                  /* 100ms passed with nothing */
+    return c;
+}
+
+/* CSI parameter forms we care about:
+ *   ESC [ A..D H F          cursor cluster
+ *   ESC [ <n> ~             editing cluster and F5-F12
+ *   ESC [ <n> ; <mod> ~     the same, shifted
+ *   ESC [ 1 ; <mod> P..S    shifted F1-F4
+ *   ESC O P..S              F1-F4
+ */
+static int decode_csi(void)
+{
+    int n = 0, mod = 0, c;
+    int have_n = 0;
+
+    for (;;) {
+        c = readb();
+        if (c < 0)
+            return K_ESC;           /* truncated: treat as a bare ESC */
+        if (c >= '0' && c <= '9') {
+            n = n * 10 + (c - '0');
+            have_n = 1;
+            continue;
+        }
+        if (c == ';') {
+            mod = 0;
+            for (;;) {
+                c = readb();
+                if (c < 0)
+                    return K_ESC;
+                if (c >= '0' && c <= '9') {
+                    mod = mod * 10 + (c - '0');
+                    continue;
+                }
+                break;
+            }
+        }
+        break;
+    }
+
+    /* mod 2 = shift (xterm encodes modifier+1) */
+    {
+        int shifted = (mod == 2);
+        int k = 0;
+
+        switch (c) {
+        case 'A': k = K_UP; break;
+        case 'B': k = K_DOWN; break;
+        case 'C': k = K_RIGHT; break;
+        case 'D': k = K_LEFT; break;
+        case 'H': k = K_HOME; break;
+        case 'F': k = K_END; break;
+        case 'P': k = K_F1; break;      /* CSI 1;2 P = shift-F1 */
+        case 'Q': k = K_F2; break;
+        case 'R': k = K_F3; break;
+        case 'S': k = K_F4; break;
+        case '~':
+            if (!have_n)
+                return 0;
+            switch (n) {
+            /* 1/4 and 7/8 are the VT220 and rxvt spellings of Home and
+             * End.  Our own keyboard sends CSI H and CSI F, but the
+             * editor has to work from a serial terminal too and every
+             * one of them spells these differently. */
+            case 1:  k = K_HOME; break;
+            case 4:  k = K_END; break;
+            case 7:  k = K_HOME; break;
+            case 8:  k = K_END; break;
+            case 2:  k = K_INSERT; break;
+            case 3:  k = K_DEL; break;
+            case 5:  k = K_PUP; break;
+            case 6:  k = K_PDOWN; break;
+            /* F1-F4 have two spellings and we only knew one.  Our own
+             * console sends the DEC form, ESC O P..S, handled below -
+             * but TeraTerm and every VT220-style terminal send these,
+             * and mmbedit swallowed them as unknown, so on a serial
+             * terminal none of the function keys the editor is driven
+             * by did anything at all.  The whole table below is
+             * MMBasic's MMInkey (PicoMite.c), which is the authority
+             * for what this editor expects. */
+            case 11: k = K_F1; break;
+            case 12: k = K_F2; break;
+            case 13: k = K_F3; break;
+            case 14: k = K_F4; break;
+            case 15: k = K_F5; break;
+            case 17: k = K_F6; break;
+            case 18: k = K_F7; break;
+            case 19: k = K_F8; break;
+            case 20: k = K_F9; break;
+            case 21: k = K_F10; break;
+            case 23: k = K_F11; break;
+            case 24: k = K_F12; break;
+            /* The shifted spellings, also MMInkey's.  These already
+             * carry the shift, so they are returned as they stand -
+             * the ";2" modifier path below is a different terminal's
+             * way of saying the same thing and the two never combine. */
+            case 25: return K_SHIFT(K_F3);
+            case 26: return K_SHIFT(K_F4);
+            case 28: return K_SHIFT(K_F5);
+            case 29: return K_SHIFT(K_F6);
+            case 31: return K_SHIFT(K_F7);
+            case 32: return K_SHIFT(K_F8);
+            case 33: return K_SHIFT(K_F9);
+            case 34: return K_SHIFT(K_F10);
+            default: return 0;          /* unknown: swallow, never emit junk */
+            }
+            break;
+        default:
+            return 0;
+        }
+        return shifted ? K_SHIFT(k) : k;
+    }
+}
+
+int inkey(void)
+{
+    int c = readb();
+
+    if (c < 0)
+        return 0;                   /* nothing waiting */
+#ifdef PC3_HOST
+    /* A PC terminal's Backspace key sends 0x7F, which MMBasic's editor
+     * takes as its DEL - forward delete - so both keys deleted forward.
+     * The board's keyboard and TeraTerm send 0x08 for Backspace and
+     * ESC [ 3 ~ for Delete (decode_csi above), and so does a PC's
+     * Delete key, so a bare 0x7F here can only be Backspace. */
+    if (c == K_DEL)
+        return '\b';
+#endif
+    if (c != K_ESC)
+        return c;
+
+    c = readb();
+    if (c < 0)
+        return K_ESC;               /* nothing followed: a real Escape */
+    if (c == '[')
+        return decode_csi();
+    if (c == 'O') {
+        c = readb();
+        switch (c) {
+        case 'P': return K_F1;
+        case 'Q': return K_F2;
+        case 'R': return K_F3;
+        case 'S': return K_F4;
+        case 'T': return K_F5;      /* MMInkey takes ESC O P..T, not P..S */
+        case '2':                   /* ESC O 2 R = shift-F3, MMInkey again */
+            if (readb() == 'R')
+                return K_SHIFT(K_F3);
+            return 0;
+        default:  return 0;
+        }
+    }
+    /* ESC followed by something else: hand back the ESC and keep the
+     * byte for next time (Alt-<key> on some terminals). */
+    pushed = c;
+    return K_ESC;
+}
+
+/* --- the names MMBasic's editor calls -------------------------------------- */
+/* Editor.c reaches these through function pointers so it can be aimed at
+ * a serial console or an LCD panel.  There is one target here, so they
+ * are ordinary functions. */
+void PrintString(char *s)
+{
+    scr_puts(s);
+}
+
+char SSputchar(char c, int flush)
+{
+    scr_putc(c);
+    if (flush)
+        scr_flush();
+    return c;
+}
+
+int MMInkey(void)
+{
+    int k = inkey();
+    return k ? k : -1;           /* MMBasic's "nothing" is -1, ours is 0 */
+}
+
+int MMgetchar(void)
+{
+    int k;
+    do {
+        k = inkey();
+    } while (k == 0);
+    return k;
+}
+
+/* The drain after a repaint: `while (getConsole() != -1);`.  It MUST NOT
+ * wait - inkey() blocks for up to 100ms, and a repaint happens on every
+ * newline, so going through inkey() here would put a visible stall on
+ * ordinary typing.  A non-blocking read costs nothing when idle. */
+int getConsole(void)
+{
+    unsigned char c;
+    int fl, r;
+
+    fl = fcntl(0, F_GETFL, 0);
+    if (fl < 0)
+        return -1;
+    if (fcntl(0, F_SETFL, fl | O_NONBLOCK) < 0)
+        return -1;
+    r = read_console(&c);
+    fcntl(0, F_SETFL, fl);
+    return (r == 1) ? c : -1;
+}
+
+void routinechecks(void)
+{
+    /* MMBasic services the watchdog, the serial ports and its interrupt
+     * queue here.  Under Fuzix the kernel does all of that. */
+}
+
+/* --- the buffer and files -------------------------------------------------- */
+static unsigned char edbuf_store[EDBUF_SIZE];
+unsigned char *EdBuff = edbuf_store;
+int EdBuffSize = EDBUF_SIZE;
+int nbrlines;
+
+int buf_count_lines(void)
+{
+    unsigned char *p = EdBuff;
+    int n = 0;
+    while (*p) {
+        if (*p++ == '\n')
+            n++;
+    }
+    /* a trailing partial line still counts */
+    if (p != EdBuff && p[-1] != '\n')
+        n++;
+    return n;
+}
+
+unsigned char *buf_line(int n)
+{
+    unsigned char *p = EdBuff;
+    if (n <= 0)
+        return p;
+    while (*p) {
+        if (*p++ == '\n' && --n == 0)
+            return p;
+    }
+    return NULL;
+}
+
+int file_load(const char *name)
+{
+    int fd, r, used = 0;
+
+    EdBuff[0] = 0;
+    nbrlines = 0;
+
+    fd = open(name, O_RDONLY);
+    if (fd < 0)
+        return (errno == ENOENT) ? 0 : -1;   /* a new file is not an error */
+
+    for (;;) {
+        r = read(fd, EdBuff + used, EDBUF_SIZE - 1 - used);
+        if (r < 0) {
+            close(fd);
+            return -1;
+        }
+        if (r == 0)
+            break;
+        used += r;
+        if (used >= EDBUF_SIZE - 1) {
+            close(fd);
+            errno = EFBIG;              /* caller reports "file too big" */
+            return -1;
+        }
+    }
+    close(fd);
+    EdBuff[used] = 0;
+
+    /* Strip CR.  MMBasic writes CRLF and most .bas files in circulation
+     * are DOS files; the editor treats only LF as a line ending, so a
+     * stray CR sits IN the text - it prints, sending the terminal back
+     * to column 0 in the middle of a line, and every column the editor
+     * computes is then wrong.  solar_eclipse.bas is one of these. */
+    {
+        unsigned char *r = EdBuff, *w = EdBuff;
+        while (*r) {
+            if (*r == '\r' && r[1] == '\n')
+                r++;
+            else
+                *w++ = *r++;
+        }
+        *w = 0;
+        used = (int)(w - EdBuff);
+    }
+    nbrlines = buf_count_lines();
+    return used;
+}
+
+/* Copy the file aside before overwriting it, as MMBasic's editor does.
+ * A missing original is not an error - saving a new file is normal. */
+int file_backup(const char *name)
+{
+    char bak[128];
+    char buf[512];
+    int in, out, n, w, off;
+
+    if ((int)strlen(name) + 5 > (int)sizeof(bak))
+        return 0;               /* no room for a name: save anyway */
+    strcpy(bak, name);
+    strcat(bak, ".bak");
+
+    in = open(name, O_RDONLY);
+    if (in < 0)
+        return 0;
+    out = open(bak, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (out < 0) {
+        close(in);
+        return -1;
+    }
+    while ((n = read(in, buf, sizeof(buf))) > 0) {
+        for (off = 0; off < n; off += w) {
+            w = write(out, buf + off, n - off);
+            if (w <= 0) {
+                close(in);
+                close(out);
+                return -1;
+            }
+        }
+    }
+    close(in);
+    return close(out) < 0 ? -1 : (n < 0 ? -1 : 0);
+}
+
+int file_save(const char *name)
+{
+    int fd, n, w, off = 0;
+
+    fd = open(name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0)
+        return -1;
+    n = strlen((char *)EdBuff);
+    while (off < n) {
+        w = write(fd, EdBuff + off, n - off);
+        if (w <= 0) {
+            close(fd);
+            return -1;
+        }
+        off += w;
+    }
+    return close(fd);
+}

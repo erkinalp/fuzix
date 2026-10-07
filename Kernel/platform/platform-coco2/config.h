@@ -8,10 +8,8 @@
 #undef CONFIG_MULTI
 /* Pure swap */
 #define CONFIG_SWAP_ONLY
-#define CONFIG_SPLIT_UDATA
-#define UDATA_BLKS 1
 #define CONFIG_USERMEM_DIRECT
-
+#define CONFIG_SPLIT_UDATA
 #define CONFIG_LEVEL_0		/* Minimal system */
 
 #define CONFIG_BANKS	1
@@ -20,11 +18,13 @@
 
 extern uint16_t swap_dev;
 
+/* We will need to grow this to be useful */
 #define SWAPDEV     swap_dev    /* From partiton */
-#define SWAP_SIZE   0x39	/* 512 byte blocks */
-#define SWAPBASE    0x8000	/* We swap the lot, including stashed uarea */
-#define SWAPTOP     0xF000	/* so it's a round number of 512 byte sectors */
+#define SWAP_SIZE   0x3A	/* 512 byte blocks */
+#define SWAPBASE    0x9900	/* We swap the lot, including stashed uarea */
+#define SWAPTOP     0xFD00	/* so it's a round number of 512 byte sectors */
 #define UDATA_SIZE  0x0200	/* one block */
+#define UDATA_BLKS  1
 #define MAX_SWAPS   32
 
 #define PTABSIZE	8
@@ -47,9 +47,9 @@ extern uint16_t swap_dev;
 #define VT_INITIAL_LINE	0
 
 #define TICKSPERSEC 10   /* Ticks per second */
-#define PROGBASE    0x8000  /* also data base */
-#define PROGLOAD    0x8000  /* also data base */
-#define PROGTOP     0xF000  /* Top of program */
+#define PROGBASE    0x9900  /* also data base */
+#define PROGLOAD    0x9900  /* also data base */
+#define PROGTOP     0xFD00  /* Top of program */
 
 /* We need a tidier way to do this from the loader */
 #define CMDLINE	NULL	  /* Location of root dev name */
@@ -64,6 +64,6 @@ extern uint16_t swap_dev;
 #define CONFIG_TD_NUM	2
 #define CONFIG_TD_IDE
 
-#define plt_copyright(x)
+#define plt_copyright()
 
 #define CONFIG_SMALL

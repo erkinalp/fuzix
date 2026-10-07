@@ -1,11 +1,15 @@
-__sfr __at 0x90 data;
-__sfr __at 0x91 error;
-__sfr __at 0x92 count;
-__sfr __at 0x93 sec;
-__sfr __at 0x94 cyll;
-__sfr __at 0x95 cylh;
-__sfr __at 0x96 devh;
-__sfr __at 0x97 cmd;
-__sfr __at 0x97 status;
+#define data	0x90
+#define error	0x91
+#define count	0x92
+#define sec	0x93
+#define cyll	0x94
+#define cylh	0x95
+#define devh	0x96
+#define cmd	0x97
+#define status	0x97
 
 #define IDE_REG_DATA	0x0090
+
+#define IDE_NONSTANDARD_XFER
+#define ide_read(x)	in(x)
+#define ide_write(x,y)	out(x,y)

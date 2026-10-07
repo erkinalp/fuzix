@@ -1,6 +1,6 @@
 #include "stdio-l.h"
 
-int fputc(int ch, FILE * fp)
+int fputc(int ch, register FILE * fp)
 {
 	register int v;
 

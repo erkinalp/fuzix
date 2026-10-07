@@ -60,7 +60,7 @@ uint16_t ugetw(const void *user)
 	if (!valaddr_r(user, 2))
 		return -1;
 #ifdef MISALIGNED
-	if (MISALIGNED(user, 2)) }
+	if (MISALIGNED(user, 2)) {
 		ssig(udata.u_proc, SIGBUS);
 		return -1;
 	}
@@ -88,7 +88,7 @@ int uputw(uint16_t value, void *user)
 	if (!valaddr_w(user, 2))
 		return -1;
 #ifdef MISALIGNED
-	if (MISALIGNED(user, 2)) }
+	if (MISALIGNED(user, 2)) {
 		ssig(udata.u_proc, SIGBUS);
 		return -1;
 	}
@@ -139,7 +139,7 @@ int uputl(uint32_t val, void *uaddr)
  */
 #ifdef CONFIG_USERMEM_C
 
-int _uget(const uint8_t *user, uint8_t *dest, usize_t count)
+int _uget(register const uint8_t *user, register uint8_t *dest, register usize_t count)
 {
 	uint8_t tmp;
 	while(count--) {
@@ -169,7 +169,7 @@ uint16_t _ugetw(const uint16_t *user)
 	return tmp;
 }
 
-int _uput(const uint8_t *source, uint8_t *user, usize_t count)
+int _uput(register const uint8_t *source, register uint8_t *user, register usize_t count)
 {
 	uint8_t tmp;
 	while(count--) {

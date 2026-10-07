@@ -1,0 +1,28 @@
+#!/bin/bash
+# qemu sanity for the board package: outputs must be identical
+# base-vs-new (timing lines excluded), and non-empty.
+CC=$(cd "$(dirname "$0")/../.." && pwd)
+W=/tmp/ccperf-board
+Q="qemu-arm $CC/qemu-armm0/bcrun"
+cd "$W" || exit 1
+SEIN=$(cd "$(dirname "$0")/../../../mmb2c" && pwd)/tests/solar_eclipse.in
+for f in dhry-base.bc dhry-r4.bc dhry-cf.bc dhry-nos.bc dhry-noic.bc \
+	 dhry-new.bc; do
+	$Q "$f" > "$f.out" 2>&1 || { echo "RUN FAIL $f"; exit 1; }
+	[ -s "$f.out" ] || { echo "EMPTY $f"; exit 1; }
+done
+for f in se-base.bc se-new.bc; do
+	$Q "$f" < "$SEIN" > "$f.out" 2>&1 || { echo "RUN FAIL $f"; exit 1; }
+	[ -s "$f.out" ] || { echo "EMPTY $f"; exit 1; }
+done
+grep -v -i -e microsec -e dhrystones -e 'begins\|ends' dhry-base.bc.out > a
+grep -v -i -e microsec -e dhrystones -e 'begins\|ends' dhry-r4.bc.out > b
+grep -v -i -e microsec -e dhrystones -e 'begins\|ends' dhry-cf.bc.out > b2
+grep -v -i -e microsec -e dhrystones -e 'begins\|ends' dhry-nos.bc.out > b3
+grep -v -i -e microsec -e dhrystones -e 'begins\|ends' dhry-noic.bc.out > b4
+grep -v -i -e microsec -e dhrystones -e 'begins\|ends' dhry-new.bc.out > c
+diff a b && diff a b2 && diff a b3 && diff a b4 && diff a c &&
+	echo "DHRY IDENTICAL ($(wc -l < a) lines)"
+grep -v -i -e 'time' se-base.bc.out > d
+grep -v -i -e 'time' se-new.bc.out > e
+diff d e && echo "ECLIPSE IDENTICAL ($(wc -l < d) lines)"

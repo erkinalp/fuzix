@@ -11,6 +11,9 @@
         .export _dofork
 
 	.export _need_resched
+	; We have other uses for the bounce buffer but they need to be
+	; careful!
+	.export bouncebuffer
 
 	.common
 

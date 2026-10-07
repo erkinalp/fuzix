@@ -34,6 +34,13 @@ extern void exit(int __status);
 #endif
 extern void abort(void);
 
+/* libs/system.c has been in the library all along and was never
+   declared here, so every caller got an implicit int and a warning at
+   best - and on a compiler that rejects implicit declarations, an
+   outright error.  Found porting awk, whose system() builtin is a
+   direct call to it. */
+extern int system(const char *__command);
+
 
 #define RAND_MAX	32767
 
@@ -58,6 +65,16 @@ extern const char *_ultoa(unsigned long __value);
 
 extern char *__ultostr_r(char buf[34], unsigned long value, int __radix);
 extern char *__ltostr_r(char buf[34], long __value, int __radix);
+/* Present only where the library was built with CONFIG_PRINTF_LONGLONG;
+   declared whenever the compiler defines __SIZEOF_LONG_LONG__ (gcc,
+   clang, sdcc), because a declaration costs nothing and a program that
+   calls one without it gets a link error rather than an implicit int.
+   Not declared unconditionally: fcc has no 'long long' type at all and
+   rejects the prototype itself. */
+#ifdef __SIZEOF_LONG_LONG__
+extern char *__ulltostr_r(char buf[34], unsigned long long value, int __radix);
+extern char *__lltostr_r(char buf[34], long long __value, int __radix);
+#endif
 
 extern long strtol(const char *__nptr, char **__endptr, int __base);
 extern unsigned long strtoul(const char *__nptr,
@@ -65,6 +82,8 @@ extern unsigned long strtoul(const char *__nptr,
 
 extern int mkstemp(char *__template);
 extern int mkstemps(char *__template, int __suffix);
+extern char *mkdtemp(char *__template);
+extern char *mkdtemps(char *__template, int __suffix);
 
 #ifndef __HAS_NO_DOUBLES__
 extern double strtod(const char *__nptr, char **__endptr);
@@ -111,5 +130,9 @@ extern unsigned long mrand48(void);
 extern long nrand48(unsigned short __xsubi[3]);
 extern unsigned short *seed48(unsigned short __seed16v[3]);
 extern void srand48(long __sedval);
+
+/* Odd legacy fpisms that exist here */
+extern char *ecvt(double __val, int __ndig, int *__pdecpt, int *__psign);
+extern char *fcvt(double __val, int __ndig, int *__pdecpt, int *__psign);
 
 #endif /* __STDLIB_H */

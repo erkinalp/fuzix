@@ -1,30 +1,71 @@
-	.module to8video
-
+# 1 "../../dev/thomson/video-to8.S"
 	; Methods provided
-	.globl _plot_char
-	.globl _scroll_up
-	.globl _scroll_down
-	.globl _clear_across
-	.globl _clear_lines
-	.globl _cursor_on
-	.globl _cursor_off
-	.globl _cursor_disable
-	.globl _vtattr_notify
+	export _plot_char
+	export _scroll_up
+	export _scroll_down
+	export _clear_across
+	export _clear_lines
+	export _cursor_on
+	export _cursor_off
+	export _cursor_disable
+	export _vtattr_notify
 
-	.globl video_init
-	.globl _fontbase
+	export video_init
+	export _fontbase
+# 1 "../../dev/thomson/../../build/kernel.def"
+U_DATA__TOTALSIZE           equ 0x0200        ; 256+256
 
-	;
-	; Imports
-	;
-	.globl _fontdata_8x8
-	.globl _vidattr
-	.globl map_video
+VIDEO_BASE		    equ 0x0000	     ; 8K mapped in the video window
+VIDEO_END		    equ 0x2000	     ; for now
+VIDEO_OFF		    equ 0x00	     ; mapped at 0x00
 
-	include "../../build/kernel.def"
-	include "../../cpu-6809/kernel09.def"
+PROGBASE                    equ 0x6400       ; programs and data start here
 
-	.area .video
+IOPAGE			    equ 0xE7	     ; I/O window
+# 1 "../../dev/thomson/../../cpu-6809/kernel09.def"
+; Keep these in sync with struct u_data!!
+U_DATA__U_PTAB              equ 0   ; struct p_tab*
+U_DATA__U_PAGE              equ 2   ; uint16_t
+U_DATA__U_PAGE2             equ 4   ; uint16_t
+U_DATA__U_INSYS             equ 6   ; bool
+U_DATA__U_CALLNO            equ 7   ; uint8_t
+U_DATA__U_SYSCALL_SP        equ 8   ; void *
+U_DATA__U_RETVAL            equ 10  ; int16_t
+U_DATA__U_ERROR             equ 12  ; int16_t
+U_DATA__U_SP                equ 14  ; void *
+U_DATA__U_ININTERRUPT       equ 16  ; bool
+U_DATA__U_CURSIG            equ 17  ; int8_t
+U_DATA__U_ARGN              equ 18  ; uint16_t
+U_DATA__U_ARGN1             equ 20  ; uint16_t
+U_DATA__U_ARGN2             equ 22  ; uint16_t
+U_DATA__U_ARGN3             equ 24  ; uint16_t
+U_DATA__U_ISP               equ 26  ; void * (initial stack pointer when _exec()ing)
+U_DATA__U_TOP               equ 28  ; uint16_t
+U_DATA__U_BREAK             equ 30  ; uint16_t
+U_DATA__U_CODEBASE          equ 32  ; uint16_t
+U_DATA__U_SIGVEC            equ 34  ; table of function pointers (void *)
+
+; Keep these in sync with struct p_tab!!
+P_TAB__P_STATUS_OFFSET      equ 0
+P_TAB__P_FLAGS_OFFSET	    equ 1
+P_TAB__P_TTY_OFFSET         equ 2
+P_TAB__P_PID_OFFSET         equ 3
+P_TAB__P_PAGE_OFFSET        equ 15
+
+P_RUNNING                   equ 1            ; value from include/kernel.h
+P_READY                     equ 2            ; value from include/kernel.h
+
+PFL_BATCH		    equ 4            ; value from include/kernel.h
+
+OS_BANK                     equ 0            ; value from include/kernel.h
+
+EAGAIN                      equ 11           ; value from include/kernel.h
+
+
+; Keep in sync with struct blkbuf
+BUFSIZE 		    equ 520
+# 18 "../../dev/thomson/video-to8.S"
+	.common
 
 ;
 ;	Compute the video base address
@@ -72,10 +113,10 @@ low_bank:
 ;	plot_char(int8_t y, int8_t x, uint16_t c)
 ;
 _plot_char:
-	pshs y
 	lda _vtattr		; this won't be mapped when we are in video space
 	sta vtattrcp
-	lda 4,s
+	lda 2,s
+	ldx 3,s
 	bsr vidaddr		; preserves X (holding the char)
 	tfr x,d
 	andb #$7F		; no high font bits
@@ -174,14 +215,12 @@ plot_fast:
 	lda ,-x
 	sta 280,y
 unmap_videoc:
-	jsr map_kernel
-	puls y,pc
-
+	jmp map_kernel
+	
 ;
 ;	void scroll_up(void)
 ;
 _scroll_up:
-	pshs y
 	jsr map_video
 	ldy #VIDEO_BASE
 	leax 320,y
@@ -260,7 +299,6 @@ vscrolln:
 ;	void scroll_down(void)
 ;
 _scroll_down:
-	pshs y
 	jsr map_video
 	ldy #VIDEO_END
 	leax -320,y
@@ -334,21 +372,20 @@ vscrolld:
 	lbne vscrolld
 unmap_video:
 	jsr map_kernel
-	puls y,pc
+	puls pc
 
 video_startptr:
-	.dw	VIDEO_BASE
+	.word	VIDEO_BASE
 video_endptr:
-	.dw	VIDEO_END
+	.word	VIDEO_END
 
 ;
 ;	clear_across(int8_t y, int8_t x, uint16_t l)
 ;
 _clear_across:
-	pshs y
-	lda 4,s		; x into A, B already has y
+	lda 2,s		; x into A, B already has y
 	jsr vidaddr	; Y now holds the address
-	tfr x,d		; Shuffle so we are writng to X and the counter
+	ldd 3,s		; Shuffle so we are writng to X and the counter
 	tfr y,x		; l is in d
 	clra
 clearnext:
@@ -378,15 +415,14 @@ clearnext:
 ;	clear_lines(int8_t y, int8_t ct)
 ;
 _clear_lines:
-	pshs y
 	clra			; b holds Y pos already
 	jsr vidaddr		; y now holds ptr to line start
 	tfr y,x
 	clra
 	clrb
-	lsl 4,s
-	lsl 4,s
-	lsl 4,s
+	lsl 2,s
+	lsl 2,s
+	lsl 2,s
 	; Optimise this using two regs ?
 wipel:
 	std $2000,x
@@ -429,13 +465,12 @@ wipel:
 	std ,x++
 	std $2000,x
 	std ,x++
-	dec 4,s			; count of lines
+	dec 2,s			; count of lines
 	bne wipel
 	jmp unmap_video
 
 _cursor_on:
-	pshs y
-	lda  4,s
+	lda  2,s
 	jsr vidaddr
 	tfr y,x
 	stx cursor_save
@@ -475,12 +510,13 @@ vidwipe:
 	bne 	vidwipe
 	jmp	map_kernel
 
-	.area .commondata
+	.commondata
+
 cursor_save:
-	.dw	$FFFF
+	.word	$FFFF
 _vtrow:
-	.db	0
+	.byte	0
 vtattrcp:
-	.db	0
-_fontbase
-	.dw	0
+	.byte	0
+_fontbase:
+	.word	0

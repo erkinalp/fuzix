@@ -611,7 +611,8 @@ DIRECTORY *directory(DIRECTORY *dir, int entries, int function, char *pathname)
 		} else {
 			if (function == FALSE) {
 				show(dir_ptr, name);
-			} else if (type) {	/* Recursive */
+			} else if (type && dir_ptr->d_name[0] != '.') {
+				/* Recursive - skip . and .. or -r loops forever */
 				printf ( "Directory %s%s:\n", path, name);
 				add_path(name, FALSE);
 				list_dir(dir_ptr, sub_entries, FALSE);

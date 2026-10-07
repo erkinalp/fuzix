@@ -1,41 +1,41 @@
+# 1 "monitor.S"
 ; 2015-01-17 William R Sowerbutts
+# 1 "kernelu.def"
+;
+U_DATA__TOTALSIZE           .equ 0x200        ; 256+256 bytes @ F600
+Z80_TYPE                    .equ 2
 
-                .module monitor
-                .include "kernel.def"
-                .globl _plt_monitor
-		.globl _plt_reboot
-                .globl map_kernel
+OS_BANK                     .equ 0x00         ; value from include/kernel.h
 
-; -----------------------------------------------------------------------------
-.ifne USE_FANCY_MONITOR ; -----------------------------------------------------
-                .area _CODE ; actual monitor lives in kernel bank
-                .include "../../lib/monitor-z80.s"
+; Memory layout
+FIRST_RAM_BANK              .equ 0x80         ; low 512K of physical memory is ROM/ECB window.
+Z180_IO_BASE                .equ 0xC0
 
-                .area _COMMONMEM ; just a stub goes in common memory
+USE_FANCY_MONITOR           .equ 1            ; disabling this saves around approx 0.5KB
+CPU_CLOCK_KHZ               .equ 18432        ; 18.432MHz * 1
+TICKSPERSEC                 .equ 40           ; timer interrupt rate (Hz)
+TCR_CLOCK		    .equ 23040
+
+PROGBASE		    .equ 0x0000
+PROGLOAD		    .equ 0x0100
+# 5 "monitor.S"
+	.export _plt_monitor
+	.export _plt_reboot
+# 22
+	.common
+
 _plt_monitor:
-                di
-                call map_kernel
-                jp monitor_entry
-
-
-; -----------------------------------------------------------------------------
-.else ; MICRO MONITOR ---------------------------------------------------------
-                .globl outchar
-                .globl outnewline
-                .globl outhl
-
-                .area _COMMONMEM
-_plt_monitor:  di
-                call outnewline
-                ; just dump a few words from the stack
-                ld b, #50
-stacknext:      pop hl
-                call outhl
-                ld a, #' '
-                call outchar
-                djnz stacknext
-                halt
-.endif
+	di
+	call outnewline
+	; just dump a few words from the stack
+	ld b, #50
+stacknext:
+	pop hl
+	call outhl
+	ld a, #' '
+	call outchar
+	djnz stacknext
+	halt
 
 _plt_reboot:	; TODO
-		jr _plt_monitor
+	jr _plt_monitor

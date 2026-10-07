@@ -2,26 +2,26 @@
 #define __DEVHD_DOT_H__
 
 /* public interface */
-extern int hd_read(uint8_t minor, uint8_t rawflag, uint8_t flag);
-extern int hd_write(uint8_t minor, uint8_t rawflag, uint8_t flag);
-extern int hd_open(uint8_t minor, uint16_t flag);
+extern int hd_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag);
+extern int hd_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag);
+extern int hd_open(uint_fast8_t minor, uint16_t flag);
 
 extern void hd_probe(void);
 
 #ifdef _HD_PRIVATE
 
-__sfr __at 0xC0 hd_wpbits;	/* Write protect and IRQ (not used) */
-__sfr __at 0xC1 hd_ctrl;	/* Reset and enable bits */
-__sfr __at 0xC8 hd_data;
-__sfr __at 0xC9 hd_precomp;	/* W/O */
-__sfr __at 0xC9 hd_err;		/* R/O */
-__sfr __at 0xCA hd_seccnt;
-__sfr __at 0xCB hd_secnum;
-__sfr __at 0xCC hd_cyllo;
-__sfr __at 0xCD hd_cylhi;
-__sfr __at 0xCE hd_sdh;
-__sfr __at 0xCF hd_status;	/* R/O */
-__sfr __at 0xCF hd_cmd;
+#define HD_WPBITS	0xC0	/* Write protect and IRQ (not used) */
+#define HD_CTRL		0xC1	/* Reset and enable bits */
+#define HD_DATA		0xC8
+#define HD_PRECOMP	0xC9	/* W/O */
+#define HD_ERR		0xC9	/* R/O */
+#define HD_SECCNT	0xCA
+#define HD_SECNUM	0xCB
+#define HD_CYLLO	0xCC
+#define HD_CYLHI	0xCD
+#define HD_SDH		0xCE
+#define HD_STATUS	0xCF	/* R/O */
+#define HD_CMD		0xCF	/* W/O */
 
 #define HDCMD_RESTORE	0x10
 #define HDCMD_READ	0x20

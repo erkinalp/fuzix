@@ -1,8 +1,8 @@
 #
 APPS = util cmd sh games cave cpm v7games games cursesgames \
-       as09 ld09 netd MWC flashrom ue cpmfs plato \
+       netd MWC flashrom ue cpmfs plato \
        emulators cpnet dw assembler CC cpp ar \
-       2048
+       2048 db
 
 .PHONY: $(APPS)
 
@@ -34,12 +34,6 @@ games:
 
 cursesgames:
 	+(cd cursesgames; $(MAKE) -f Makefile.$(USERCPU))
-
-ld09:
-	+(cd ld09; $(MAKE) -f Makefile.$(USERCPU))
-
-as09:
-	+(cd as09; $(MAKE) -f Makefile.$(USERCPU))
 
 netd:
 	+(cd netd; $(MAKE) -f Makefile.$(USERCPU))
@@ -83,6 +77,9 @@ cpp:
 ar:
 	+(cd ar; $(MAKE) -f Makefile.$(USERCPU))
 
+db:
+	+(cd db; $(MAKE) -f Makefile.$(USERCPU))
+
 clean:
 	(cd util; $(MAKE) -f Makefile.$(USERCPU) clean)
 	(cd V7/cmd; $(MAKE) -f Makefile.$(USERCPU) clean)
@@ -93,8 +90,6 @@ clean:
 	(cd games; $(MAKE) -f Makefile.$(USERCPU) clean)
 	(cd games/2048; $(MAKE) -f Makefile.$(USERCPU) clean)
 	(cd cursesgames; $(MAKE) -f Makefile.$(USERCPU) clean)
-	(cd as09; $(MAKE) -f Makefile.$(USERCPU) clean)
-	(cd ld09; $(MAKE) -f Makefile.$(USERCPU) clean)
 	(cd netd; $(MAKE) -f Makefile.$(USERCPU) clean)
 	(cd MWC/cmd; $(MAKE) -f Makefile.$(USERCPU) clean)
 	(cd flashrom; $(MAKE) -f Makefile.$(USERCPU) clean)
@@ -109,3 +104,4 @@ clean:
 	(cd cpp; $(MAKE) -f Makefile.$(USERCPU) clean)
 	(cd dw; $(MAKE) -f Makefile.$(USERCPU) clean)
 	(cd ar; $(MAKE) -f Makefile.$(USERCPU) clean)
+	(cd db; $(MAKE) -f Makefile.$(USERCPU) clean)

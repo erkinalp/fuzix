@@ -26,6 +26,7 @@
 - Tandy double density kit
 - Genie II/III series machines
 - Supermem and other bigger bankers (See trs80m1 target)
+- Graphics interfaces
 
 ## Installation
 

@@ -32,6 +32,8 @@
 #define CONFIG_TINYIDE_8BIT
 #define CONFIG_TINYIDE_INDIRECT
 #define IDE_IS_8BIT(x)	1
+#define CONFIG_TD_SD
+#define TD_SD_NUM	1
 
 #define BOOTDEVICENAMES "hd#"
 
@@ -57,7 +59,7 @@
    see platform-sbcv2/main.c on what is needed */
 #define CONFIG_NO_CLOCK
 /* Set how often we actually poll this RTC in ticks - 1 means always. On the
-   SBCv2 it's slow so don't sync often. If we have no timer tick then we will
+   ZRC it's slow so don't sync often. If we have no timer tick then we will
    read the RTC regularly as needed - and it'll suck accordingly regardless
    of this setting */
 #define CONFIG_RTC_INTERVAL	100
@@ -70,7 +72,7 @@
  *
  * Note that this needs to be divisible by 10 and at least 10. If your clock
  * is a bit slower you may need to fudge things somewhat so that the kernel
- * gets 10 timer interrupt calls per second. 
+ * gets 10 timer interrupt calls per second.
  */
 #define TICKSPERSEC 10	    /* Ticks per second */
 

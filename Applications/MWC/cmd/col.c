@@ -37,7 +37,7 @@
 #define	FALSE		0
 #define	NOTREACHED	return
 
-typedef uchar bool;
+typedef uchar boolean;
 
 typedef struct extra {
 	struct extra *Next;
@@ -63,11 +63,11 @@ char Confused[] = "Seem to have lost Overstruck characters.";
 /*
  * Flags.
  */
-bool Bflag = FALSE;		/* Command line option 'b'. */
-bool Dflag = FALSE;		/* Command line option 'd'. */
-bool Fflag = FALSE;		/* Command line option 'f'. */
-bool Pflag = FALSE;		/* Command line option 'p'. */
-bool Xflag = FALSE;		/* Command line option 'x'. */
+boolean Bflag = FALSE;		/* Command line option 'b'. */
+boolean Dflag = FALSE;		/* Command line option 'd'. */
+boolean Fflag = FALSE;		/* Command line option 'f'. */
+boolean Pflag = FALSE;		/* Command line option 'p'. */
+boolean Xflag = FALSE;		/* Command line option 'x'. */
 
 /*
  * External Variables.
@@ -330,7 +330,7 @@ void InsChar(int c)
  * Ostrikeout puts out all the characters overstruck in position ColNo in the
  * LINE lp. It pays attention to alternate character sets.
  */
-bool Ostrikeout(LINE * lp, int col, bool acset)
+boolean Ostrikeout(LINE * lp, int col, boolean acset)
 {
 	EXTRA *ep;
 
@@ -365,7 +365,7 @@ bool Ostrikeout(LINE * lp, int col, bool acset)
       FOUNDIT:
 	{
 		register int c;
-		register bool ac = acset;
+		register boolean ac = acset;
 		register int count = ep->Howmany;
 		register char *cp = ep->Ebuf;
 
@@ -401,7 +401,7 @@ void PutHalf(LINE * lp)
 {
 	register int c;
 	register int colno;
-	register bool acset = FALSE;
+	register boolean acset = FALSE;
 
 	/*
 	 * Note that since lp->Len is the number of valid columns, the number
@@ -492,7 +492,7 @@ void PutLine(int n)
 
 void VertMove(int c)
 {
-	static bool warnflag = FALSE;	/* Warn of move over top of page. */
+	static boolean warnflag = FALSE;	/* Warn of move over top of page. */
 
 	Unfetch(c);
 	for (;;) {

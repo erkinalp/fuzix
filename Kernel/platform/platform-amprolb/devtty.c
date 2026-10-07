@@ -71,12 +71,12 @@ static void dart_setup(uint_fast8_t minor, uint_fast8_t flags)
 		baud = B38400;
 	if (minor !=1 && baud > B9600)
 		baud = B9600;
-	
+
 	/* Set bits per character */
 	dart_r[1] = 0x01 | ((t->c_cflag & CSIZE) << 2);
 
 	r = dartbaud[baud] >> 8;
-	
+
 	if (baud < B300)
 		ch = 0x07;
 
@@ -85,17 +85,17 @@ static void dart_setup(uint_fast8_t minor, uint_fast8_t flags)
 	if (minor == 1) {
 		if (baud > B9600) {
 			/* Stop the CTC */
-			CTC_CH0 = 0x03;
+			out(CTC_CH(0), 0x03);
 			/* DTRA low */
 			dtr = 0x00;
-		} else {		
+		} else {
 			/* DTRA high */
-			CTC_CH0 = ch;
-			CTC_CH0 = dartbaud[baud];
+			out(CTC_CH(0), ch);
+			out(CTC_CH(0), dartbaud[baud]);
 		}
 	} else {
-		CTC_CH1 = ch;
-		CTC_CH1 = dartbaud[baud];
+		out(CTC_CH(1), ch);
+		out(CTC_CH(1), dartbaud[baud]);
 	}
 
 	t->c_cflag &= ~CBAUD;
@@ -120,16 +120,11 @@ void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 int tty_carrier(uint_fast8_t minor)
 {
         uint8_t c;
-        uint8_t port;
+        uint8_t port = DARTA_C;
 
-        if (minor == 1) {
-        	DARTA_C = 0;
-        	c = DARTA_C;
-	} else {
-		DARTB_C = 0;
-		c = DARTB_C;
-	}
-	c = in(port);
+	if (minor == 2)
+		port = DARTB_C;
+	out(port, 0);
 	if (c & 0x08)
 		return 1;
 	return 0;
@@ -207,8 +202,8 @@ void kputchar(uint_fast8_t c)
 	/* Can't use the normal paths as we must survive interrupts off */
 	irqflags_t irq = di();
 
-	while(!(DARTA_C & 0x04));
-	DARTA_D = c;
+	while(!(in(DARTA_C) & 0x04));
+	out(DARTA_D, c);
 
 	if (c == '\n')
 		kputchar('\r');

@@ -1,36 +1,32 @@
+# 1 "cpm.S"
 ;
 ;	Interface to a CP/M 2.2 BIOS
 ;
 ;	We assume the BIOS is in the common space.
 ;
+	.export _cpm_const
+	.export _cpm_conin
+	.export _cpm_conout
+	.export _cpm_list
+	.export _cpm_punch
+	.export _cpm_reader
+	.export _cpm_home
+	.export _cpm_seldsk
+	.export _cpm_settrk
+	.export _cpm_setsec
+	.export _cpm_setdma
+	.export _cpm_read
+	.export _cpm_write
+	.export _cpm_listst
+	.export _cpm_sectran
 
-	.module cpm
+	.export _cpm_diskread
+	.export _cpm_diskwrite
 
-	.globl _cpm_const
-	.globl _cpm_conin
-	.globl _cpm_conout
-	.globl _cpm_list
-	.globl _cpm_punch
-	.globl _cpm_reader
-	.globl _cpm_home
-	.globl _cpm_seldsk
-	.globl _cpm_settrk
-	.globl _cpm_setsec
-	.globl _cpm_setdma
-	.globl _cpm_read
-	.globl _cpm_write
-	.globl _cpm_listst
-	.globl _cpm_sectran
+	.export _cpm_map
 
-	.globl _cpm_diskread
-	.globl _cpm_diskwrite
+	.export biosbase
 
-	.globl _cpm_map
-
-	.globl biosbase
-
-	.globl map_proc_a
-	.globl map_kernel
 
 ;
 ;	Call the bios function in the byte following, return to the layer
@@ -38,21 +34,46 @@
 ;
 ; These calls also copy A into L on return but it doesn't matter
 
-	.area _COMMONMEM
+	.common
 
-bioscall_bchl:
-	ld b,h
-bioscall_cl:
+;
+;	Call passed argument in BC or C argument is currently on C stack
+;	Result usually ends up in A so is switched into L by helper. Must
+;	preserve BC. CP/M doesn't use (or preserves) IX and IY unless your
+;	BIOS is broken.
+;
+bioscall_bc:
+bioscall_c:
+	pop de
+	pop hl		; argument is in HL
+	push hl
+	push de
+	push bc
 	ld c,l
+	ld b,h
+	call bioscall
+	pop bc
+	ret
+;
+;	No argument result in A
+;
 bioscall_a:
-	pop hl
-	ld a,(hl)
-	ld hl,(biosbase)
-	ld l,a
-	call callhl
+	push bc
+	call bioscall
+	pop bc
 	ld l,a
 	ret
+;
+;	No argument result in HL
+;
 bioscall_hl:
+	push bc
+	call bioscall
+	pop bc
+	ret
+;
+;	Perform a bios call
+;
 bioscall:
 	pop hl
 	ld a,(hl)
@@ -60,96 +81,121 @@ bioscall:
 	ld l,a
 callhl:	jp (hl)
 
+;
+;	Standard CP/M entry points
+;
 _cpm_const:
-	call bioscall_a
-	.byte 6		; call 2
+	ld a,6		; call 2
+	jr bioscall_a
 _cpm_conin:
-	call bioscall_a
+	ld a,9		; call 3
+	jr bioscall_a
 	.byte 9		; call 3
 _cpm_conout:
-	call bioscall_cl
-	.byte 12	; call 4
+	ld a,12		; call 4
+	jr bioscall_c
 _cpm_list:
-	call bioscall_cl
-	.byte 15	; call 5
+	ld a,15		; call 5
+	jr bioscall_c
 _cpm_punch:
-	call bioscall_cl
-	.byte 18
+	ld a,18
+	jr bioscall_c
 _cpm_reader:
-	call bioscall_a
-	.byte 21
+	ld a,21
+	jr bioscall_a
 _cpm_home:
+	ld a,24
 	call bioscall
-	.byte 24
 _cpm_settrk:
-	call bioscall_bchl
-	.byte 30
+	ld a,30
+	jr bioscall_bc
 _cpm_setsec:
-	call bioscall_bchl
-	.byte 33
+	ld a,33
+	jr bioscall_bc
 _cpm_setdma:
-	call bioscall_bchl
-	.byte 36
+	ld a,36
+	jr bioscall_bc
 _cpm_read:
-	call bioscall_a
-	.byte 39
+	ld a,39
+	jr bioscall_a
 _cpm_write:
-	call bioscall_cl
-	.byte 42
+	ld a,42
+	jr bioscall_c
 _cpm_listst:
-	call bioscall_a
-	.byte 45
-;
-;	Special cases - sectran has two inputs, both return in HL
-;
-_cpm_seldsk:
-	ld c,l
-	ld e,h		; 0000 or FFFF
-	ld d,h
-	call bioscall_hl
-	.byte 27	; call 9	DPH in HL
-_cpm_sectran:		; can't be fastcall
-	pop hl		; return address
-	pop bc		; sector
-	pop de		; table
-	push de		; put them back
-	push bc
-	push hl
-	call bioscall_hl
-	.byte 48
-
+	ld a,45
+	jr bioscall_a
 ;
 ;	CP/M 3 extensions (not something we can use yet due to the SCB)
 ;
 _cpm_conost:
-	call bioscall_a
-	.byte 51
+	ld a,48
+	jr bioscall_a
 _cpm_auxist:
-	call bioscall_a
-	.byte 54
+	ld a,51
+	jr bioscall_a
 _cpm_auxost:
-	call bioscall_a
-	.byte 57
+	ld a,54
+	jr bioscall_a
 _cpm_devtbl:
-	call bioscall_hl
-	.byte 60
+	ld a,57
+	jr bioscall_hl
 _cpm_devini:
-	call bioscall_cl
-	.byte 63
+	ld a,60
+	jr bioscall_c
 _cpm_drvtbl:
-	call bioscall_hl
-	.byte 66
+	ld a,63
+	jr bioscall_hl
 _cpm_multio:
-	call bioscall_hl
-	.byte 69
+	ld a,66
+	jr bioscall_hl
 _cpm_flush:
-	call bioscall_hl
-	.byte 72
+	ld a,69
+	jr bioscall_hl
 ; MOVE is useless to us
 _cpm_time:
-	call bioscall_cl
-	.byte 75
+	ld a,75
+	jr bioscall_c
+;
 ; SELMEM and SETBNK won't be present in an unbanked BIOS nor XMOVE
+;
+;	Seldsk wants a bit argument in E and a drive in C
+;
+_cpm_seldsk:
+	; Our input is drive and control bit in C and E. Result in HL
+	pop de
+	pop hl
+	push hl		; get argument
+	push de
+	push bc		; save BC
+	ld c,l
+	ld e,h		; 0000 or FFFF
+	ld d,h
+	ld a,27		; Call 9
+	call bioscall_hl
+	pop bc
+	ret
+;
+;	sectran wants
+;	BC = sector
+;	DE = table
+;
+;	returns HL = sector number
+;
+_cpm_sectran:
+	push bc
+	ld hl,4
+	add hl,sp
+	ld c,(hl)
+	inc hl
+	ld b,(hl)
+	inc hl
+	ld e,(hl)
+	inc hl
+	ld d,(hl)
+	ld a,48
+	call bioscall_hl
+	pop bc
+	ret
 
 ;
 ;	Common space helpers of our own
@@ -176,7 +222,7 @@ _cpm_diskwrite:
 	ret z
 	jp map_kernel
 
-	.area _COMMONDATA
+	.commondata
 
 biosbase:
 	.word 0			; updated at boot

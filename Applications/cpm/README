@@ -10,8 +10,6 @@ TODO:
 	so we can also support a high loaded version using shared common for
 	awkward memory mapped boxes (eg the Memotech) (partly done). We still
 	need a one page buffer per process which is still a decent TPA
--	Find a nice way to build a relocatable version rather than one per
-	system type.
 -	Will need some kind of API for firing up CP/M emulation when it is
 	in kernel.
 

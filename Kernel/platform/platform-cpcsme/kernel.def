@@ -6,12 +6,13 @@ U_DATA_STASH		    .equ 0xF000	      ; F000-F200
 
 PROGBASE		    .equ 0x0000
 PROGLOAD		    .equ 0x0100
+PROGTOP				.equ 0xF000
 
 Z80_TYPE		    .equ 1
 
 Z80_MMU_HOOKS		    .equ 0
 
-CONFIG_SWAP		    .equ 0
+CONFIG_SWAP		    .equ 1
 
 ;
 ;	Select where to put the high code - in our case we need this
@@ -25,6 +26,12 @@ CONFIG_SWAP		    .equ 0
 
 HIGHPAGE		    .equ 0
 
-NBUFS			    .equ 5
+NBUFS			    .equ 4
 
 DYNAMIC_BUFPOOL		.equ 1
+
+CONFIG_M4BOARD		.equ 1
+CONFIG_NET_M4BOARD	.equ 1
+CONFIG_FDC765		.equ 0
+
+EOPNOTSUPP			.equ 44		;keep the same as in kernel.h

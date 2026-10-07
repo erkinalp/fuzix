@@ -17,6 +17,7 @@ static void ttysetflags(void)
   if (_cursvar.cbrkmode) {
 	_tty.c_lflag &= ~(ICANON);
 	_tty.c_cc[VMIN] = 1;
+        _tty.c_cc[VTIME] = _cursvar.halfdelay;
   }
   if (!_cursvar.echoit) {
 	_tty.c_lflag &= ~(ECHO | ECHONL);
@@ -73,5 +74,13 @@ void cbreak(void)
 void nocbreak(void)
 {
   _cursvar.cbrkmode = FALSE;
+  _cursvar.halfdelay = 0;
   ttysetflags();
 }				/* nocbreak */
+
+void halfdelay(int n)
+{
+  _cursvar.halfdelay = n;
+  ttysetflags();
+}
+

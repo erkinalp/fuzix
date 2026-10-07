@@ -10,8 +10,8 @@
 #include <ps2kbd.h>
 #include <ps2mouse.h>
 
-__sfr __at 0x8C	ps2stat;
-__sfr __at 0x8D ps2data;
+#define PS2STAT		0x8C
+#define PS2DATA		0x8D
 
 #define TIMEOUT		0
 #define TIMEOUT_PUT	0
@@ -22,8 +22,8 @@ static int ps2cmd(uint8_t v)
 {
     uint16_t t = TIMEOUT_PUT;
 
-    while(--t &&  (ps2stat & 2));
-    ps2stat = v;
+    while(--t &&  (in(PS2STAT) & 2));
+    out(PS2STAT, v);
     if (t == 0)
         return 1;
     return 0;
@@ -33,8 +33,8 @@ static void ps2put(uint8_t v)
 {
     uint16_t t = TIMEOUT_PUT;
 
-    while(--t && (ps2stat & 2));
-    ps2data = v;
+    while(--t && (in(PS2STAT) & 2));
+    out(PS2DATA, v);
     if (t == 0)
         kprintf("ps2put: timeout\n");
 }
@@ -44,18 +44,18 @@ static int ps2get(void)
     uint16_t t = TIMEOUT;
     uint8_t v;
 
-    while(++t && !(ps2stat & 1));
+    while(++t && !(in(PS2STAT) & 1));
     if (t == 0)
         return -1;
-    v = ps2data;
+    v = in(PS2DATA);
     return v;
 }
 
 int ps2kbd_put(uint_fast8_t c)
 {
     ps2put(c);
-    while ((ps2stat & 0xC2) == 2);
-    if (ps2stat & 0xC0)
+    while ((in(PS2STAT) & 0xC2) == 2);
+    if (in(PS2STAT) & 0xC0)
         return -1;
     return 0;
 }
@@ -67,13 +67,13 @@ int ps2mouse_put(uint_fast8_t c)
     ps2put(c);
     /* Wait for it to go */
     /* TIMEOUT ? */
-    while (((stat = ps2stat) & 0x02) == 2);
-#if 0    
+    while (((stat = in(PS2STAT)) & 0x02) == 2);
+#if 0
     if (stat & 0xC0) {
         kprintf("mouse timeout %2x\n", stat);
         return -1;
     }
-#endif    
+#endif
     return 0;
 }
 
@@ -95,12 +95,12 @@ void ps2_int(void)
 
     if (!ps2_present)
         return;
-        
-    while ((stat = ps2stat) & 0x21) {
-        data = ps2data;
+
+    while ((stat = in(PS2STAT)) & 0x21) {
+        data = in(PS2DATA);
         if (stat & 0x20)
-            ps2mouse_byte(ps2data);
-        else 
+            ps2mouse_byte(in(PS2DATA));
+        else
             ps2kbd_byte(data);
     }
 }
@@ -114,14 +114,14 @@ unsigned int ps2kbd_get(void)
 {
     uint8_t c;
     uint16_t t = TIMEOUT;
-        
+
     do {
-        c = ps2stat;
+        c = in(PS2STAT);
         if ((c & 0xE1) == 0x01)
-            return ps2data;
+            return in(PS2DATA);
         /* Random mouse chatter */
         if (c & 0x20)
-            ps2data;
+            in(PS2DATA);
     } while (!(c & 0xC0) && --t);
     return -1;
 }
@@ -130,16 +130,16 @@ unsigned int ps2mouse_get(void)
 {
     uint8_t c;
     uint16_t t = TIMEOUT;
-    
+
     do {
-        c = ps2stat;
+        c = in(PS2STAT);
         if ((c & 0x20) == 0x20) {
-            c = ps2data;
+            c = in(PS2DATA);
             return c;
         }
         /* Random keyboard chatter */
         if (c & 0x01) {
-            ps2data;
+            in(PS2DATA);
         }
     } while (--t);
     return -1;

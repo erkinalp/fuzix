@@ -56,7 +56,7 @@ uint_fast8_t sd_spi_receive_byte(void)
   return byte;
 }
 
-bool sd_spi_receive_sector(void)
+bool sd_spi_rxsect(void)
 {
   irqflags_t fl = __hard_di();
 
@@ -65,7 +65,7 @@ bool sd_spi_receive_sector(void)
   return true;
 }
 
-bool sd_spi_transmit_sector(void)
+bool sd_spi_txsect(void)
 {
   irqflags_t fl = __hard_di();
 

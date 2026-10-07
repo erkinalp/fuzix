@@ -2,49 +2,66 @@ CSRCS = devtty.c devices.c main.c
 CDSRCS = discard.c
 DSRCS = ../../dev/tinyide.c ../../dev/tinydisk.c
 DDSRCS = ../../dev/tinyide_discard.c ../../dev/tinydisk_discard.c
-ASRCS = start.s crt0.s tom.s tricks.s commonmem.s
+ASRCS = start.S crt0.S tom.S tricks.S commonmem.S
 
-COBJS = $(CSRCS:.c=.rel)
-CDOBJS = $(CDSRCS:.c=.rel)
-AOBJS = $(ASRCS:.s=.rel)
-DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DSRCS))
-DDOBJS = $(patsubst ../../dev/%.c,%.rel, $(DDSRCS))
+COBJS = $(CSRCS:.c=.o)
+CDOBJS = $(CDSRCS:.c=.o)
+AOBJS = $(ASRCS:.S=.o)
+DOBJS = $(patsubst ../../dev/%.c,%.o, $(DSRCS))
+DDOBJS = $(patsubst ../../dev/%.c,%.o, $(DDSRCS))
 OBJS  = $(COBJS) $(CDOBJS) $(AOBJS) $(DOBJS) $(DDOBJS)
 
 CROSS_CCOPTS += -I../../dev/
 
-CROSS_CC_SEG3 = --codeseg CODE3
+CROSS_CC_SEG3 = -Toverlay3
 
 all:	$(OBJS)
 
-$(COBJS): %.rel: %.c
-	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEG3) -c $<
+$(COBJS): %.o: %.c
+	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEG1) -c $<
 
-$(CDOBJS): %.rel: %.c
+$(CDOBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(DOBJS): %.rel: ../../dev/%.c
+$(DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEG3) -c $<
 
-$(DDOBJS): %.rel: ../../dev/%.c
+$(DDOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(AOBJS): %.rel: %.s
+$(AOBJS): %.o: %.S
 	$(CROSS_AS) $(ASOPTS) $<
 
 clean:
-	rm -f $(OBJS) *.lst *.asm *.sym *.rst *.rel core *~ 
+	rm -f $(OBJS) *.lst *.asm *.sym *.rst *.o core *~
 	rm -f *.ihx *.tmp
 	rm -f fuzix.rom
 	
 
 # Re-order the image and turn it into the raw image to load from disk
-image:	../../tools/makeeprom64
+image: makeeprom
+	$(CROSS_LD) -b -O 0x0040 -C 0xC000 -X 0x8000 -f CLDSsBb -o fuzix.bin \
+	start.o crt0.o commonmem.o tom.o ../../start.o \
+	../../version.o ../../cpu-z80u/lowlevel-z80u-banked.o \
+	../../usermem.o tricks.o main.o discard.o \
+	../../timer.o ../../kdata.o devices.o ../../devio.o \
+	../../filesys.o ../../blk512.o ../../process.o \
+	../../inode.o ../../syscall_exec.o ../../syscall_exec16.o \
+	../../syscall_fs.o ../../syscall_fs2.o ../../syscall_fs3.o \
+	../../syscall_proc.o ../../syscall_other.o ../../syscall_net.o \
+	../../network.o ../../tty.o ../../mm.o ../../mm/memalloc_none.o \
+	../../swap.o ../../mm/simple.o ../../devsys.o \
+	devtty.o ../../dev/tinydisk.o ../../dev/tinydisk_discard.o \
+	../../dev/tinyide.o ../../dev/tinyide_discard.o \
+	/opt/fcc/lib/z80/libz80.a -m fuzix.tmpmap -R fuzix.relocs
+	perl -lpe '$$_=hex' fuzix.tmpmap | paste -d" " - fuzix.tmpmap  |  sort -n |  cut -d" " -f 2- >../../fuzix.map
+	# Perform the banking conversion
+	bankman fuzix.bin fuzix.tmpmap fuzix.relocs z80
 	# Assemble the ROM as a single image
-	../../tools/makeeprom64
+	./makeeprom <fuzix.bin >fuzix.rom
 
-../../tools/makeeprom64: ../../tools/makeeprom64.c
-	gcc -Wall -pedantic ../../tools/makeeprom64.c -o ../../tools/makeeprom64
+makeeprom: makeeprom.c
+	gcc -Wall -pedantic makeeprom.c -o makeeprom
 
 IMAGES = $(FUZIX_ROOT)/Images/$(TARGET)
 

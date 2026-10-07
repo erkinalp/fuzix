@@ -1,0 +1,144 @@
+A Try to run on a commodore pet 8296
+based on rc2014-6502
+
+the 8296 has 64k of base ram and 64k of expansion ram, the expansion ram is available in four 16k pages
+which can be mapped to 0x8000 (page 0 and 1) and 0xc000 (page 2 and 3)
+The system starts in PET Mode where only the first 32k ram are are available.
+Enabling the full 64k requires the setting of some jumpers (ju3, ju4 and ju5) to enable program control over the
+full 64k ram.
+the mapping is then done by a combination of the expansion Register CR0 and VIA Port A, bits 0 to 2.
+
+The memory map is than
+0x0000 - 0x7fff ram
+0x8000 - 0x8fff screen buffer
+0x9000 - 0xffdf ram
+0xff80 - 0xff8f ide
+0xfff0 - 0xfff0 expansion register
+0xfff1 - 0xffff ram  (vectos)
+
+VIA Port A
+; BIT 
+; 0 - RAM_SELA  - enables base ram at 0xa000
+; 1 - RAM_SEL9 -  enables base ram at 0x9000
+; 2 - RAM_ON - enables base ram in place of system roms
+
+
+0xfff - CR0: this is the memory extension register, its write only 
+;  BIT 
+;  0 - 1 = WriteProtect $8000 - $BFFF
+;  1 - 1 = WriteProtect $C000 - $FFFF
+;  2+3     0 0:  2 and 0,  0 1:  2 and 1
+;          1 0:  3 and 0,  1 1:  3 and 1
+;  4 - 1 = reserved
+;  5 - 1 = Screen peek $8000-$8FFF 
+;  6 - 1 = I/O peek $E800-$E9FF  
+;  7 - 1 = enable memory expansion (i.e. the top 32k are replaced by expansion memory, see bits 2+3)
+;
+
+the 8296 only supports IEEE Drives, luckily I have build an IDE Adapter which I will use for the first tries
+
+
+Interrupts deal wth the shared ZP by swapping the ZP back and forth with the
+interrupt copies (about 20 bytes involved)
+
+
+IO:  only mapped when accessed by enabling IO peek or screen peek
+    8000-8FFF   Screen Memory (for pages)
+    E810-E81F		6520 PIA1
+    E820-E83F		6520 PIA2
+    E840-E87F		6522 VIA
+    E880-E8FF		6548 CRT
+
+
+
+Memory map:
+	0000-00FF		Zero page
+	0100-01FF		Stack
+	0200-1FFF		Common, constants, cc65 support code
+	2000-3FFF		Initial and discardable boot time
+	4000-FEFF		Kernel
+	FF00-FFFF		Vectors (mostly free)
+
+
+User space:
+	0000-00FF		Zero page
+	0100-01FF		Stack
+	0200-1FFF		Common, constants, cc65 support code
+	2000-7FFF		still part of kernel(?)
+	8000-FEFF		User space
+	FF00-FFFF		Vectors (mostly free)
+
+The memory banks are allocated as follows
+
+	0,2 Kernel (0 is not fully available?)
+	1,3 User 
+
+
+
+The 6502 port has some interesting gotchas to be aware of and things that
+need addressing
+
+- We share the zero page and stack between user and kernel. The interrupt
+  path either has to have its own bank or copy/restore some state to make
+  interrupt handling in C work. For this port we don't waste 16K on an
+  interrupt bank but we could in theory. Whilst the 6502 hardware stack is
+  a precious resource the compiler makes little use of it so this seems to
+  be fine.
+
+- The common area is duplicated into each process common space. This means
+  any writes to this area are effectively process specific. For the udata it
+  is exactly what we want, for other things be careful.
+
+- There is a direct relationship between kernel and user on some ZP usage. In
+  particular the user C stack zero page locations are used by the kernel to
+  access arguments. The relocator ensures the kernel and user share the C
+  stack ZP locations so the applications are portable.
+
+- Signals are tricky. The C stack is maintained via ZP and is 16bits. As there
+  is no way to know if the stack was mid update an interrupt cannot tell if
+  the C stack is valid. The signal handlers deal with this by moving 256 bytes
+  down the C stack which should always land in a safe spot even if mid update.
+
+- Great care is taken to ensure nothing assumes ZP is at 0. On some 65C816
+  systems it won't be.
+
+- System calls are done via a JSR. BRK may look good but it's not reliable on
+  NMOS 6502 parts.
+
+- The cc65 support code is of reasonable size and actually the same for user
+  and kernel code. Some kind of shared library scheme for it would make
+  binaries a lot smaller.
+
+- There is minimal support for 65C816. The entire OS runs in 8bit 6502 mode
+  except for using MVN in fork, and some bits in the C library where setjmp
+  and longjmp need a minimal awareness of 65C816.
+
+TODO:
+Swap support
+Look at other RC2014 device support
+
+Real System:
+
+Burn the ROM from the RC2014 ROM archive into a 512K flash if you don't already
+have it on the system
+
+make diskimage
+
+copy disk.img onto a CF adapter. The current image is about 40MB (mostly empty)
+and can be written to anything that size or larger.
+
+Insert CF card into system and power up.
+
+If you see just a letter 'R' on the console at 38400 baud then something is
+wrong with the system set up. If it is working you will get a copyright
+message and a set of debug as it loads from CF.
+
+Emulator:
+
+Build the ROM image as before
+Copy emu-ide.img somewhere
+
+./rc2014-6502 -1 -r 6502.rom -i emu-ide.img
+
+Add -R to enable an emulation of the RC2014 RTC card, add -w for the
+WizNet 830MJ.

@@ -1,15 +1,17 @@
-__sfr __at 0x40 data;
-__sfr __at 0x41 error;
-__sfr __at 0x42 count;
-__sfr __at 0x43 sec;
-__sfr __at 0x44 cyll;
-__sfr __at 0x45 cylh;
-__sfr __at 0x46 devh;
-__sfr __at 0x47 cmd;
-__sfr __at 0x47 status;
+#define data	0x40
+#define error	0x41
+#define count	0x42
+#define sec	0x43
+#define cyll	0x44
+#define cylh	0x45
+#define devh	0x46
+#define cmd	0x47
+#define status	0x47
 
-/* The transfer isn't non standard but the banked memory requirements are */
-#define IDE_REG_DATA	0x0040
+#define IDE_REG_DATA	0x40
 
-/* The transfer isn't non standard but the banked memory requirements are */
+/* Due to our strange banking needs */
 #define IDE_NONSTANDARD_XFER
+
+#define ide_read(x)	in(x)
+#define ide_write(x,y)	out(x,y)

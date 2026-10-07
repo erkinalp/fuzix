@@ -6,8 +6,8 @@
 #include <devtty.h>
 #include <rcbus.h>
 
-__sfr __at 0xf8 cpld_status;
-__sfr __at 0xf9 cpld_data;
+#define CPLD_STATUS	0xF8
+#define CPLD_DATA	0xF9
 
 static uint8_t tbuf1[TTYSIZ];
 static uint8_t tbuf2[TTYSIZ];
@@ -78,8 +78,8 @@ static void sio2_setup(uint_fast8_t minor, uint_fast8_t flags)
 
 	r = 0xC4;
 	if (ctc_present && minor == 3) {
-		CTC_CH1 = 0x55;
-		CTC_CH1 = siobaud[baud];
+		out(CTC_CH(1), 0x55);
+		out(CTC_CH(1), siobaud[baud]);
 		if (baud > B600)	/* Use x16 clock and CTC divider */
 			r = 0x44;
 	} else
@@ -134,36 +134,36 @@ int tty_carrier(uint_fast8_t minor)
 	return 0;
 }
 
-void tty_pollirq_sio0(void)
+void tty_irq_sio0(void)
 {
 	static uint8_t old_ca, old_cb;
 	uint8_t ca, cb;
 	uint8_t progress;
 
 	/* Check for an interrupt */
-	SIOA_C = 0;
-	if (!(SIOA_C & 2))
+	out(SIOA_C, 0);
+	if (!(in(SIOA_C) & 2))
 		return;
 
 	/* FIXME: need to process error/event interrupts as we can get
 	   spurious characters or lines on an unused SIO floating */
 	do {
 		progress = 0;
-		SIOA_C = 0;		// read register 0
-		ca = SIOA_C;
+		out(SIOA_C, 0);		// read register 0
+		ca = in(SIOA_C);
 		/* Input pending */
 		if (ca & 1) {
 			progress = 1;
-			tty_inproc(2, SIOA_D);
+			tty_inproc(2, in(SIOA_D));
 		}
 		/* Break */
 		if (ca & 2)
-			SIOA_C = 2 << 5;
+			out(SIOA_C, 2 << 5);
 		/* Output pending */
 		if ((ca & 4) && (sleeping & 4)) {
 			tty_outproc(2);
 			sleeping &= ~4;
-			SIOA_C = 5 << 3;	// reg 0 CMD 5 - reset transmit interrupt pending
+			out(SIOA_C, 5 << 3);	// reg 0 CMD 5 - reset transmit interrupt pending
 		}
 		/* Carrier changed */
 		if ((ca ^ old_ca) & 8) {
@@ -172,16 +172,16 @@ void tty_pollirq_sio0(void)
 			else
 				tty_carrier_drop(2);
 		}
-		SIOB_C = 0;		// read register 0
-		cb = SIOB_C;
+		out(SIOB_C, 0);		// read register 0
+		cb = in(SIOB_C);
 		if (cb & 1) {
-			tty_inproc(3, SIOB_D);
+			tty_inproc(3, in(SIOB_D));
 			progress = 1;
 		}
 		if ((cb & 4) && (sleeping & 16)) {
 			tty_outproc(3);
 			sleeping &= ~16;
-			SIOB_C = 5 << 3;	// reg 0 CMD 5 - reset transmit interrupt pending
+			out(SIOB_C, 5 << 3);	// reg 0 CMD 5 - reset transmit interrupt pending
 		}
 		if ((cb ^ old_cb) & 8) {
 			if (cb & 8)
@@ -192,36 +192,36 @@ void tty_pollirq_sio0(void)
 	} while(progress);
 }
 
-void tty_pollirq_sio1(void)
+void tty_irq_sio1(void)
 {
 	static uint8_t old_ca, old_cb;
 	uint8_t ca, cb;
 	uint8_t progress;
 
 	/* Check for an interrupt */
-	SIOC_C = 0;
-	if (!(SIOC_C & 2))
+	out(SIOC_C, 0);
+	if (!(in(SIOC_C) & 2))
 		return;
 
 	/* FIXME: need to process error/event interrupts as we can get
 	   spurious characters or lines on an unused SIO floating */
 	do {
 		progress = 0;
-		SIOC_C = 0;		// read register 0
-		ca = SIOC_C;
+		out(SIOC_C, 0);		// read register 0
+		ca = in(SIOC_C);
 		/* Input pending */
 		if (ca & 1) {
 			progress = 1;
-			tty_inproc(4, SIOC_D);
+			tty_inproc(4, in(SIOC_D));
 		}
 		/* Break */
 		if (ca & 2)
-			SIOC_C = 2 << 5;
+			out(SIOC_C, 2 << 5);
 		/* Output pending */
 		if ((ca & 4) && (sleeping & 16)) {
 			tty_outproc(4);
 			sleeping &= ~16;
-			SIOC_C = 5 << 3;	// reg 0 CMD 5 - reset transmit interrupt pending
+			out(SIOC_C, 5 << 3);	// reg 0 CMD 5 - reset transmit interrupt pending
 		}
 		/* Carrier changed */
 		if ((ca ^ old_ca) & 8) {
@@ -230,16 +230,16 @@ void tty_pollirq_sio1(void)
 			else
 				tty_carrier_drop(4);
 		}
-		SIOD_C = 0;		// read register 0
-		cb = SIOD_C;
+		out(SIOD_C, 0);		// read register 0
+		cb = in(SIOD_C);
 		if (cb & 1) {
-			tty_inproc(5, SIOD_D);
+			tty_inproc(5, in(SIOD_D));
 			progress = 1;
 		}
 		if ((cb & 4) && (sleeping & 32)) {
 			tty_outproc(5);
 			sleeping &= ~32;
-			SIOD_C = 5 << 3;	// reg 0 CMD 5 - reset transmit interrupt pending
+			out(SIOD_C, 5 << 3);	// reg 0 CMD 5 - reset transmit interrupt pending
 		}
 		if ((cb ^ old_cb) & 8) {
 			if (cb & 8)
@@ -254,9 +254,9 @@ void tty_poll_cpld(void)
 {
 	uint8_t ca;
 
-	ca = cpld_status;
+	ca = in(CPLD_STATUS);
 	if (ca & 1)
-		tty_inproc(1, cpld_data);
+		tty_inproc(1, in(CPLD_DATA));
 }
 
 void tty_putc(uint_fast8_t minor, uint_fast8_t c)
@@ -309,7 +309,6 @@ ttyready_t tty_writeready(uint_fast8_t minor)
 
 void tty_data_consumed(uint_fast8_t minor)
 {
-	used(minor);
 }
 
 /* kernel writes to system console -- never sleep! */

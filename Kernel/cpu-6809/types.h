@@ -7,6 +7,8 @@ typedef signed char int8_t;
 typedef unsigned int size_t;
 typedef signed int ssize_t;
 
+/* This is wrong for now but I'd rather keep the ABI right then fix the
+   compiler to do byteification later */
 typedef unsigned char uint_fast8_t;
 typedef signed char int_fast8_t;
 

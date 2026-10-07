@@ -23,7 +23,7 @@ static size_t blksz = 8192;
 
 static struct memh *brkmore(size_t nb)
 {
-	struct memh *p;
+	register struct memh *p;
 
 #ifdef USE_SYSMALLOC
 	extern void *memalloc(size_t sz);
@@ -74,7 +74,7 @@ static struct memh *brkmore(size_t nb)
 
 void *malloc(size_t size)
 {
-	struct memh *p, *prev;
+	register struct memh *p, *prev;
 	size_t nblocks;
 
 	nblocks = size + sizeof(struct memh) + sizeof(struct memh) - 1;
@@ -112,7 +112,7 @@ void *malloc(size_t size)
 
 void free(void *ptr)
 {
-	struct memh *mh = MH(ptr), *p;
+	register struct memh *p, *mh = MH(ptr);
 
 	if (ptr == NULL)
 		return;

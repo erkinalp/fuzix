@@ -4,15 +4,14 @@
 #include <tty.h>
 #include <devsys.h>
 #include <devtty.h>
-#include <devide.h>
-#include <devrd.h>
-#include <devsd.h>
-#include <blkdev.h>
+#include <tinydisk.h>
+#include <tinyide.h>
+#include <tinysd.h>
 
 struct devsw dev_tab[] =  /* The device driver switch table */
 {
 /*   open	    close	read		write		ioctl */
-  {  blkdev_open,   no_close,	blkdev_read,	blkdev_write,	blkdev_ioctl },	/* 0: /dev/hd -- standard block device interface */
+  {  td_open,       no_close,	td_read,	td_write,	td_ioctl },	/* 0: /dev/hd -- standard block device interface */
   {  no_open,	    no_close,	no_rdwr,	no_rdwr,	no_ioctl },	/* 1: unused slot */
   {  tty_open,	    tty_close,	tty_read,	tty_write,	tty_ioctl },	/* 2: /dev/tty -- serial ports */
   {  no_open,	    no_close,	no_rdwr,	no_rdwr,	no_ioctl },	/* 3: unused slot */
@@ -32,7 +31,7 @@ bool validdev(uint16_t dev)
 void device_init(void)
 {
     extern uint8_t has_sd;
-    devide_init();
+    ide_probe();
     if (has_sd)
-      devsd_init();
+      sd_probe();
 }

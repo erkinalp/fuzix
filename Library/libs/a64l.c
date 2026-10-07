@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-long a64l(const char *s)
+long a64l(register const char *s)
 {
   uint32_t n = 0;
   const char *se = s + 6;

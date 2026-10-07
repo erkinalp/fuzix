@@ -1,3 +1,4 @@
+# 1 "tricks.S"
 ;
 ;	Bank switching for Thompson TO8 and TO9+
 ;
@@ -5,43 +6,76 @@
 ;	TODO: parent first mode would be a win due to the copier cost
 ;	TODO: assumes TO8/TO9+ mode
 ;
-        .module tricks
+# 1 "kernel.def"
+U_DATA__TOTALSIZE           equ 0x0200        ; 256+256
 
-	#imported
-        .globl _makeproc
-        .globl _chksigs
-        .globl _getproc
-        .globl _plt_monitor
-        .globl _inint
-        .globl map_kernel
-        .globl map_process
-        .globl map_process_always
-        .globl copybank
-	.globl _nready
-	.globl _plt_idle
-	.globl _udata
+VIDEO_BASE		    equ 0x0000	     ; 8K mapped in the video window
+VIDEO_END		    equ 0x2000	     ; for now
+VIDEO_OFF		    equ 0x00	     ; mapped at 0x00
 
-	# exported
-        .globl _plt_switchout
-        .globl _switchin
-        .globl _dofork
-	.globl _ramtop
+PROGBASE                    equ 0x6400       ; programs and data start here
 
-        include "kernel.def"
-        include "../../cpu-6809/kernel09.def"
+IOPAGE			    equ 0xE7	     ; I/O window
+# 1 "../../cpu-6809/kernel09.def"
+; Keep these in sync with struct u_data!!
+U_DATA__U_PTAB              equ 0   ; struct p_tab*
+U_DATA__U_PAGE              equ 2   ; uint16_t
+U_DATA__U_PAGE2             equ 4   ; uint16_t
+U_DATA__U_INSYS             equ 6   ; bool
+U_DATA__U_CALLNO            equ 7   ; uint8_t
+U_DATA__U_SYSCALL_SP        equ 8   ; void *
+U_DATA__U_RETVAL            equ 10  ; int16_t
+U_DATA__U_ERROR             equ 12  ; int16_t
+U_DATA__U_SP                equ 14  ; void *
+U_DATA__U_ININTERRUPT       equ 16  ; bool
+U_DATA__U_CURSIG            equ 17  ; int8_t
+U_DATA__U_ARGN              equ 18  ; uint16_t
+U_DATA__U_ARGN1             equ 20  ; uint16_t
+U_DATA__U_ARGN2             equ 22  ; uint16_t
+U_DATA__U_ARGN3             equ 24  ; uint16_t
+U_DATA__U_ISP               equ 26  ; void * (initial stack pointer when _exec()ing)
+U_DATA__U_TOP               equ 28  ; uint16_t
+U_DATA__U_BREAK             equ 30  ; uint16_t
+U_DATA__U_CODEBASE          equ 32  ; uint16_t
+U_DATA__U_SIGVEC            equ 34  ; table of function pointers (void *)
 
-	.area .commondata
+; Keep these in sync with struct p_tab!!
+P_TAB__P_STATUS_OFFSET      equ 0
+P_TAB__P_FLAGS_OFFSET	    equ 1
+P_TAB__P_TTY_OFFSET         equ 2
+P_TAB__P_PID_OFFSET         equ 3
+P_TAB__P_PAGE_OFFSET        equ 15
+
+P_RUNNING                   equ 1            ; value from include/kernel.h
+P_READY                     equ 2            ; value from include/kernel.h
+
+PFL_BATCH		    equ 4            ; value from include/kernel.h
+
+OS_BANK                     equ 0            ; value from include/kernel.h
+
+EAGAIN                      equ 11           ; value from include/kernel.h
+
+
+; Keep in sync with struct blkbuf
+BUFSIZE 		    equ 520
+# 11 "tricks.S"
+	.export _plt_switchout
+	.export _switchin
+	.export _dofork
+	.export _ramtop
+
+	.commondata
 
 	; ramtop must be in common although not used here
 _ramtop:
-	.dw 0
+	.word 0
 
-newpp   .dw 0
+newpp:   .word 0
 
 _cur6:
 	.byte 0
 
-	.area .common
+	.common
 
 ; Switchout switches out the current process, finds another that is READY,
 ; possibly the same process, and switches it in.  When a process is
@@ -55,22 +89,22 @@ _plt_switchout:
         ldd #0 ; return code set here is ignored, but _switchin can 
         ; return from either _switchout OR _dofork, so they must both write 
         ; U_DATA__U_SP with the following on the stack:
-	pshs d,y,u
+	pshs d,u
 	sts U_DATA__U_SP	; this is where the SP is restored in _switchin
 
 	; get process table in
 	jsr map_kernel
 
-        ; find another (or same) process to run, returned in X
+        ; find another (or same) process to run, returned in D
         jsr _getproc
         jsr _switchin
         ; we should never get here
         jsr _plt_monitor
 
 badswitchmsg: .ascii "_switchin: FAIL"
-        .db 13
-	.db 10
-	.db 0
+.byte 13
+	.byte 10
+	.byte 0
 
 
 ; new process pointer is in X
@@ -161,7 +195,7 @@ no_work:
         ; restore machine state -- note we may be returning from either
         ; _switchout or _dofork
         lds U_DATA__U_SP
-        puls x,y,u ; return code and saved U and Y
+        puls d,u ; return code and saved U
 
         ; enable interrupts, if the ISR isn't already running
 	lda U_DATA__U_ININTERRUPT
@@ -177,11 +211,11 @@ switchinfail:
 	; something went wrong and we didn't switch in what we asked for
         jmp _plt_monitor
 
-	.area .data
+	.data
 
-fork_proc_ptr: .dw 0 ; (C type is struct p_tab *) -- address of child process p_tab entry
+fork_proc_ptr: .word 0 ; (C type is struct p_tab *) -- address of child process p_tab entry
 
-	.area .common
+	.common
 ;
 ;	Called from _fork. We are in a syscall, the uarea is live as the
 ;	parent uarea. The kernel is the mapped object.
@@ -190,15 +224,15 @@ _dofork:
         ; always disconnect the vehicle battery before performing maintenance
         orcc #0x10	 ; should already be the case ... belt and braces.
 
-	; new process in X, get parent pid into y
+	; new process in X, get parent pid into D
 
 	stx fork_proc_ptr
-	ldx P_TAB__P_PID_OFFSET,x
+	ldd P_TAB__P_PID_OFFSET,x
 
         ; Save the stack pointer and critical registers (Y and U used by C).
         ; When this process (the parent) is switched back in, it will be as if
         ; it returns with the value of the child's pid.
-        pshs x,y,u ;  x has p->p_pid from above, the return value in the parent
+        pshs d,u ;  x has p->p_pid from above, the return value in the parent
 
         ; save kernel stack pointer -- when it comes back in the parent we'll be in
         ; _switchin which will immediately return (appearing to be _dofork()
@@ -216,25 +250,26 @@ _dofork:
 
         ; now the copy operation is complete we can get rid of the stuff
         ; _switchin will be expecting from our copy of the stack.
-	puls x
+	puls d
 
-	ldx #_udata
-	pshs x
-        ldx fork_proc_ptr
+	ldd #_udata
+	pshs d
+        ldd fork_proc_ptr
         jsr _makeproc
 	puls x
 
 	; any calls to map process will now map the childs memory
 
         ; in the child process, fork() returns zero.
-	ldx #0
+	clra
+	clrb
         ; runticks = 0;
-	stx _runticks
+	std _runticks
 	;
 	; And we exit, with the kernel mapped, the child now being deemed
 	; to be the live uarea. The parent is frozen in time and space as
 	; if it had done a switchout().
-	puls y,u,pc
+	puls u,pc
 
 fork_copy:
 ; Unoptimized - we don't look at U_BREAK and other stuff
@@ -283,4 +318,3 @@ save_hi2:				; copy the low 16K of user
 	bne save_hi2
 	
 	jmp map_kernel			; put the memory map back sane
-

@@ -4,19 +4,19 @@
 #include <tty.h>
 #include <devsys.h>
 #include <devtty.h>
-#include <devide.h>
-#include <devrd.h>
-#include <devsd.h>
-#include <blkdev.h>
+#include <tinydisk.h>
+#include <tinysd.h>
+#include <tinyide.h>
+#include <propio2.h>
 #include <ds1302.h>
 
 struct devsw dev_tab[] =  /* The device driver switch table */
 {
 /*   open	    close	read		write		ioctl */
-  {  blkdev_open,   no_close,	blkdev_read,	blkdev_write,	blkdev_ioctl },	/* 0: /dev/hd -- standard block device interface */
+  {  td_open,       no_close,	td_read,	td_write,	td_ioctl },	/* 0: /dev/hd -- standard block device interface */
   {  no_open,	    no_close,	no_rdwr,	no_rdwr,	no_ioctl },	/* 1: unused slot */
   {  tty_open,	    tty_close,	tty_read,	tty_write,	tty_ioctl },	/* 2: /dev/tty -- serial ports */
-  {  rd_open,	    no_close,	rd_read,	rd_write,	no_ioctl },	/* 3: /dev/rd? */
+  {  no_open,	    no_close,	no_rdwr,	no_rdwr,	no_ioctl },	/* 3: /dev/rd? */
   {  no_open,	    no_close,	sys_read,	sys_write,	sys_ioctl  },	/* 4: /dev/mem etc	System devices (one offs) */
 };
 
@@ -32,7 +32,10 @@ bool validdev(uint16_t dev)
 
 void device_init(void)
 {
-    devide_init();
-    devsd_init();
+    ide_probe();
+    sd_probe();
+#ifdef CONFIG_PROPIO2
+    prop_sd_probe();
+#endif
     ds1302_init();
 }

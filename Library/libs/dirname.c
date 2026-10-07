@@ -5,8 +5,8 @@
 
 char *dirname(char *p)
 {
-    char *e = p + strlen(p) - 1;
-    char *s;
+    register char *s;
+    register char *e = p + strlen(p) - 1;
     while(*e == '/') {
         if (e == p)
             return p;	/* dirname("/") is "/" */

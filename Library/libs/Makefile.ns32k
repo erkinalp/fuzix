@@ -21,7 +21,8 @@ SRC_C += connect.c creat.c crypt.c ctermid.c ctime.c cuserid.c
 SRC_C += dirname.c
 SRC_C += err.c errno.c error.c
 SRC_C += execl.c execv.c execvp.c exit.c
-SRC_C += fclose.c fdatasync.c fgetc.c fgetgrent.c fgetpwent.c
+SRC_C += fclose.c fdatasync.c fdopendir.c fdopendir_r.c
+SRC_C += fgetc.c fgetgrent.c fgetpwent.c
 SRC_C += fgetpos.c fgets.c fopen.c fork.c fprintf.c fputc.c fputs.c fread.c
 SRC_C += fsetpos.c fsync.c ftell.c ftruncate.c fwrite.c getcwd.c
 SRC_C += getenv.c __getgrent.c getgrgid.c getgrnam.c getloadavg.c getlogin.c
@@ -33,7 +34,7 @@ SRC_C += inet_addr.c inet_aton.c inet_network.c inet_ntoa.c inet_ntop.c inet_pto
 SRC_C += index.c initgroups.c isatty.c killpg.c
 SRC_C += libintl.c listen.c
 SRC_C += localtim.c localtim_r.c lseek.c lsearch.c lstat.c ltoa.c ltostr.c
-SRC_C += malloc.c mkfifo.c mkstemps.c mntent.c nanosleep.c
+SRC_C += malloc.c mkdtemps.c mkfifo.c mkstemps.c mntent.c nanosleep.c nftw.c
 SRC_C += opendir.c opendir_r.c pause.c perror.c
 SRC_C += popen.c printf.c putenv.c putchar.c putpwent.c putw.c pwent.c qsort.c
 SRC_C += raise.c rand.c readdir.c readlink.c realloc.c
@@ -62,10 +63,10 @@ SRC_C += fscanf.c scanf.c sscanf.c vfscanf.c vscanf.c vsscanf.c
 # Seems to give the compiler a hard time
 SRC_C += regexp.c
 # Pieces we inherit in other cases from the compiler library instead
-SRC_C += strcpy.c strlen.c abs.c atof.c atoi.c atol.c labs.c
+SRC_C += stpcpy.c strcpy.c strlen.c abs.c atoi.c atol.c labs.c
 SRC_C += strcat.c strchr.c strcmp.c strcspn.c strncat.c strncmp.c
 SRC_C += strncpy.c strpbrk.c strrchr.c strspn.c strstr.c strtok.c strtok_r.c
-SRC_C += memchr.c memcmp.c memcpy.c memset.c memmove.c
+SRC_C += memchr.c memcmp.c memcpy.c mempcpy.c memset.c memmove.c
 
 SRC_CT += termcap.c tgetent.c
 
@@ -75,7 +76,8 @@ SRC_RL = readline.c readline_fn.c
 
 SRC_LM = vfscanf_m.c vfprintf_m.c
 SRC_LM += acosf.c acoshf.c asinf.c asinhf.c atan2f.c atanf.c atanhf.c
-SRC_LM += cbrtf.c ceilf.c copysignf.c erff.c expf.c expm1f.c
+SRC_LM += cbrtf.c ceilf.c copysignf.c cosf.c coshf.c
+SRC_LM += erff.c expf.c expm1f.c
 SRC_LM += fabsf.c fdimf.c floorf.c fmaxf.c fminf.c fmodf.c frexpf.c
 SRC_LM += hypotf.c ilogbf.c j0f.c j1f.c jnf.c
 SRC_LM += ldexpf.c lgammaf.c lgammaf_r.c logf.c log2f.c log10f.c logbf.c
@@ -84,11 +86,12 @@ SRC_LM += modff.c nearbyintf.c nextafterf.c powf.c
 SRC_LM += remainderf.c remquof.c rintf.c roundf.c
 SRC_LM += scalbnf.c scalbln.c
 SRC_LM += sinf.c sincosf.c sinhf.c
-SRC_LM += sqrtf.c tgammaf.c
+SRC_LM += sqrtf.c tanf.c tanhf.c tgammaf.c truncf.c
 SRC_LM += __expo2f.c __float_bits.c __fpclassifyf.c __log1pf.c __signgam.c
+SRC_LM += __rem_pio2.c __rem_pio2_large.c
 SRC_LM += mathhelper.c remainder.c
 SRC_LM += acos.c acosh.c asin.c asinh.c atan2.c atan.c atanh.c
-SRC_LM += cbrt.c ceil.c copysign.c erf.c exp.c expm1.c
+SRC_LM += cbrt.c ceil.c cos.c cosh.c copysign.c erf.c exp.c expm1.c
 SRC_LM += fabs.c fdim.c floor.c fmax.c fmin.c fmod.c frexp.c
 SRC_LM += hypot.c j0.c j1.c jn.c
 SRC_LM += ldexp.c lgamma.c lgamma_r.c log.c log2.c log10.c
@@ -97,7 +100,7 @@ SRC_LM += modf.c nearbyint.c pow.c
 SRC_LM += remquo.c rint.c round.c
 SRC_LM += scalbn.c
 SRC_LM += sin.c sincos.c sinh.c
-SRC_LM += sqrt.c tgamma.c
+SRC_LM += sqrt.c tan.c tanh.c tgamma.c trunc.c
 SRC_LM += __expo2.c __double_bits.c __fpclassify.c __log1p.c
 SRC_LM += __sin.c __cos.c __tan.c __sindf.c __cosdf.c __tandf.c
 

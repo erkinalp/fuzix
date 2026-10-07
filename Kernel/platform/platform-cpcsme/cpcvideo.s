@@ -15,13 +15,9 @@
         .globl _clear_across
         .globl _do_beep
 		.globl _fontdata_8x8
-		.globl _curattr
 		.globl _vtattr
-		.globl _ga_set_active_vt
 		.globl _ga_set_visible_vt
 
-		.globl map_video
-		.globl map_kernel
 
 	; Build the video library as the only driver
 

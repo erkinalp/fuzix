@@ -1,0 +1,20 @@
+# Path to the built gcc-z8k tree (xgcc + -B). Override on the command line
+# or in the environment; the default assumes a sibling build layout.
+Z8K_GCC_BUILD ?= $(HOME)/gcc-z8k/build-z8k-coff/gcc
+export CROSS_COMPILE=z8k-coff-
+export CROSS_LD=$(CROSS_COMPILE)ld
+export CROSS_CC=$(Z8K_GCC_BUILD)/xgcc -B$(Z8K_GCC_BUILD)/
+export CROSS_CCOPTS=-c -Os -fno-strict-aliasing -fomit-frame-pointer -fno-stack-protector -fno-builtin -Wall -msegmented -ffixed-r10 -I$(ROOT_DIR)/cpu-z8000 -I$(ROOT_DIR)/platform/platform-$(TARGET) -I$(ROOT_DIR)/include
+export CROSS_AS=$(CROSS_CC) $(CROSS_CCOPTS)
+export CROSS_CC_SEG1=
+export CROSS_CC_SEG2=
+export CROSS_CC_SEG3=
+export CROSS_CC_SEGDISC=
+export CROSS_CC_VIDEO=
+export CROSS_CC_FONT=
+export CROSS_CC_NETWORK=
+export ASOPTS=
+export ASMEXT = .S
+export BINEXT = .o
+export BITS=16
+export EXECFORMAT=32

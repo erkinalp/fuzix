@@ -50,9 +50,7 @@ static int header_ok(register struct exec *pp)
 
 arg_t _execve(void)
 {
-	/* We aren't re-entrant where this matters */
-	staticfast struct exec hdr;
-	staticfast inoptr ino;
+	register inoptr ino;
 	uint8_t **nargv;		/* In user space */
 	uint8_t **nenvp;		/* In user space */
 	struct s_argblk *abuf, *ebuf;
@@ -63,10 +61,12 @@ arg_t _execve(void)
 	uaddr_t bin_size;	/* Will need to be bigger on some cpus */
 	uaddr_t bss;
 	uint_fast8_t mflags;
+	/* We aren't re-entrant where this matters */
+	staticfast struct exec hdr;
 
 	top = ramtop;
 
-	if (!(ino = n_open_lock(name, NULLINOPTR)))
+	if (!(ino = n_open_argn()))
 		return (-1);
 
 	if (!((getperm(ino) & OTH_EX) &&
@@ -243,16 +243,9 @@ arg_t _execve(void)
 	tmpfree(ebuf);
 	i_deref(ino);
 
-	/* Shove argc and the address of argv just below envp
-	   FIXME: should flip them in crt0.S of app for R2L setups
-	   so we can get rid of the ifdefs */
-#ifdef CONFIG_CALL_R2L	/* Arguments are stacked the 'wrong' way around */
-	uputp((uaddr_t) nargv, nenvp - 2);
-	uputp((uaddr_t) argc, nenvp - 1);
-#else
+	/* Shove argc and the address of argv just below envp */
 	uputp((uaddr_t) nargv, nenvp - 1);
 	uputp((uaddr_t) argc, nenvp - 2);
-#endif
 
 	/* Set stack pointer for the program */
 	udata.u_isp = nenvp - 2;
@@ -271,7 +264,7 @@ nogood3:
 	tmpfree(ebuf);
 nogood2:
 nogood:
-	i_unlock_deref(ino);
+	i_deref(ino);
 	return (-1);
 }
 

@@ -36,6 +36,8 @@
 #define IS_ARITH(x)	(!PTR(x) && (x) < VOID)
 #define IS_INTARITH(x)	(!PTR(x) && (x) < FLOAT)
 #define IS_INTORPTR(x)	((x) < (FLOAT | 7))
+/* float or double: an arithmetic type that is not an integer one */
+#define IS_FLOATING(x)	(IS_ARITH(x) && !IS_INTARITH(x))
 
 #define C_SIMPLE	0x0000
 #define C_STRUCT	0x4000
@@ -56,6 +58,8 @@ extern unsigned type_addrof(unsigned t);
 extern unsigned type_ptrscale_binop(unsigned op, struct node *l, struct node *r, unsigned *rtype);
 extern int type_pointermatch(struct node *l, struct node *r);
 extern int type_pointerconv(struct node *r, unsigned lt, unsigned warn);
+extern int type_func_compatible(unsigned lt, unsigned rt, unsigned *keep);
+extern int type_is_pointer_object(unsigned t);
 
 extern unsigned deffunctype;	/* Type number for int foo(); */
 extern unsigned voltrack;	/* Track volatile possibility */

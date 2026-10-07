@@ -149,13 +149,13 @@ void crt9128_plot_char(int8_t y, int8_t x, uint16_t c)
 	crt9128_write_reg(CRT9128_REG_CHARACTER, c & 0x7f);
 }
 
-void crt9128_cursor_off(void)
+void crt9128_curoff(void)
 {
 	attdat |= CRT9128_ATTDAT_CURSOR_SUPRESS;
 	crt9128_write_reg(CRT9128_REG_ATTDAT, attdat);
 }
 
-void crt9128_cursor_on(int8_t newy, int8_t newx)
+void crt9128_curon(int8_t newy, int8_t newx)
 {
 	crt9128_set_cursor(newy, newx);
 

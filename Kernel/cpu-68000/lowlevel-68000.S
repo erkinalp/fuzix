@@ -613,7 +613,8 @@ probe_memory:
 		move.l a7,a1
 		moveq #0,d0
 		tst.b (a0)
-probe_out:	move.l d1,8(a1)		; restore the old vector
+probe_out:	move.l vectorbase,a1
+		move.l d1,8(a1)		; restore the old vector
 		move (sp)+,sr
 		rte
 probe_error:

@@ -29,9 +29,8 @@ static uint8_t test_dev(dev_t dev)
 
 char *devname(dev_t dev)
 {
-	/* Has to be static to keep cc65 happy 8( */
-	static DIR dp;
-	struct dirent *entry;
+	DIR dp;
+	register struct dirent *entry;
 	uint_fast8_t m;
 
 	/* Start by doing a guess for speed. Assume normal disk layout */

@@ -65,19 +65,19 @@ static const struct videomap trsmap = {
 };
 
 
-__sfr __at 0x83 gfx_ctrl;
-__sfr __at 0x8C gfx_xpan;
-__sfr __at 0x8D gfx_ypan;
-__sfr __at 0x8E gfx_xor;
+#define GFX_CTRL	0x83
+#define GFX_XPAN	0x8C
+#define GFX_YPAN	0x8D
+#define GFX_XOR		0x8E
 
 static uint8_t vmode;
 uint8_t ctrl_cache;
 
-extern unsigned gfx_blit(struct blit *blit) __z88dk_fastcall;
-extern unsigned gfx_draw(uint8_t *ptr) __z88dk_fastcall;
-extern unsigned gfx_exg(uint8_t *ptr) __z88dk_fastcall;
-extern unsigned gfx_read(uint8_t *ptr) __z88dk_fastcall;
-extern unsigned gfx_write(uint8_t *ptr) __z88dk_fastcall;
+extern unsigned gfx_blit(struct blit *blit);
+extern unsigned gfx_draw(uint8_t *ptr);
+extern unsigned gfx_exg(uint8_t *ptr);
+extern unsigned gfx_read(uint8_t *ptr);
+extern unsigned gfx_write(uint8_t *ptr);
 
 static uint16_t gfx_valid(uint8_t *ptr)
 {
@@ -95,7 +95,7 @@ static uint16_t gfx_valid(uint8_t *ptr)
 	return w * h + 8;
 }
 
-int gfx_ioctl(uint8_t minor, uarg_t arg, char *ptr)
+int gfx_ioctl(uint_fast8_t minor, uarg_t arg, char *ptr)
 {
 	uint8_t m;
 	uint16_t len;
@@ -120,14 +120,14 @@ int gfx_ioctl(uint8_t minor, uarg_t arg, char *ptr)
 				    sizeof(struct display));
 		vmode = m;
 		if (gfxtype == 1) {
-			gfx_xpan = 0;
-			gfx_ypan = 0;
-			gfx_xor = 1;
+			out(GFX_XPAN, 0);
+			out(GFX_YPAN, 0);
+			out(GFX_XOR, 1);
 			ctrl_cache = m ? 3 : 0;	/* we might want 1 for special cases */
 		} else {
 			ctrl_cache = m ? 1 : 0;
 		}
-		gfx_ctrl = ctrl_cache;
+		out(GFX_CTRL, ctrl_cache);
 		return 0;
 	case GFX_WRITE:
 		len = gfx_valid(ptr);
@@ -158,7 +158,7 @@ int gfx_ioctl(uint8_t minor, uarg_t arg, char *ptr)
 	case GFX_BLIT:
 		if (uget(ptr, &blit, sizeof(struct blit)))
 			return -1;
-		if (blit.xs > 127 || blit.xd > 127 || blit.ys > 256 || blit.yd > 256 || 
+		if (blit.xs > 127 || blit.xd > 127 || blit.ys > 256 || blit.yd > 256 ||
 			blit.height > 255 || blit.width > 128 || blit.height == 0 || blit.width == 0) {
 			udata.u_error = ERANGE;
 			return -1;
@@ -174,8 +174,8 @@ int gfx_ioctl(uint8_t minor, uarg_t arg, char *ptr)
 		return uput(&trsmap, ptr, sizeof(trsmap));
 	case GFX_SCROLL:
 		if (vmode == 1) {
-			gfx_xpan = ugetw(ptr) & 127;
-			gfx_ypan = ugetw(ptr + 2) & 255;
+			out(GFX_XPAN, ugetw(ptr) & 127);
+			out(GFX_YPAN, ugetw(ptr + 2) & 255);
 			return 0;
 		}
 		break;

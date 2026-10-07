@@ -1,35 +1,35 @@
-tools/analysemap: tools/analysemap.c
+LIBOBJ = start.o version.o timer.o kdata.o usermem.o \
+         devio.o filesys.o blk512.o process.o inode.o \
+         syscall_exec.o syscall_exec16.o syscall_fs.o \
+         syscall_fs2.o syscall_fs3.o syscall_proc.o \
+         syscall_other.o syscall_net.o network.o \
+         tty.o mm.o mm/memalloc_none.o \
+         mm/banksplit.o swap.o devsys.o devinput.o vt.o
 
-tools/visualize: tools/visualize.c
+LIBOBJ += cpu-z180/lowlevel-z180.o cpu-z180/usermem_std-z180.o
 
-tools/bihx: tools/bihx.c
+tools/visualizefcc: tools/visualizefcc.c
 
-tools/binmunge: tools/binmunge.c
+tools/hogfather: tools/hogfather.c
 
-tools/memhogs: tools/analysemap
-	cp tools/analysemap tools/memhogs
+tools/pack85: tools/pack85.c
 
-tools/binman: tools/binman.c
+tools/packdiscard: tools/packdiscard.c
 
-tools/bintomdv: tools/bintomdv.c
-
-tools/bankld/sdldz80:
-	+(cd tools/bankld; make)
-
-cpm-loader/cpmload.bin:	cpm-loader/cpmload.s cpm-loader/fuzixload.s cpm-loader/makecpmloader.c
-	+make -C cpm-loader
+tools/doubleup: tools/doubleup.c
 
 tools/makejv3: tools/makejv3.c
 
-fuzix.ihx: target $(OBJS) platform/platform-$(TARGET)/fuzix.lnk tools/bankld/sdldz80
-	$(CROSS_LD) -n -k $(LIBZ80) -f platform/platform-$(TARGET)/fuzix.lnk
+tools/trslabel: tools/trslabel.c
 
-fuzix.bin: fuzix.ihx tools/bihx tools/analysemap tools/memhogs tools/binman tools/bintomdv cpm-loader/cpmload.bin tools/visualize
-	-cp hogs.txt hogs.txt.old
-	tools/memhogs <fuzix.map |sort -nr >hogs.txt
-	head -5 hogs.txt
-	tools/visualize < fuzix.map
-	tools/bihx fuzix.ihx
-	tools/binprep
-	+make -C platform/platform-$(TARGET) image
+cpm-loader-fcc/cpmload.bin: cpm-loader-fcc/cpmload.S cpm-loader-fcc/fuzixload.S cpm-loader-fcc/makecpmloader.c
+	+$(MAKE) -C cpm-loader-fcc
 
+libfuzix.a: $(LIBOBJ)
+	rm -f libfuzix.a
+	ar qc libfuzix.a `lorderz80 $(LIBOBJ) | ftsort`
+
+fuzix.bin: target $(OBJS) libfuzix.a tools/pack85 tools/packdiscard tools/visualizefcc tools/doubleup cpm-loader-fcc/cpmload.bin tools/makejv3 tools/trslabel tools/hogfather
+	+$(MAKE) -C platform/platform-$(TARGET) image
+	(cd platform/platform-$(TARGET); ../../tools/visualizefcc <../../fuzix.map)
+	tools/hogfather fuzix.map | sort -nr >fuzix.hogs

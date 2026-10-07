@@ -1,7 +1,5 @@
 # TRS80 Model 4/4P
 
-(or right now more accurately sdltrs/xtrs)
-
 ## Emulator Bugs
 
 Repeating instructions like LDIR appear to be misemulated. LDIR
@@ -23,7 +21,7 @@ expander board could be used with a bit of tweaking (or both!)
 
 ## Memory Map:
 
-Base memory 0-FFFF (with a fair bit of slack) is used for the kernel
+Base memory 0-FFFF (with a tiny bit of slack) is used for the kernel
 User processes run 0-7FFF in bank U64L32 or U64U32, in both cases
 with the upper 32K being kept as the kernel bank.
 
@@ -38,6 +36,15 @@ processes.
 Processes that don't fit are swapped to hard disk. Without swap you
 can run a pair of 32K processes, just enough for stuff like
 bootstrap.
+
+## Memory Tricks To Watch
+
+We keep the two video console copies at F800, one is the video RAM (map III)
+the other is the main memory (Map IV). We normally run with the main memory
+enabled but switch in the I/O briefly to scan the keyboard and for video
+output. Currently all our actual code and stacks etc sit under F400 so are
+permanently mapped but we could (carefully) use F400-F7FF for something in
+future.
 
 ## Adding Support For Other Banked RAM:
 

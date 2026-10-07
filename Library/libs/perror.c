@@ -7,7 +7,7 @@
 
 static void wr2(const char *str)
 {
-	const char *p = str;
+	register const char *p = str;
 
 	while (*p)
 		++p;

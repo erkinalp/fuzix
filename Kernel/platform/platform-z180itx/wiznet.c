@@ -1,6 +1,6 @@
 #include <kernel.h>
 #include <z180itx.h>
-#include <devsd.h>
+#include <tinysd.h>
 /*
  *	Drive a WizNet 5200 or 5500 over SPI
  */
@@ -31,7 +31,7 @@ static void spi_transaction(uint16_t off,
 	} else {
 		spi_send(inlen >> 8);
 		spi_send(inlen);
-		
+
 		while(inlen--)
 			*in++ = spi_recv();
 	}
@@ -54,7 +54,7 @@ static void spi_transaction_u(uint16_t off,
 	} else {
 		spi_send(inlen >> 8);
 		spi_send(inlen);
-		
+
 		while(inlen--)
 			_uputc(spi_recv(), in++);
 	}
@@ -102,7 +102,7 @@ void w5x00_breadu(uint16_t bank, uint16_t off, void *pv, uint16_t n)
 
 void w5x00_writecb(uint16_t off, uint8_t n)
 {
-	spi_transaction(off, &n, 1, NULL, 0); 
+	spi_transaction(off, &n, 1, NULL, 0);
 }
 
 void w5x00_writesb(uint8_t sock, uint16_t off, uint8_t n)
@@ -113,13 +113,13 @@ void w5x00_writesb(uint8_t sock, uint16_t off, uint8_t n)
 void w5x00_writecw(uint16_t off, uint16_t n)
 {
 	n = ntohs(n);
-	spi_transaction(off, &n, 2, NULL, 0); 
+	spi_transaction(off, &n, 2, NULL, 0);
 }
 
 void w5x00_writesw(uint8_t sock, uint16_t off, uint16_t n)
 {
 	n = ntohs(n);
-	spi_transaction((sock << 8) + off, &n, 2, NULL, 0); 
+	spi_transaction((sock << 8) + off, &n, 2, NULL, 0);
 }
 
 void w5x00_bwrite(uint16_t bank, uint16_t off, void *pv, uint16_t n)
@@ -215,7 +215,7 @@ void w5x00_breadu(uint16_t bank, uint16_t off, void *pv, uint16_t n)
 
 void w5x00_writecb(uint16_t off, uint8_t n)
 {
-	spi_transaction(1 | W_WRITE, off, &n, 1, NULL, 0); 
+	spi_transaction(1 | W_WRITE, off, &n, 1, NULL, 0);
 }
 
 void w5x00_writesb(uint8_t sock, uint16_t off, uint8_t n)
@@ -226,13 +226,13 @@ void w5x00_writesb(uint8_t sock, uint16_t off, uint8_t n)
 void w5x00_writecw(uint16_t off, uint16_t n)
 {
 	n = ntohs(n);
-	spi_transaction(2 | W_WRITE, off, &n, 2, NULL, 0); 
+	spi_transaction(2 | W_WRITE, off, &n, 2, NULL, 0);
 }
 
 void w5x00_writesw(uint8_t sock, uint16_t off, uint16_t n)
 {
 	n = ntohs(n);
-	spi_transaction(SOCK2BANK_C(sock) | 2 | W_WRITE, off, &n, 2, NULL, 0); 
+	spi_transaction(SOCK2BANK_C(sock) | 2 | W_WRITE, off, &n, 2, NULL, 0);
 }
 
 void w5x00_bwrite(uint16_t bank, uint16_t off, void *pv, uint16_t n)

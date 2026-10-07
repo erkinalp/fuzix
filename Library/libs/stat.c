@@ -1,7 +1,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-static int statfix(struct stat *st, struct _uzistat *s)
+static int statfix(register struct stat *st, register struct _uzistat *s)
 {
   st->st_dev = s->st_dev;
   st->st_ino = s->st_ino;

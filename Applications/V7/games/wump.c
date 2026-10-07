@@ -349,10 +349,12 @@ int main(int argc, char *argv[])
 		      garow:
 			p = &room[j];
 			if (j == loc) {
+				while ((j = rin()) != 0);
 				printf("You shot yourself\n");
 				goto done;
 			}
 			if (p->flag & WUMP) {
+				while ((j = rin()) != 0);
 				printf("You slew the wumpus\n");
 				goto done;
 			}

@@ -10,8 +10,8 @@
 	.globl _sd_spi_raise_cs
 	.globl _sd_spi_transmit_byte
 	.globl _sd_spi_receive_byte
-	.globl _sd_spi_receive_sector
-	.globl _sd_spi_transmit_sector
+	.globl _sd_spi_rxsect
+	.globl _sd_spi_txsect
 
 	.globl _blk_op
 
@@ -102,7 +102,7 @@ rxwait:
 ;	interrupt situation here, we drive the clocks so if we go off for
 ;	an interrupt all is fine.
 ;
-_sd_spi_receive_sector:
+_sd_spi_rxsect:
 	pshs y,dp
 	lda #0xFF
 	tfr a,dp
@@ -135,7 +135,7 @@ read8:
 	sta <SPICTRL		; FRX off, external clock on
 	puls y,dp,pc
 
-_sd_spi_transmit_sector:
+_sd_spi_txsect:
 	pshs y,dp
 	lda #0xFF
 	tfr a,dp

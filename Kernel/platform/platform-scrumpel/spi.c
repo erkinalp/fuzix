@@ -7,7 +7,7 @@
 #include <z180.h>
 #include <blkdev.h>
 
-__sfr __at 0xA0 spi;
+#define SPI	0xA0
 uint8_t spi_bits = 0xFC;
 
 #define SPI_DATA	0x01
@@ -16,27 +16,31 @@ uint8_t spi_bits = 0xFC;
 #define SPI_CS_SD	0x08	/* \CS */
 #define SPI_CS_7SEG	0x10	/* \CS */
 
-void sd_spi_clock(bool go_fast)
+void sd_spi_slow(void)
 {
-/* We don't care about speed - it's all software driven */
+}
+
+void sd_spi_fast(void)
+{
 }
 
 void sd_spi_raise_cs(void)
 {
  spi_bits |= SPI_CS_RTC|SPI_CS_7SEG;
  spi_bits &= ~SPI_CS_SD;
- spi = spi_bits;
+ out(SPI, spi_bits);
 }
 
 void sd_spi_lower_cs(void)
 {
  spi_bits |= SPI_CS_SD;
- spi = spi_bits;
+ out(SPI, spi_bits);
 }
 
+#if 0
 COMMON_MEMORY
 
-bool sd_spi_receive_sector(void) __naked
+bool sd_spi_rx_sector(void) __naked
 {
   __asm
     ld a, (_blk_op+BLKPARAM_IS_USER_OFFSET)
@@ -61,7 +65,7 @@ doread:
   __endasm;
 }
 
-bool sd_spi_transmit_sector(void) __naked
+bool sd_spi_tx_sector(void) __naked
 {
   __asm
     ld a, (_blk_op+BLKPARAM_IS_USER_OFFSET)
@@ -86,3 +90,4 @@ dowrite:
   __endasm;
 }
 
+#endif

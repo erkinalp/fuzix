@@ -8,8 +8,12 @@
 #endif
 
 extern unsigned char irqvector;
-extern uint16_t swap_dev = 0xFFFF;
+uint16_t swap_dev = 0xFFFF;
 struct blkbuf *bufpool_end = bufpool + NBUFS; /* minimal for boot -- expanded after we're done with _DISCARD */
+
+/* Real time clock support for DS1302 driver - port and other pins */
+uint16_t rtc_port = 0x70;
+uint8_t rtc_shadow;
 
 void plt_discard(void)
 {
@@ -23,15 +27,6 @@ void plt_discard(void)
     }
 }
 
-void plt_idle(void)
-{
-	/* Let's go to sleep while we wait for something to interrupt us;
-	 * Makes the HALT LED go yellow, which amuses me greatly. */
-	__asm
-		halt
-	__endasm;
-}
-
 void plt_interrupt(void)
 {
 	switch(irqvector) {
@@ -39,7 +34,7 @@ void plt_interrupt(void)
 #ifdef CONFIG_FLOPPY
 			fd_tick();
 #endif
-			timer_interrupt(); 
+			timer_interrupt();
 			return;
 		case 2:
 			tty_pollirq_uart0();

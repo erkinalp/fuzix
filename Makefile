@@ -5,6 +5,7 @@
 #
 # 2063:		John Winans Z80 Retro system
 # 68knano:	A small retrobrew 68000 platform with IDE disk
+# agon:		Agon Light / AgonLight2
 # amprolb:	The legendary Ampro Littleboard
 # coco2cart:	Tandy COCO2 or Dragon with 64K and IDE or SDC + cartridge flash
 #		(or xroar emulator )
@@ -31,6 +32,7 @@
 # mtx:		Memotech MTX512 with SDX or SD (or MEMU emulator)
 # multicomp09:	Extended multicomp 6809
 # n8:		Retrobrew N8 home computer
+# nano-z80: Z80 SoC for the Tang Nano 20K FPGA board
 # nascom:	Nascom 2 or 3 with page mode RAM and CF on PIO
 # nc100:	Amstrad NC100 (or emulator)
 # nc200:	Amstrad NC200 (or emulator)
@@ -146,14 +148,35 @@ tools:
 gtags:
 	gtags
 
-kernel: ltools
+# Kernel compiles resolve libc headers (<string.h>, <time.h>, ...) from
+# /opt/fcc/lib/$(CPU)/include via fcc's built-in system include path.
+# "libs" rewrites that directory with non-atomic "install" copies, so a
+# kernel that builds while libs is still installing reads half-written
+# headers and dies with nonsense parse errors at -j >1.  Serialize it.
+kernel: ltools libs
 	mkdir -p Images/$(TARGET)
 	+(cd Kernel; $(MAKE))
 
+# isize was upstream's 256 and the image no longer fits in it: ucp fails
+# with "error 28" partway through and then "panic: inode freed", which
+# reads like a corrupt image rather than a full one.  It is inodes, not
+# blocks - the root is 4.1M of content (429 files, 54 directories, 94
+# device nodes, 14 links = 591 inodes) and the 32M and 8M images fail at
+# exactly the same file.  FS32 is why: DINODE_SIZE went from 64 bytes to
+# 256 (kernel.h), so the same isize buys a quarter as many.
+#
+# Measured rather than derived, because the arithmetic does not line up -
+# 256 dies at `stty', 512 at `utsname.h', 1024 builds clean, and 512
+# blocks of 2 inodes each ought already to have covered 591.  Something
+# else is eating them; NOTES-inode-freelist.md in platform-rpipico
+# describes a two-byte overrun onto s_ninode that was fixed in the kernel
+# and may not be fixed in these host tools.  2048 is the next step up
+# from the first value that works, so the root can grow without this
+# coming back; it costs 1M of a 32M image.
 diskimage: stand ltools libs apps kernel
 	mkdir -p Images/$(TARGET)
-	+(cd Standalone/filesystem-src; ./build-filesystem $(ENDIANFLAG) $(FUZIX_ROOT)/Images/$(TARGET)/filesys.img 256 65535)
-	+(cd Standalone/filesystem-src; ./build-filesystem $(ENDIANFLAG) $(FUZIX_ROOT)/Images/$(TARGET)/filesys8.img 256 16384)
+	+(cd Standalone/filesystem-src; ./build-filesystem $(ENDIANFLAG) $(FUZIX_ROOT)/Images/$(TARGET)/filesys.img 2048 65535)
+	+(cd Standalone/filesystem-src; ./build-filesystem $(ENDIANFLAG) $(FUZIX_ROOT)/Images/$(TARGET)/filesys8.img 2048 16384)
 	+(cd Kernel; $(MAKE) diskimage)
 
 kclean:

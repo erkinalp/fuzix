@@ -30,6 +30,7 @@
  * pio2_3t:  pi/2 - (pio2_1+pio2_2+pio2_3)
  */
 static const double
+toint   = 6.75539944105574400000e+15, /* 0x43380000  0x00000000 */
 two24   = 1.67772160000000000000e+07, /* 0x41700000, 0x00000000 */
 invpio2 = 6.36619772367581382433e-01, /* 0x3FE45F30, 0x6DC9C883 */
 pio2_1  = 1.57079632673412561417e+00, /* 0x3FF921FB, 0x54400000 */
@@ -112,15 +113,9 @@ int __rem_pio2(double x, double *y)
 	if (ix < 0x413921fb) {  /* |x| ~< 2^20*(pi/2), medium size */
 		uint32_t high;
 medium:
-		/* Use a specialized rint() to get fn.  Assume round-to-nearest. */
-		STRICT_ASSIGN(double, fn, x*invpio2 + 0x1.8p52);
-		fn = fn - 0x1.8p52;
-// FIXME
-#ifdef HAVE_EFFICIENT_IRINT
-		n = irint(fn);
-#else
+		/* Assume round-to-nearest. */
+		fn = (double)x*invpio2 + toint - toint;
 		n = (int32_t)fn;
-#endif
 		r = x - fn*pio2_1;
 		w = fn*pio2_1t;  /* 1st round, good to 85 bits */
 		j = ix>>20;

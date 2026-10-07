@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-int fgetpos(FILE *fp, fpos_t *pos)
+int fgetpos(register FILE *fp, fpos_t *pos)
 {
    long l;
 

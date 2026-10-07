@@ -17,7 +17,7 @@ UZI (Unix Z80 Implementation) Utilities:  mkfs.c
 #include "fuzix_fs.h"
 #include "util.h"
 
-/* This makes a filesystem 
+/* This makes a filesystem
  *
  * example use:
  *   ./mkfs400 ./blankfs.img 64 4096
@@ -78,7 +78,7 @@ int main(int argc, char **argv)
 
 	while((opt = getopt(argc, argv, "Xb:")) != -1) {
 		switch(opt) {
-			case 'X':	
+			case 'X':
 				swizzling = 1;
 				break;
 			case 'b':
@@ -122,6 +122,7 @@ int main(int argc, char **argv)
 	/* Initialize the super-block */
 
 	fs_super.fs.s_mounted = swizzle16(SMOUNTED);	/* Magic number */
+	fs_super.fs.s_fmod = FMOD_CLEAN;
 	fs_super.fs.s_isize = swizzle16(isize);
 	fs_super.fs.s_fsize = swizzle16(fsize);
 	fs_super.fs.s_nfree = swizzle16(1);
@@ -137,7 +138,7 @@ int main(int argc, char **argv)
 	   terms of the block shift, while isize is in 512 byte blocks.
 	   Adjust isize so that it's in block terms and references the
 	   block after the last inode */
-	  
+
 	isize <<= shift;
 
 	/* Don't free the block isize because it's got the / directory in it */

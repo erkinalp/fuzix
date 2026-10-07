@@ -2,4 +2,4 @@
 
 		.common
 
-#include "../../cpu-8085/std-commonmem.s"
+#include "../../cpu-8085/std-commonmem.S"

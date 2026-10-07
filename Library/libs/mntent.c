@@ -20,7 +20,7 @@ FILE *setmntent(char *filep, char *type)
 {
 	int lock;
 	FILE *fp = fopen(filep, type);
-	
+
 	if (fp == NULL)
 		return NULL;
 	if (strchr(type,'w') || strchr(type,'a'))
@@ -45,11 +45,12 @@ static int mntparse(char *p, char **t, char *def)
 {
 	char *d = strtok(p, " \t\n");
 	char *ds = d;
-	if (d == NULL)
+	if (d == NULL) {
+		ds = def;
 		d = def;
-	else {
+	} else {
 		/* Dequote */
-		char *s = d;
+		register char *s = d;
 		while (*s) {
 			if (*s == '\\' && isoct(s[1]) && isoct(s[2]) && isoct(s[3])) {
 				*d++ = ((s[1] - '0') << 6) | ((s[2] - '0') << 3) | (s[3] - '0');
@@ -60,7 +61,9 @@ static int mntparse(char *p, char **t, char *def)
 	}
 	if (t)
 		*t = ds;
-	return atoi(ds);
+	if (ds)
+		return atoi(ds);
+	return 0;
 }
 
 struct mntent *getmntent_r(FILE * fp, struct mntent *me, char *buf, int len)
@@ -88,7 +91,7 @@ struct mntent *getmntent(FILE * fp)
 	return getmntent_r(fp, &me, mntbuf, _MAX_MNTLEN);
 }
 
-static char *quote_out(char *t, const char *s)
+static char *quote_out(register char *t, register const char *s)
 {
 	if (t == NULL)
 		return NULL;
@@ -121,7 +124,7 @@ static char *quote_out_int(char *t, int s)
 
 int addmntent(FILE * fp, struct mntent *mnt)
 {
-	char *p = mntbuf;
+	register char *p = mntbuf;
 	p = quote_out(p, mnt->mnt_fsname);
 	p = quote_out(p, mnt->mnt_dir);
 	p = quote_out(p, mnt->mnt_type);
@@ -144,7 +147,7 @@ int endmntent(FILE *fp)
 
 char *hasmntopt(struct mntent *mnt, char *opt)
 {
-	char *p = mnt->mnt_opts;
+	register char *p = mnt->mnt_opts;
 	ssize_t o = strlen(opt);
 
 	while (p) {

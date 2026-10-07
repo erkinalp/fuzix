@@ -13,7 +13,7 @@
 uint8_t hd_page;
 
 /* Swap is scanned for so not constant */
-uint16_t swap_dev;
+uint16_t swap_dev = 0xFFFF;	/* FFFF: not found */
 
 /* Seek and restore low 4 bits are the step rate, read/write support
    multi-sector mode but not all emulators do .. */
@@ -25,7 +25,7 @@ uint8_t hd_waitready(void)
 {
 	uint8_t st;
 	do {
-		st = hd_status;
+		st = in(HD_STATUS);
 	} while (!(st & 0x40));
 	return st;
 }
@@ -35,7 +35,7 @@ uint8_t hd_waitdrq(void)
 {
 	uint8_t st;
 	do {
-		st = hd_status;
+		st = in(HD_STATUS);
 	} while (!(st & 0x09));
 	return st;
 }
@@ -43,17 +43,17 @@ uint8_t hd_waitdrq(void)
 uint8_t hd_xfer(bool is_read, uint8_t *dptr)
 {
 	/* Error ? */
-	if (hd_status & 0x01)
-		return hd_status;
+	if (in(HD_STATUS) & 0x01)
+		return in(HD_STATUS);
 	if (is_read)
 		hd_xfer_in(dptr);
 	else
 		hd_xfer_out(dptr);
 	/* Should be returning READY, and maybe SEEKDONE */
-	return hd_status;
+	return in(HD_STATUS);
 }
 
-int hd_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
+int hd_transfer(uint_fast8_t minor, bool is_read, uint_fast8_t rawflag)
 {
 	uint16_t ct = 0;
 	staticfast uint8_t tries;
@@ -86,8 +86,8 @@ int hd_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
 
 	/* TRS80 hard disk are 32 sectors/track, 256 byte sectors */
 
-	hd_precomp = p->g.precomp;
-	hd_seccnt = 1;
+	out(HD_PRECOMP, p->g.precomp);
+	out(HD_SECCNT, 1);
 
 	sector = udata.u_block;
 	sector = (sector << 1) & 0x1E;
@@ -110,15 +110,15 @@ int hd_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
 
 	while (ct < nblock) {
 		/* Head next bits, plus drive */
-		hd_sdh = 0x80 | head | (dev << 3);
-		hd_secnum = sector;
+		out(HD_SDH, head | (dev << 3));
+		out(HD_SECNUM, sector);
 		/* cylinder bits */
-		hd_cyllo = cyl & 0xFF;
-		hd_cylhi = cyl >> 8;
+		out(HD_CYLLO, cyl & 0xFF);
+		out(HD_CYLHI, cyl >> 8);
 
 		for (tries = 0; tries < 4; tries++) {
 			/* issue the command */
-			hd_cmd = cmd;
+			out(HD_CMD, cmd);
 			/* DRQ will go high once the controller is ready
 			   for us */
 			err = hd_waitdrq();
@@ -131,7 +131,7 @@ int hd_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
 				kprintf("hd%d: err %x\n", minor, err);
 
 			if (tries > 1) {
-				hd_cmd = HDCMD_RESTORE | p->g.seek;
+				out(HD_CMD, HDCMD_RESTORE | p->g.seek);
 				if (hd_waitready() & 1)
 					kprintf("hd%d: restore error %z\n", minor, err);
 			}
@@ -155,7 +155,7 @@ int hd_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
 	return ct << 8;
 bad:
 	if (err & 1)
-		kprintf("hd%d: error %x\n", minor, hd_err);
+		kprintf("hd%d: error %x\n", minor, in(HD_ERR));
 	else
 		kprintf("hd%d: status %x\n", minor, err);
 bad2:
@@ -163,11 +163,11 @@ bad2:
 	return -1;
 }
 
-int hd_open(uint8_t minor, uint16_t flag)
+int hd_open(uint_fast8_t minor, uint16_t flag)
 {
 	uint8_t dev = minor >> 4;
 	flag;
-	if (dev >= MAX_HD || parts[dev].g.head == 0 ||
+	if (dev > MAX_HD || parts[dev].g.head == 0 ||
 		(minor && parts[dev].cyl[(minor-1)&0x0F] == 0xFFFF)) {
 		udata.u_error = ENODEV;
 		return -1;
@@ -175,13 +175,13 @@ int hd_open(uint8_t minor, uint16_t flag)
 	return 0;
 }
 
-int hd_read(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int hd_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
 	flag;
 	return hd_transfer(minor, true, rawflag);
 }
 
-int hd_write(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int hd_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
 	flag;
 	return hd_transfer(minor, false, rawflag);

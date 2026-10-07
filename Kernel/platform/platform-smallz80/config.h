@@ -45,8 +45,9 @@ extern uint16_t swap_dev;
 #define swap_map(x)	((uint8_t *)(x))
 
 /* What is the maximum number of /dev/hd devices we have */
-#define MAX_BLKDEV	2
-#define CONFIG_IDE
+#define CONFIG_TD_NUM		2
+#define CONFIG_TD_IDE
+#define CONFIG_TINYIDE_INDIRECT
 
 #define BOOTDEVICENAMES "hd#"
 
@@ -78,7 +79,7 @@ extern uint16_t swap_dev;
  *
  * Note that this needs to be divisible by 10 and at least 10. If your clock
  * is a bit slower you may need to fudge things somewhat so that the kernel
- * gets 10 timer interrupt calls per second. 
+ * gets 10 timer interrupt calls per second.
  *
  * We actually get 64, but we drop 4 per second
  */

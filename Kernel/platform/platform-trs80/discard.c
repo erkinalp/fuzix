@@ -2,15 +2,16 @@
 #include <printf.h>
 #include <devhd.h>
 #include <devtty.h>
+#include <devmega.h>
 #include <tty.h>
 
-__sfr __at 0x80 gfx_x;
-__sfr __at 0x81 gfx_y;
-__sfr __at 0x82 gfx_data;
-__sfr __at 0x83 gfx_ctrl;
-__sfr __at 0x8C gfx_xpan;
-__sfr __at 0x8D gfx_ypan;
-__sfr __at 0x8E gfx_xor;
+#define GFX_X		0x80
+#define GFX_Y		0x81
+#define GFX_DATA	0x82
+#define GFX_CTRL	0x83
+#define GFX_XPAN	0x8C
+#define GFX_YPAN	0x8D
+#define GFX_XOR		0x8E
 
 /* There are two possible card types. The Tandy version is a 640x240 card with
    hardware panning. The Micro Grafyx is very similar but has no panning and
@@ -33,75 +34,73 @@ __sfr __at 0x8E gfx_xor;
 
 static uint_fast8_t probe_gfx(void)
 {
- kputs("Probing gfx\n");
- gfx_x = 1;
- gfx_y = 1;
- gfx_ctrl = 0xA0;	/* Graphics off, inc X on read/write */
- gfx_data = 0x55;
- gfx_data = 0xAA;
- gfx_x = 1;
- if (gfx_data != 0x55) { 
-  kputs("none\n") ; 
-  return 0;
- }
- if (gfx_data != 0xAA) { 
-  kputs("none\n") ; 
-  return 0;
- }
- /* We have either a TRS80 or a clone card present */
- gfx_x = 0x7F;
- gfx_y = 0xFF;
- gfx_ctrl = 0xF0; 		/* No inc of X or Y */
- gfx_data = 0xA5;
- if (gfx_data != 0xA5) { 	/* this may need to be forced for Grafyx clone */
-  kputs("uLabs Grafyx (original)\n") ; 	
-  return 2;
- }
- kputs("Tandy (assumed) or Grafyx clone (unhandled)\n") ; 
- return 1;
+	kputs("Probing gfx: ");
+	out(GFX_X, 1);
+	out(GFX_Y, 1);
+	out(GFX_CTRL, 0x40); /* Graphics off, inc X on read/write */
+	out(GFX_DATA, 0x55);
+	out(GFX_DATA, 0xAA);
+	out(GFX_X, 1);
+	if (in(GFX_DATA) != 0x55 || in(GFX_DATA) != 0xAA) {
+		kputs("none\n");
+		return 0;
+	}
+	/* We have either a TRS80 or a clone card present */
+	out(GFX_X, 0x7F);
+	out(GFX_Y, 0xFF);
+	out(GFX_CTRL, 0xF0);	/* No inc of X or Y */
+	out(GFX_DATA, 0xA5);
+	if (in(GFX_DATA) != 0xA5) {	/* this may need to be forced for Grafyx clone */
+		kputs("uLabs Grafyx (original)\n");
+		return 2;
+	}
+	kputs("Tandy (assumed) or Grafyx clone (unhandled)\n");
+	return 1;
 }
 
 void device_init(void)
 {
-  gfxtype = probe_gfx();
-  vtbuf_init();
+	gfxtype = probe_gfx();
+	vtbuf_init();
 #ifdef CONFIG_RTC
-  /* Time of day clock */
-  inittod();
+	/* Time of day clock */
+	inittod();
 #endif
-  hd_probe();
-  tty_setup(3, 0);
+	/* Probe first as it's our preferred swap */
+	mega_probe();
+	hd_probe();
+	tty_setup(3, 0);
 }
 
 void map_init(void)
 {
 }
 
-uint8_t nbanks = 2;	/* Default 2 banks, unless we probe and find a
-                           banked memory card */
+uint8_t nbanks = 2;		/* Default 2 banks, unless we probe and find a
+				   banked memory card */
 extern uint8_t banktype;
 
 /* The Hypermem select is not quite the same as 0 is the upper 64K
    original */
 static void hyper_pagemap_init(void)
 {
- uint8_t n;
- for (n = 0; n < nbanks; n++) {
-  pagemap_add(n | 0x20);	/* Avoid getting a 0 value */
-  pagemap_add(n | 0x80);
- }
+	uint8_t n;
+	for (n = 0; n < nbanks; n++) {
+		pagemap_add(n | 0x20);	/* Avoid getting a 0 value */
+		pagemap_add(n | 0x80);
+	}
 }
 
 void pagemap_init(void)
 {
- uint8_t i = nbanks - 1;
- if (banktype == 2) {
-  hyper_pagemap_init();
-  return;
- }
- while (i) {
-  pagemap_add(i);	/* Mode 3, U64K low 32K mapped as low 32K */
-  pagemap_add(i|0x80);	/* Mode 3, U64K high 32K mapped as low 32K */
-  i--;
- }
+	uint8_t i = nbanks - 1;
+	if (banktype == 2) {
+		hyper_pagemap_init();
+		return;
+	}
+	while (i) {
+		pagemap_add(i);	/* Mode 3, U64K low 32K mapped as low 32K */
+		pagemap_add(i | 0x80);	/* Mode 3, U64K high 32K mapped as low 32K */
+		i--;
+	}
 }

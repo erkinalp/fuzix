@@ -1,0 +1,4 @@
+/*
+ *	Z8001 uses DI/EI instructions to control interrupts via FCW bits.
+ *	VIE = bit 14, NVIE = bit 15 of FCW.
+ */

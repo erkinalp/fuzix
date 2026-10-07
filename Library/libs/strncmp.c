@@ -2,7 +2,7 @@
 
 /* ANSIfied from dLibs 1.2 */
 
-int strncmp(const char *str1, const char *str2, size_t limit)
+int strncmp(register const char *str1, register const char *str2, register size_t limit)
 {
 	for(; ((--limit) && (*str1 == *str2)); ++str1, ++str2)
 		if (*str1 == '\0')

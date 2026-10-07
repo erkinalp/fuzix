@@ -51,6 +51,7 @@ extern uint16_t swap_dev;
 #define TICKSPERSEC	60	    /* Ticks per second */
 
 #define CONFIG_VT
+#define CONFIG_VT_ALTCHAR	/* Support VT altchar for full 256 symbols */
 #define VT_WIDTH	64
 #define VT_HEIGHT	48
 #define VT_RIGHT	63

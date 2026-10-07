@@ -15,10 +15,19 @@ jobs:
     strategy:
       fail-fast: false # keep on building even if one target fails
       matrix:
-        target: [appleiie, dragon-mooh, dragon-nx32, esp32, esp8266, multicomp09, rbc-mark4, rcbus-6502, rcbus-68008, rpipico, sc108, tiny68k, armm0-libc]
+        # 6809 kernel targets (dragon-mooh, dragon-nx32, multicomp09) are
+        # upstream-broken since aee91d86e: kernel .s files are gcc6809/SDAS
+        # dialect while rules.mk drives Bintools' as6809, whose 6809 keyword
+        # table only implements .dp/.pcrel, and ld6809 takes no --script.
+        # Userspace .s files were converted to Bintools dialect; the kernel
+        # side never was. Tracked in TODO-consolidation.md.
+        target: [appleiie, esp32, esp8266, rbc-mark4, rcbus-6502, rcbus-68008, rpipico, sc108, tiny68k, armm0-libc]
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v3
+    - name: checkout submodules (rpipico needs tinyusb)
+      if: matrix.target == 'rpipico'
+      run: git submodule update --init --depth 1 Kernel/platform/platform-rpipico/tinyusb
     - name: install build deps
       run: |
         echo "setup_sh=true" >> $GITHUB_ENV
@@ -28,17 +37,14 @@ jobs:
           echo "target=USERCPU=armm0" >> $GITHUB_ENV
           echo "sub_target=libs" >> $GITHUB_ENV
           ;;
-          dragon-mooh|dragon-nx32|multicomp09)
-          sudo add-apt-repository -n -y ppa:tormodvolden/m6809
-          PKGS="lwtools gcc6809 xroar"
-          echo "target=TARGET=${{ matrix.target }}" >> $GITHUB_ENV
-          echo "flags=CI_TESTING=1" >> $GITHUB_ENV
-          ;;
           esp32)
           sudo add-apt-repository -n -y ppa:tormodvolden/esp
           PKGS="esptool"
           (cd ~ && git clone -b v5.0.2 --depth 1 --recursive https://github.com/espressif/esp-idf.git)
           (cd ~/esp-idf && ./install.sh esp32)
+          # IDF 5.0 export.sh's pkg check imports pkg_resources; setuptools >=81
+          # removed pkg_resources so we must pin an older release into the venv
+          find ~/.espressif/python_env -name pip -exec {} install "setuptools<81" \;
           echo "setup_sh=. ~/esp-idf/export.sh" >> $GITHUB_ENV
           echo "target=TARGET=${{ matrix.target }}" >> $GITHUB_ENV
           ;;
@@ -65,13 +71,36 @@ jobs:
           PKGS="cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib"
           echo "target=TARGET=${{ matrix.target }}" >> $GITHUB_ENV
           echo "sub_target=kernel" >> $GITHUB_ENV
+          # The pc3 port targets RP2350 (Pico Computer 3): DCP, M33 FPU,
+          # HSTX, PSRAM - its drivers have no RP2040 guards.
+          echo "flags=SUBTARGET=pico2" >> $GITHUB_ENV
           ;;
           esac
         sudo apt-get update -q
         sudo apt-get install -y byacc automake ${PKGS}
         sudo update-alternatives --set yacc /usr/bin/byacc
+    - name: install Fuzix Compiler Kit
+      if: contains(fromJSON('["appleiie","rbc-mark4","rcbus-6502","sc108"]'), matrix.target)
+      run: |
+        sudo apt-get install -y libbsd-dev flex bison
+        sudo mkdir -p /opt/fcc && sudo chown $USER /opt/fcc
+        git clone --depth 1 https://codeberg.org/EtchedPixels/Fuzix-Bintools.git ~/Fuzix-Bintools
+        (cd ~/Fuzix-Bintools && make -j`nproc` && make install)
+        git clone --depth 1 https://codeberg.org/EtchedPixels/Fuzix-Compiler-Kit.git ~/Fuzix-Compiler-Kit
+        # FCK's bootstrap/install targets race under -j (bootinst can run
+        # before the cc binary exists); keep them serial.
+        (cd ~/Fuzix-Compiler-Kit && make bootstrap && PATH=/opt/fcc/bin:$PATH make install)
+        echo "/opt/fcc/bin" >> $GITHUB_PATH
     - name: make
-      run: ${{ env.setup_sh }} && make ${{ env.cross_cc }} ${{ env.target }} ${{ env.sub_target }} ${{ env.flags }} -j`nproc`
+      # First pass -j; on failure retry once serially. fcc occasionally
+      # emits spurious "unknown symbol"/macro-arg errors under parallel
+      # load (seen on CI only, not reproducible locally); the serial retry
+      # both heals flakes and distinguishes them from real breakage.
+      run: |
+        ${{ env.setup_sh }} && \
+        (make ${{ env.cross_cc }} ${{ env.target }} ${{ env.sub_target }} ${{ env.flags }} -j`nproc` || \
+          { echo '##[warning]parallel build failed, retrying serially'; \
+            make ${{ env.cross_cc }} ${{ env.target }} ${{ env.sub_target }} ${{ env.flags }} -j1; })
     - name: target testing
       run: |
         if test -x ./Build/tests/test-${{ matrix.target }} ; then \

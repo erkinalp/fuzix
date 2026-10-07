@@ -18,9 +18,9 @@ extern uint16_t swab(uint16_t);
                          (((x) & 0xFF0000) >> 8) | (((x >> 24) & 0xFF)))
 
 /* 8070 doesn't benefit from making a few key variables in
-   non-reentrant functions static - FIXME, evaluate this carefully esp
-   wrt zero page  */
+   non-reentrant functions static */
 #define staticfast	auto
+
 
 /* User's structure for times() system call */
 typedef unsigned long clock_t;

@@ -19,6 +19,18 @@ static uint32_t mtotal;
 
 #undef DEBUG_MEMORY
 
+#ifdef DEBUG_MEMORY
+static void _sc(uint_fast8_t c) { while (!(in(0xC3) & 4)); out(0xC1, c); }
+static void _sh(uint32_t v) {
+	const char *h = "0123456789ABCDEF";
+	int i; for (i = 28; i >= 0; i -= 4) _sc(h[(v >> i) & 0xF]);
+}
+static void _ss(const char *s) { while (*s) _sc(*s++); }
+#define DBG(x) x
+#else
+#define DBG(x)
+#endif
+
 struct block
 {
 	struct block *next;
@@ -48,9 +60,7 @@ void kmemaddblk(void *base, size_t size)
 	b->next = n;
 	n->next = NULL;
 	n->length = size;
-#if defined(DEBUG_MEMORY)
-	kprintf("mem: add %p+%p\n", n, n->length);
-#endif
+	DBG(_ss("A "); _sh((uint32_t)n); _sc('+'); _sh(n->length); _sc('\n'));
 	mfree += size;
 	mtotal += size;
 }
@@ -89,16 +99,12 @@ static void split_block(struct block *b, size_t size)
 	if (newsize > sizeof(struct block) * 4)
 	{
 		struct block *n = (struct block *)((uint8_t *)b + size);
-#if defined(DEBUG_MEMORY)
-		kprintf("mem: split %p+%p -> ", b, b->length);
-#endif
 		n->next = b->next;
 		b->next = n;
 		b->length = size;
 		n->length = newsize;
-#if defined(DEBUG_MEMORY)
-		kprintf("%p+%p and %p+%p\n", b, b->length, n, n->length);
-#endif
+		DBG(_ss("S "); _sh((uint32_t)b); _sc('+'); _sh(b->length);
+		    _sc(' '); _sh((uint32_t)n); _sc('+'); _sh(n->length); _sc('\n'));
 	}
 
 	b->length |= 0x80000000;
@@ -118,10 +124,47 @@ void *kmalloc(size_t size, uint8_t owner)
 		return NULL;
 
 	split_block(b, size);
-#if defined(DEBUG_MEMORY)
-	kprintf("mem: alloc %p+%p\n", b, b->length);
-	kprintf("malloc allocates %p\n", b + 1);
-#endif
+	DBG(_ss("a "); _sh((uint32_t)b); _sc('+'); _sh(b->length); _sc('\n'));
+	mfree -= b->length;
+	return b + 1;
+}
+
+/*
+ * Find the largest unused block containing at least length bytes.
+ */
+static struct block *find_largest(size_t length)
+{
+	struct block *largest = NULL;
+	struct block *b = &start;
+
+	while (b)
+	{
+		if (UNUSED(b)
+			&& (b->length >= length)
+			&& (largest == NULL || b->length > largest->length))
+		{
+			largest = b;
+		}
+		b = b->next;
+	}
+	return largest;
+}
+
+/*
+ * Allocate from the largest free block.
+ */
+void *kmalloc_largest(size_t size, uint8_t owner)
+{
+	struct block *b;
+
+	used(owner);
+	size = (size_t)ALIGNUP(size) + sizeof(struct block);
+	b = find_largest(size);
+	if (!b)
+		return NULL;
+
+	split_block(b, size);
+	DBG(_ss("L "); _sh((uint32_t)b); _sc('+'); _sh(b->length); _sc('\n'));
 	mfree -= b->length;
 	return b + 1;
 }
@@ -142,16 +185,9 @@ static void merge_all_blocks(void)
 			&& (((uint8_t*)b + b->length) == (uint8_t*)n))
 		{
 			/* Two mergeable blocks are adjacent. */
-#if defined(DEBUG_MEMORY)
-			kprintf("mem: merge %p+%p and %p+%p -> ",
-				b, b->length, n, n->length);
-#endif
 			b->next = n->next;
 			b->length += n->length;
-#if defined(DEBUG_MEMORY)
-			kprintf("%p+%p\n", b, b->length);
-			kprintf("next now %p\n", b->next);
-#endif
+			DBG(_ss("M "); _sh((uint32_t)b); _sc('+'); _sh(b->length); _sc('\n'));
 		}
 		else
 		{
@@ -172,13 +208,12 @@ void kfree(void *p)
 
 	if (p == NULL)
 		return;
-#if defined(DEBUG_MEMORY)
-	kprintf("mem: free %p+%p\n", b, b->length);
-	kprintf("malloc frees %p\n", p);
-#endif
+	DBG(_ss("F "); _sh((uint32_t)b); _sc('+'); _sh(b->length); _sc('\n'));
 
-	if (UNUSED(b))
+	if (UNUSED(b)) {
+		kprintf("kfree: p=%p b=%p len=%x\n", p, b, (unsigned)b->length);
 		panic(PANIC_BADFREE);
+	}
 	
 	b->length &= 0x7fffffff;
 	mfree += b->length;

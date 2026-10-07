@@ -1,25 +1,25 @@
+# 1 "floppy.S"
 ;
 ;	Core floppy routines for the TRS80 1791 FDC
 ;	Based on the 6809 code
 ;
 ;	FIXME: better drive spin up wait
-;	FIXME: tandy doubler
+;	FIXME: doublers
 ;	FIXME: correct step rates (per drive ?)
 ;	FIXME: precompensation ??
 ;	FIXME: 512 byte sector support
+;	FIXME: sector size setting
+;	FIXME: improve SD/DD handling
 ;
-	.globl _fd_reset
-	.globl _fd_operation
-	.globl _fd_motor_on
-	.globl _fd_motor_off
-	.globl _fd_map
-	.globl _fd_selected
-	.globl _fd_tab
-	.globl _fd_cmd
-	.globl map_kernel_restore, map_proc_always
-	.globl go_fast, go_slow
+	.export _fd_restore
+	.export _fd_operation
+	.export _fd_motor_on
+	.export _fd_motor_off
+	.export _fd_map
+	.export _fd_selected
+	.export _fd_tab
+	.export _fd_cmd
 
-	.module floppy
 ;
 ;	The 1791 is memory mapped
 ;
@@ -81,8 +81,11 @@ TRACK	.equ	1
 SECTOR	.equ	2
 DIRECT	.equ	3		; 0 = read 2 = write 1 = status
 DATA	.equ	4
+SIZE	.equ	6		; For now 1 = 256 2 = 512
+STEP	.equ	7		; Step rate
+COMP	.equ	8		; Write compensation
 
-	.area	_COMMONMEM
+	.common
 ;
 ;	Set up and perform a disk operation
 ;
@@ -93,43 +96,44 @@ DATA	.equ	4
 ;	Drive must already be selected and density set up
 ;
 fdsetup:
-	ld	hl,#FDCTRK
+	ld	hl,FDCTRK
 	ld	a, (de)
 	ld	(hl), a			; Load track register
-	cp	TRACK(ix)
+	cp	(ix + TRACK)
 	jr	z, fdiosetup		; Is it the one we wanted
 	;
 	;	So we can verify
 	;
 	inc	hl			; now FDCTRK
-	ld	a, TRACK(ix)
+	ld	a, (ix + TRACK)
 	ld	(hl), a
 	inc	hl			; now FDCSEC
-	ld	a, SECTOR(ix)
+	ld	a, (ix + SECTOR)
 	ld	(hl), a
 	;
 	;	Need to seek the disk
 	;
 	ld	hl,#FDCREG
-	ld	a, #0x18	; seek	FIXME: need to set step rate
+	ld	a, 0x18
+	or	(ix + STEP)
 	ld	(hl), a
 	call	waitcmd
-	and	#0x18		; error bits
+	and	0x18		; error bits
 	jr	z, fdiosetup
 	; seek failed, not good
 setuptimeout:			; NE = bad
-	ld	a, #0xff	; we have no idea where we are, force a seek
+	ld	a, 0xff		; we have no idea where we are, force a seek
 	ld	(de), a		; zap track info
-	ld	l,#0xFF		; report failure
+	ld	l,0xFF		; report failure
 	ret
 ;
 ;	Try and kick the controller back into sanity
 ;
 bad_cmd:
 	ld	a,(hl)		; clear status
-	ld	(hl),#0xD0	; force interrupt
+	ld	(hl),0xD0	; force interrupt
 	pop	af
-	ld	l,#255
+	ld	l,255
 	ret
 	
 waitcmd:
@@ -147,19 +151,19 @@ waitcmdl:
 	ld	a,(hl)		; Status
 	ret
 waitfail:
-	ld	a,#255
+	ld	a,255
 	ret
 ;
 ;	Head in the right place
 ;
 fdiosetup:
-	ld	a, TRACK(ix)
+	ld	a, (ix + TRACK)
 	ld	(de), a		; save track
 
 	; FIXME: select which controller first etc
 
-	ld	de, #FDCSEC	; sector register
-	ld	a, SECTOR(ix)
+	ld	de, FDCSEC	; sector register
+	ld	a, (ix + SECTOR)
 	ld	(FDCSEC), a
 
 	inc	de		; now points at FDCDATA
@@ -167,16 +171,16 @@ fdiosetup:
 	ld	hl, #FDCREG	; status/cmd
 	ld	a,(hl)		; clear status
 	
-	ld	a, DIRECT(ix)
+	ld	a, (ix + DIRECT)
 	dec	a
-	ld	a, CMD(ix)	; 0 - none, 1 - in, 2 = out
+	ld	a, (ix + CMD)	; 0 - none, 1 - in, 2 = out
 	ld	(hl),a
 	push	af		; 11
 	ex	(sp),hl		; 30		Delay 55us (98 clocks)
 	ex	(sp),hl		; 49
 	ex	(sp),hl		; 68
 	ex	(sp),hl		; 87
-	add	a,#0		; 94
+	add	a,0		; 94
 	di			; 98
 	bit 	0,(hl)		; controller busy ?
 	jr	z, bad_cmd
@@ -193,7 +197,7 @@ fdiosetup:
 ;
 fdio_in:
 fdio_do_in:
-	ld	a,#0x83			; Wait for the controller to go
+	ld	a,0x83			; Wait for the controller to go
 	and	(hl)			; ready
 	jp	po, fdio_do_in
 fdio_xfer_in:
@@ -229,7 +233,7 @@ fdio_xfer_in:
 	;
 fd_xferdone:
 	ld	l,(hl)			; read the status
-	ld	(hl),#0xD0		; force interrupt
+	ld	(hl),0xD0		; force interrupt
 	ei
 	ret				; pass C code the status byte
 
@@ -239,7 +243,7 @@ fd_xferdone:
 fdio_out:
 	ld	(hl),a			; issue command
 fdio_do_out:
-	ld	a,#0x83			; Wait for the controller to go
+	ld	a,0x83			; Wait for the controller to go
 	and	(hl)			; ready
 	jp	po, fdio_out
 fdio_xfer_out:
@@ -274,47 +278,58 @@ fdio_xfer_out:
 	jr	fd_xferdone
 
 
+	.code
 ;
 ;	C glue interface.
 ;
 ;
 ;	Reset to track 0, wait for the command then idle
 ;
-;	fd_reset(uint8_t *drvptr)
+;	fd_restore(uint8_t *drvptr)
 ;
-_fd_reset:
-	pop	de
-	pop	hl
-	push	hl
-	push	de
+_fd_restore:
+	push	bc
+	ld	hl,6
+	add	hl,sp
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)
+	ex	de,hl
 	call	go_slow
 	ld	a, #1
 	ld	(FDCSEC), a
 	xor	a
 	ld	(FDCTRK), a
-	ld	a, #0x0C
+	ld	a, #0x0C	; FIXME: seek rate ??
 	ld	(FDCREG), a	; restore
 	ld	a, #0xFF
 	ld	(hl), a		; Zap track pointer
 	call	waitcmd
+	ld	l,a
 	call	go_fast
+	pop	bc
+	ld	a,l
 	cp	#0xff
 	ret	z
 	and	#0x99		; Error bit from the reset
 	ret	nz
 	ld	(hl), a		; Track 0 correctly hit (so 0)
 	ret
+
+	.common
 ;
-;	fd_operation(uint16_t *cmd, uint16_t *drive)
+;	fd_operation(uint8_t *cmd)
 ;
 ;	The caller must ensure the drive has been selected and the motor is
 ;	running.
 ;
 _fd_operation:
-	pop	bc		; return address
-	pop	de		; drive track ptr
-	push	de
 	push	bc
+	ld	hl,6
+	add	hl,sp
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)
 	push	ix
 	ld	a, (_fd_map)
 	or	a
@@ -322,13 +337,14 @@ _fd_operation:
 	call	nz, map_proc_always
 	call	go_slow
 	ld	ix, #_fd_cmd
-	ld	c, DATA(ix)
-	ld	b, DATA+1(ix)
+	ld	c, (ix+DATA)
+	ld	b, (ix+DATA+1)
 	call	fdsetup		; Set up for a command
 	ld	h, #0
 	call	go_fast
 	pop	af
 	pop	ix
+	pop	bc
 	ret	z
 	jp	map_kernel_restore
 ;
@@ -367,12 +383,13 @@ waitdiskl:
 ;	bit 7:		set for double density (MFM)
 ;
 ;
-_fd_motor_on:
-	pop	de
-	pop	bc
-	push	bc
-	push	de
+	.code
 
+_fd_motor_on:
+	push	bc
+	ld	hl,6
+	add	hl,sp
+	ld	c,(hl)
 	;
 	;	Is the motor running ?
 	;
@@ -391,6 +408,7 @@ _fd_motor_on:
 	;	so the motor stays running.
 	;
 	ld	(LATCHD0),a
+	pop	bc
 	ret
 
 must_config:
@@ -404,6 +422,7 @@ must_config:
 	ld	(LATCHD0), a	; Selects the actual disk we want
 	ld	d,a		; Save latch value
 	rl	c		; Bit 7 into C
+	; FIXME: Tandy DD support
 	ld	a,#0xFE		; Figure out the density
 	adc	a,#0		; FE or FF according to density
 	di
@@ -439,13 +458,15 @@ _fd_motor_off:
 	ld	(LATCHD0),a
 	ret
 
+	.commondata
+
 last_drive:
-	.db	0xff
+	.byte	0xff
 _fd_map:
-	.db	0
+	.byte	0
 _fd_selected:
-	.db	0xFF
+	.byte	0xFF
 _fd_tab:
-	.db	0xFF, 0xFF, 0xFF, 0xFF
+	.byte	0xFF, 0xFF, 0xFF, 0xFF
 _fd_cmd:
-	.ds	7
+	.ds	9

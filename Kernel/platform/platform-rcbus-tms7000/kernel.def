@@ -1,0 +1,13 @@
+; UZI mnemonics for memory addresses etc
+
+U_DATA__TOTALSIZE           .equ 0x200		; 256+256 bytes @E000
+
+U_DATA_STASH		    .equ 0xDE00		; DE00-DFFF
+
+PROGBASE		    .equ 0x0000
+PROGLOAD		    .equ 0x0200
+
+CONFIG_SWAP		    .equ 0
+
+CPUSTK			    .equ 0x40		; Allow 64 bytes for now
+

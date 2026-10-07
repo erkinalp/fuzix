@@ -8,15 +8,17 @@
 #include <input.h>
 #include <devinput.h>
 
-__sfr __at 0x1F	kempston_1;
+#define KEMPSTON_1	0x1F
+
 static uint8_t oldkemp;
 
-__sfr __banked __at 0xFBDF mctx;
-__sfr __banked __at 0xFFDF mcty;
-__sfr __banked __at 0xFADF mbuttons;
-__sfr __banked __at 0xFEDF turbodet;
+#define MCTX		0xFBDF
+#define MCTY		0xFFDF
+#define MBUTTONS	0xFADF
+#define TURBODET	0xFEDF
 
-__sfr __at 0x7F fuller_1;
+#define FULLER_1	0x7F
+
 static uint8_t oldfuller;
 
 static uint8_t mousey, mousex, mouseb;
@@ -43,7 +45,7 @@ void queue_input(uint8_t c)
 static uint8_t kempston_js(uint8_t *slot)
 {
     uint8_t k = 0;
-    uint8_t r = kempston_1;
+    uint8_t r = in(KEMPSTON_1);
     if (r == oldkemp)
         return 0;
     oldkemp = r;
@@ -59,7 +61,7 @@ static uint8_t kempston_js(uint8_t *slot)
     if (r & 16)
         k |= BUTTON(0);
     /* K Mouse turbo has four way fire support */
-    if (turbodet == 128) {
+    if (in(TURBODET) == 128) {
         if (r & 32)
             k |= BUTTON(1);
         if (r & 64)
@@ -75,7 +77,7 @@ static uint8_t kempston_js(uint8_t *slot)
 static uint8_t fuller_js(uint8_t *slot)
 {
     uint8_t k = 0;
-    uint8_t r = fuller_1;
+    uint8_t r = in(FULLER_1);
     if (r == oldfuller)
         return 0;
     oldfuller = r;
@@ -109,17 +111,17 @@ static uint8_t flipbits(uint8_t m)
             r = BUTTON(1);
     if (!(m & 2))
         r |= BUTTON(0);
-    if (turbodet == 128) {
+    if (in(TURBODET) == 128) {
         if (!(m & 4))
             r |= BUTTON(2);	/* Has a middle button */
     }
-    
+
     return r;
 }
 
 int plt_input_read(uint8_t *slot)
 {
-    uint8_t r, k;
+    uint_fast8_t r, k;
     uint8_t x, y, m;
     if (remq(&kqueue, &r)) {
         remq(&kqueue, &k);
@@ -138,9 +140,9 @@ int plt_input_read(uint8_t *slot)
         return 0;
 
     /* Mouse check */
-    x = mctx;
-    y = mcty;
-    m = mbuttons & kempston_mbmask;
+    x = in(MCTX);
+    y = in(MCTY);
+    m = in(MBUTTONS) & kempston_mbmask;
     if (x == mousex && y == mousey && m == mouseb)
         return 0;
     /* Calculate delta relative to counters - they are not zeroed on read
@@ -149,7 +151,7 @@ int plt_input_read(uint8_t *slot)
     *slot++ = x - mousex;
     *slot++ = y - mousey;
     /* K Mouse Turbo */
-    if (turbodet == 128)
+    if (in(TURBODET) == 128)
         *slot++ = (m & 0xF0) - (mouseb & 0xF0);
     else
         *slot = 0;
@@ -164,21 +166,19 @@ void plt_input_wait(void)
     psleep(&kqueue);	/* We wake this on timers so it works for sticks */
 }
 
-int plt_input_write(uint8_t flag)
+int plt_input_write(uint_fast8_t flag)
 {
-    flag;
     udata.u_error = EINVAL;
     return -1;
 }
 
 void poll_input(void)
 {
-    if (kempston && kempston_1 != oldkemp)
+    if (kempston && in(KEMPSTON_1) != oldkemp)
 	    wakeup(&kqueue);
-    else if (fuller && fuller_1 != oldfuller)
+    else if (fuller && in(FULLER_1) != oldfuller)
 	    wakeup(&kqueue);
     /* Mouse check */
-    else if (kmouse && (mctx != mousex || mcty != mousey || (mouseb != mbuttons & kempston_mbmask)))
+    else if (kmouse && (in(MCTX) != mousex || in(MCTY) != mousey || (mouseb != in(MBUTTONS) & kempston_mbmask)))
 	    wakeup(&kqueue);
 }
-        

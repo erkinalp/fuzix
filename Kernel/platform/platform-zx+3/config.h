@@ -79,16 +79,15 @@
 #define CONFIG_TD_NUM	2
 /* IDE/CF support */
 #define CONFIG_TD_IDE
-#define CONFIG_TINYIDE_SDCCPIO
 #define CONFIG_TINYIDE_8BIT
+#define CONFIG_TINYIDE_INDIRECT
 #define IDE_IS_8BIT(x)		1
 /* SD support */
 #define TD_SD_NUM 2
 #define CONFIG_TD_SD
 /* Emulator for this platform needs bug workarounds */
 #define CONFIG_TD_SD_EMUBUG
-#define SD_SPI_CALLTYPE	__z88dk_fastcall
+#define SD_SPI_CALLTYPE
 
 #define BOOTDEVICENAMES "hd#,fd#"
-
 #define CONFIG_SMALL

@@ -1,4 +1,4 @@
-/* 
+/*
  * CP/M 2 FD/HD driver
  *
  * We map the Fuzix I/O onto CP/M volumes. It's really up to the BIOS how it
@@ -24,7 +24,7 @@ static uint8_t fd_map[16], hd_map[16];
 static uint8_t num_hd, num_fd;
 static uint32_t secsize[16];
 
-int fd_read(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int fd_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     flag;
     cpm_sys = minor & 0x10;
@@ -32,7 +32,7 @@ int fd_read(uint8_t minor, uint8_t rawflag, uint8_t flag)
     return fd_transfer(true, 'f', rawflag);
 }
 
-int fd_write(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int fd_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     flag;
     cpm_sys = minor & 0x10;
@@ -40,7 +40,7 @@ int fd_write(uint8_t minor, uint8_t rawflag, uint8_t flag)
     return fd_transfer(false, 'f', rawflag);
 }
 
-int hd_read(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int hd_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     flag;
     cpm_sys = minor & 0x10;
@@ -48,7 +48,7 @@ int hd_read(uint8_t minor, uint8_t rawflag, uint8_t flag)
     return fd_transfer(true, 'h', rawflag);
 }
 
-int hd_write(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int hd_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     flag;
     cpm_sys = minor & 0x10;
@@ -169,7 +169,7 @@ static int fd_transfer(bool is_read, uint8_t type, uint8_t rawflag)
             if ((udata.u_block & 3) == 0)
                 hint = 2;
             else if ((udata.u_block & 3) != 3)
-                hint = 0;	
+                hint = 0;
             else
                 hint = 1;
             if (bounce == 1)
@@ -192,7 +192,7 @@ static int fd_transfer(bool is_read, uint8_t type, uint8_t rawflag)
     return ct << 7;
 }
 
-int fd_open(uint8_t minor, uint16_t flag)
+int fd_open(uint_fast8_t minor, uint16_t flag)
 {
     flag;
     if((minor & 0x0F) >= num_fd) {
@@ -203,7 +203,7 @@ int fd_open(uint8_t minor, uint16_t flag)
     return cpm_setup_drive();
 }
 
-int hd_open(uint8_t minor, uint16_t flag)
+int hd_open(uint_fast8_t minor, uint16_t flag)
 {
     flag;
     if ((minor & 0x0F) >= num_hd ) {
@@ -214,12 +214,12 @@ int hd_open(uint8_t minor, uint16_t flag)
     return cpm_setup_drive();
 }
 
-int fd_close(uint8_t minor)
+int fd_close(uint_fast8_t minor)
 {
     return 0;
 }
 
-int hd_close(uint8_t minor)
+int hd_close(uint_fast8_t minor)
 {
     return 0;
 }
@@ -255,5 +255,5 @@ void fdhd_init(void)
             }
         }
     }
-    cpm_busy--;    
+    cpm_busy--;
 }

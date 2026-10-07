@@ -83,7 +83,7 @@ int strcmp(const char *d, const char *s)
 	return c1 - c2;
 }
 
-uint8_t plt_param(char *p)
+uint_fast8_t plt_param(char *p)
 {
     if (strcmp(p, "pcg80") == 0) {
      trs80_udg = UDG_PCG80;

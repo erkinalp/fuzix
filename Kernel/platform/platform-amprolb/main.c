@@ -22,22 +22,14 @@ void plt_discard(void)
 	}
 }
 
-void plt_idle(void)
-{
-	__asm halt __endasm;
-}
-
-uint8_t plt_param(unsigned char *p)
+uint_fast8_t plt_param(unsigned char *p)
 {
 	used(p);
 	return 0;
 }
 
-__sfr __at 0x70 ctc3;
-
 void plt_interrupt(void)
 {
-//	volatile uint8_t dummy = ctc3;	/* Clear interrupt */
 	tty_pollirq();
 	timer_interrupt();
 }

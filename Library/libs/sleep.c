@@ -10,7 +10,7 @@
    FIXME: probably worth having a Z80 asm version of this */
 static unsigned int div10quicki(unsigned int i)
 {
-	unsigned int q, r;
+	register unsigned int q, r;
 	q = (i >> 1) + (i >> 2);
 	q = q + (q >> 4);
 	q = q + (q >> 8);

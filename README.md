@@ -1,9 +1,19 @@
 ** ENGINEERING WORK IN PROGRESS **
 
-The Z80 side of the tree is currently moving to the new compiler including
-work on the compiler, linker and kernel. Thus some bits of it require you
-have absolutely bleeding edge pieces all around. I would suggest avoiding
-working on this tree for Z80 stuff right now. Non Z80 should be just fine.
+Z80 is now mostly migrated to new compiler (all user space most kernels), 
+6303, 6502, 6800, 8070, 8080, 8085, are migrated and should be reasonably
+stable again.
+
+Starting 6809 migration - so 6809 is all currently broken.
+
+To follow: migrating 68HC11.
+
+68000, NS32K, ESP8266, ARM use gcc and will continue to do so at least for
+the near term. NS32K we may be forced to change compiler eventually.
+
+TMS7000 and Z8 experiments will use the new compiler from the start if they
+prove viable at all. TMS9995 is still to be decided between re-targetting
+fcc or finishing the ANSI PCC work.
 
 **FuzixOS**: Because Small Is Beautiful
 
@@ -37,16 +47,11 @@ https://share.octopus.energy/amber-calf-514
 
 ## Tools
 
-For the 6800, 8080, 8085, Z80 and Z180 the code is now built with the Fuzix C
-Compiler and Bintools which are also in github. See instructions for
-building them. Some kernels still need the customised SDCC 3.8 from from
-this github. 65C816 and Z8 are a work in progress moving to this compiler.
-
-6502 is currently built with cc65 and a distribution version should work.
-
-6303/6803 are built with CC6303 (again in this github)
-
-6809 is built with lwtools and the including gcc fork.
+For the 6303, 6502, 6800, 8070, 8080, 8085, Z80 and Z180 the code is now built
+with the Fuzix C Compiler and Bintools which are also at codeberg. See
+instructions for building them. Some kernels still need the customised
+SDCC 3.8 from from this codeberg. 65C816 and Z8 are a work in progress moving
+to this compiler.
 
 Other targets use gcc variants. See the target specific information.
 
@@ -113,10 +118,5 @@ friends, while UMZIX has a neat unified "make anything" function.
 
 ## Tool Issues
 
-* 6809 gcc and cc65 don't have long long 64bit (for sane time_t)
-* None of the above have an O88 style common sequence compressor
-* CC65 can't handle larger objects on stack, and lacks float support
 * We need a 'proper' 65C816 C compiler
 
-[travis-image]: https://travis-ci.org/EtchedPixels/FUZIX.png?branch=master
-[travis-url]: https://travis-ci.org/EtchedPixels/FUZIX

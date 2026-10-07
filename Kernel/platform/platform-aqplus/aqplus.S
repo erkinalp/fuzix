@@ -225,12 +225,14 @@ _copy_common:
 	pop de
 	push de
 	push hl
+	push bc
 	ld a,e
 	call map_for_swap
 	ld hl,0xEA00
 	ld de,0x2A00
 	ld bc,0x1600
 	ldir
+	pop bc
 	jr map_kernel
 
 

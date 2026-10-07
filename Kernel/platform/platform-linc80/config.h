@@ -63,7 +63,7 @@ extern uint16_t swap_dev;
 /* And SD */
 #define CONFIG_TD_SD
 #define TD_SD_NUM	2
-#define SD_SPI_CALLTYPE	__z88dk_fastcall
+#define SD_SPI_CALLTYPE
 
 /* Device parameters */
 #define NUM_DEV_TTY 2
@@ -75,5 +75,3 @@ extern uint16_t swap_dev;
 #define TTYDEV   BOOT_TTY /* Device used by kernel for messages, panics */
 
 #define plt_copyright()
-
-#define SD_SPI_CALLTYPE __z88dk_fastcall

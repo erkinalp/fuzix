@@ -31,8 +31,7 @@ void map_init(void)
     /* kernel bank udata (0x300 bytes) is never used again -- could be reused? */
 }
 
-uint8_t plt_param(char *p)
+uint_fast8_t plt_param(char *p)
 {
-    used(p);
     return 0;
 }

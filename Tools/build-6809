@@ -1,12 +1,7 @@
 #!/bin/sh
 
-X=`which m6809-unknown-gcc`
+X=`which fcc`
 if [ "$X" = "" ]; then
-	echo "GCC is required: see http://www.lwtools.ca/"
-	exit 1
-fi
-X=`which lwasm`
-if [ "$X" = "" ]; then
-	echo "LWTools is required: http://www.lwtools.ca/"
+	echo "fcc is required: see https://codeberg.org/EtchedPixels/FuzixCompilerKit/"
 	exit 1
 fi

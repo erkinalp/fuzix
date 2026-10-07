@@ -1,0 +1,5 @@
+package platform-agon
+
+disable-pkg platform-agon
+
+f 0644 /root/.profile userspace/profile-root

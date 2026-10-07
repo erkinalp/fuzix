@@ -27,3 +27,11 @@
 ;	The number of disk buffers. Must match config.h
 ;
 #define NBUFS	5
+
+;
+;	SPI macros - SPI uses bottom bit for MISO
+;
+
+#define ROTATE		rla
+#define LOADFIRST	in d,(c)
+#define LOADFIRST2	rlc d

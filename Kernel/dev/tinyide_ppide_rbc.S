@@ -22,7 +22,7 @@ _ide_read:
 	push	de
 	ld	a,l
 	out	(ppi_port_c),a
-	or	#PPIDE_RD_LINE
+	or	PPIDE_RD_LINE
 	out	(ppi_port_c),a
 	in	a,(ppi_port_a)
 	ld 	e,a
@@ -47,14 +47,15 @@ _ide_write:
 	xor	a
 	out	(ppi_port_b),a
 	ld	a,d
-	or	#PPIDE_WR_LINE
+	or	PPIDE_WR_LINE
 	out	(ppi_port_c),a
 	ld	a,d
 	out	(ppi_port_c),a
 	ld	a,PPIDE_PPI_BUS_READ
 	out	(ppi_control),a
 	ret
-	
+
+	.common	
 
 devide_map:
 	ld	a, (_td_raw)
@@ -79,7 +80,7 @@ _devide_read_data:
 	ld	c,ppi_port_c		; select control lines
 	out	(c), a			; select IDE data register
 	ld	d, ppide_data		; register address
-	ld	e, ppide_data + PPIDE_RD_LINE	; register address with /RD asserted
+	ld	e, ppide_data+PPIDE_RD_LINE	; register address with /RD asserted
 	ld	b, 0			; setup count
 	call	devide_map
 	ld	a, ppi_port_a		; I will be needing this later
@@ -115,7 +116,7 @@ _devide_write_data:
 	out	(c), a			; 8255A ports A, B to output mode
 	dec	c			; back down to the control lines
 	ld	d, ppide_data		; register address
-	ld	e, ppide_data + PPIDE_WR_LINE	; register address with /WR asserted
+	ld	e, ppide_data+PPIDE_WR_LINE	; register address with /WR asserted
 	ld	b, 0			; setup count
 	call	devide_map
 	ld	a, ppi_port_a		; I will be needing this later

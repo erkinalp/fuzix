@@ -13,10 +13,10 @@
 
 #include <kernel.h>
 
-__sfr __at 0x90 gdc_p;
-__sfr __at 0x90	gdc_s;
-__sfr __at 0x91 gdc_c;
-__sfr __at 0x91 gdc_r;
+#define GDC_P	0x90
+#define GDC_S	0x90
+#define GDC_C	0x91
+#define GDC_R	0x91
 
 static uint16_t ybuf;
 
@@ -34,7 +34,7 @@ static uint8_t sync640_op[] = {
     0xE0,	/* low bits of 480 */
     0x85	/* high bits of 480 + VBP of 33 */
 };
- 
+
 static uint8_t no_chr_op[] = {
     0x4B,
     3,
@@ -69,7 +69,7 @@ static uint8_t cursor_op[] = {
 static void n7220_waitfifo(void)
 {
     /* Needs a timeout ? */
-    while(gdc_s & 0x02);
+    while(in(GDC_S) & 0x02);
 }
 
 /*
@@ -79,11 +79,11 @@ static void n7220_op(uint8_t *op)
 {
     uint_fast8_t n;
     n7220_waitfifo();
-    gdc_c = *op++;
+    out(GDC_C, *op++);
     n = *op++;
     while(n--) {
         n7220_waitfifo();
-        gdc_p = *op++;
+        out(GDC_P, *op++);
     }
 }
 
@@ -91,7 +91,7 @@ static void n7220_op(uint8_t *op)
 static void n7220_cmd(uint8_t cmd)
 {
     n7220_waitfifo();
-    gdc_c = cmd;
+    out(GDC_C, cmd);
 }
 
 static uint8_t abuf[] = {

@@ -1,0 +1,17 @@
+; UZI mnemonics for memory addresses etc
+
+; We stick it straight after the tag
+U_DATA__TOTALSIZE           .equ 0x200        ; 256+256 @ FE00
+
+U_DATA_STASH		    .equ 0xFE00	      ; FE00-FFFF
+
+PROGBASE		    .equ 0x4000
+PROGLOAD		    .equ 0x4000
+
+NBUFS			    .equ 5
+
+BANK_BITS		    .equ 0x18		; Spectrum ROM select
+						; Video high
+
+#define CONFIG_SWAP
+#undef Z80_MMU_HOOKS

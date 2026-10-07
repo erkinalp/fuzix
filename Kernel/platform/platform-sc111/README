@@ -46,3 +46,6 @@ prompt:
     A> FUZIX hdb1
 or  A> FUZIX 17
 
+For a more complete but ROMWBW dependent build see the rcbus-z180 platform. This
+target however serves both as an image bootable under SCM and also a good
+reference to a minimal Z180 configuration

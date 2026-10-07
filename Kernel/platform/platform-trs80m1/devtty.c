@@ -35,14 +35,14 @@ static uint8_t ports = 7;
    Or at least it probably does. In theory you can use an adapter
    cable and Tandy bits so we treat them as two ports */
 
-__sfr __at 0xE8 tr1865_ctrl;
+#define TR1865_CTRL	0xE8
 static uint8_t tr1865_ctrl_save;
-__sfr __at 0xE9 tr1865_baud;
-__sfr __at 0xEA tr1865_status;
-__sfr __at 0xEB tr1865_rxtx;
+#define TR1865_BAUD	0xE9
+#define TR1865_STATUS	0xEA
+#define TR1865_RXTX	0xEB
 
-__sfr __at 0xF8 vg_tr1865_wrst;
-__sfr __at 0xF9 vg_tr1865_ctrd;
+#define VG_TR1865_WRST	0xF8
+#define VG_TR1865_CTRD	0xF9
 static uint8_t vg_tr1865_ctrd_save;
 
 struct s_queue ttyinq[NUM_DEV_TTY + 1] = {	/* ttyinq[0] is never used */
@@ -61,18 +61,18 @@ tcflag_t termios_mask[NUM_DEV_TTY + 1] = {
 	_CSYS,
 	_CSYS|CBAUD|CSIZE|CRTSCTS|CSTOPB,
 	_CSYS|CSIZE|CRTSCTS|CSTOPB,
-	_CSYS|CSIZE|CRTSCTS|CSTOPB
 };
 
 /* Write to system console */
-void kputchar(char c)
+void kputchar(uint_fast8_t c)
 {
 	if (c == '\n')
 		tty_putc(1, '\r');
 	tty_putc(1, c);
+	*((volatile uint8_t *)0x37E8) = c;
 }
 
-ttyready_t tty_writeready(uint8_t minor)
+ttyready_t tty_writeready(uint_fast8_t minor)
 {
 	uint8_t reg;
 	if (minor < 3)
@@ -82,15 +82,15 @@ ttyready_t tty_writeready(uint8_t minor)
 	   something else each flow control it will get horribly slow */
 	if (minor == 3) {
 		if (ttydata[3].termios.c_cflag & CRTSCTS) {
-			reg = tr1865_ctrl;
+			reg = in(TR1865_CTRL);
 			if (!(reg & 0x80))
 				return TTY_READY_SOON;
 		}
-		reg = tr1865_status;
+		reg = in(TR1865_STATUS);
 		return (reg & 0x40) ? TTY_READY_NOW : TTY_READY_SOON;
 	}
 	/* minor == 4 */
-	reg = vg_tr1865_wrst;
+	reg = in(VG_TR1865_WRST);
 	if (ttydata[4].termios.c_cflag & CRTSCTS) {
 		/* CTS ? */
 		if (!(reg & 0x40))
@@ -129,14 +129,14 @@ static void vtexchange(void)
 		cursor_on(ttysave[inputtty].cursory, ttysave[inputtty].cursorx);
 }
 
-void tty_putc(uint8_t minor, unsigned char c)
+void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 {
 	irqflags_t irq;
 
 	if (minor == 3)
-		tr1865_rxtx = c;
+		out(TR1865_RXTX, c);
 	else if (minor == 4)
-		vg_tr1865_wrst = c;
+		out(VG_TR1865_WRST, c);
 	else {
 		if (video_mode == 2)	/* Micrografyx */
 			return;
@@ -157,18 +157,18 @@ void tty_putc(uint8_t minor, unsigned char c)
 	}
 }
 
-void tty_data_consumed(uint8_t minor)
+void tty_data_consumed(uint_fast8_t minor)
 {
 	if (trs_flow & (1 << minor)) {
 		if (minor == 3) {
 			/* We have space.. raise RTS */
 			if (!fullq(&ttyinq[3]))
-				tr1865_ctrl = tr1865_ctrl_save|0x01;
+				out(TR1865_CTRL, tr1865_ctrl_save|0x01);
 		}
 		if (minor == 4) {
 			/* We have space.. raise RTS */
 			if (!fullq(&ttyinq[4]))
-				vg_tr1865_ctrd = vg_tr1865_ctrd_save|0x01;
+				out(VG_TR1865_CTRD, vg_tr1865_ctrd_save|0x01);
 		}
 	}
 }
@@ -176,13 +176,12 @@ void tty_data_consumed(uint8_t minor)
 /* Only the Model III has this as an actual interrupt */
 void tty_interrupt(void)
 {
-	uint8_t reg = tr1865_status;
+	uint8_t reg = in(TR1865_STATUS);
 	if (reg & 0x80) {
-		reg = tr1865_rxtx;
-		tty_inproc(3, reg);
+		tty_inproc(3, in(TR1865_RXTX));
 	}
 	if ((trs_flow & 8) && fullq(&ttyinq[3]))
-		tr1865_ctrl = tr1865_ctrl_save & ~1;
+		out(TR1865_CTRL, tr1865_ctrl_save & ~1);
 }
 
 void tty_poll(void)
@@ -191,13 +190,11 @@ void tty_poll(void)
 
 	/* Do the VG port */
 	if (ports & 0x10) {
-		reg = vg_tr1865_wrst;
-		if (reg & 0x01) {
-			reg = vg_tr1865_ctrd;
-			tty_inproc(4, reg);
-		}
+		reg = in(VG_TR1865_WRST);
+		if (reg & 0x01)
+			tty_inproc(4, in(VG_TR1865_CTRD));
 		if ((trs_flow & 0x10) && fullq(&ttyinq[4]))
-			vg_tr1865_ctrd = vg_tr1865_ctrd_save & ~1;
+			out(VG_TR1865_CTRD, vg_tr1865_ctrd_save & ~1);
 	}
 	/* Do the Model I/III port */
 	if (ports & 0x08)
@@ -213,7 +210,7 @@ static const uint8_t trssize[4] = {
 	0x00, 0x40, 0x20, 0x60
 };
 
-void tty_setup(uint8_t minor, uint8_t flags)
+void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 {
 	uint8_t baud;
 	uint8_t ctrl = 3;		/* DTR|RTS */
@@ -231,7 +228,7 @@ void tty_setup(uint8_t minor, uint8_t flags)
 		} else
 			baud = trsbaud[baud];
 
-		tr1865_baud = baud | (baud << 4);
+		out(TR1865_BAUD, baud | (baud << 4));
 
 	}
 	if (t->termios.c_cflag & PARENB) {
@@ -244,17 +241,17 @@ void tty_setup(uint8_t minor, uint8_t flags)
 	if (t->termios.c_cflag & CRTSCTS)
 		trs_flow |= (1 << minor);
 	else
-		trs_flow &- ~(1 << minor);
+		trs_flow &= ~(1 << minor);
 	if (minor == 3) {
 		tr1865_ctrl_save = ctrl;
-		tr1865_ctrl = ctrl;
+		out(TR1865_CTRL, ctrl);
 	} else {
 		vg_tr1865_ctrd_save = ctrl;
-		vg_tr1865_ctrd = ctrl;
+		out(VG_TR1865_CTRD, ctrl);
 	}
 }
 
-int trstty_open(uint8_t minor, uint16_t flags)
+int trstty_open(uint_fast8_t minor, uint16_t flags)
 {
 	/* Serial port cards are optional */
 	if (minor < 8 && !(ports & (1 << minor))) {
@@ -264,40 +261,39 @@ int trstty_open(uint8_t minor, uint16_t flags)
 	return tty_open(minor, flags);
 }
 
-int trstty_close(uint8_t minor)
+int trstty_close(uint_fast8_t minor)
 {
 	if (ttydata[minor].users == 0) {
 		trs_flow &= ~(1 << minor);
 		if (minor == 3)
-			tr1865_ctrl = 0;	/* Drop carrier and rts */
+			out(TR1865_CTRL, 0);	/* Drop carrier and rts */
 		else if (minor == 4)
-			vg_tr1865_ctrd = 0;
+			out(VG_TR1865_CTRD, 0);
 	}
 	return tty_close(minor);
 }
 
-int tty_carrier(uint8_t minor)
+int tty_carrier(uint_fast8_t minor)
 {
 	if (minor < 3)
 		return 1;
 	if (minor == 3) {
-		if (tr1865_ctrl & 0x80)
+		if (in(TR1865_CTRL) & 0x80)
 			return 1;
-	} else if (vg_tr1865_ctrd & 0x10)
+	} else if (in(VG_TR1865_CTRD) & 0x10)
 		return 1;
 	return 0;
 }
 
-void tty_sleeping(uint8_t minor)
+void tty_sleeping(uint_fast8_t minor)
 {
-	used(minor);
 }
 
 void trstty_probe(void)
 {
-	if (vg_tr1865_wrst != 0xFF)
+	if (in(VG_TR1865_WRST) != 0xFF)
 		ports |= (1 << 4);
-	if (tr1865_status != 0xFF)
+	if (in(TR1865_STATUS) != 0xFF)
 		ports |= (1 << 3);
 }
 
@@ -443,7 +439,7 @@ static void keydecode(void)
 			if (c == '-')
 				c = '_';
 			if (c == '/')
-				c = '``';
+				c = '`';
 			if (c == '<')
 				c = '^';
 		} else {

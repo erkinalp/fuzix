@@ -12,8 +12,8 @@ static char buf[7];
 
 const char *_uitoa(unsigned int i)
 {
-	char *p = buf + sizeof(buf);
-	int c;
+	register char *p = buf + sizeof(buf);
+	register int c;
 
 	*--p = '\0';
 	do {

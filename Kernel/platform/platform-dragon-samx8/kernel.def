@@ -1,0 +1,37 @@
+; UZI mnemonics for memory addresses etc
+
+U_DATA			equ 0xf000	; (this is struct u_data from kernel.h)
+U_DATA__TOTALSIZE	equ 0x200	; 256+256 (we don't save istack)
+
+U_DATA_STASH		equ 0xf000	; 0xf000--0xf1ff
+
+; Video RAM resides at 0x7c000 (page 31), before the COMMON area.  It is mapped
+; to bank 3 (0xc000--0xfeff) for manipulation.
+;
+; Keep these in sync with config.h!
+
+; Bank used to manipulate video
+VBANKV			equ 31		; use page 31 for video
+KBANKV			equ 3		; map to bank 3 to manipulate
+; tty1 is a 6K bitmap graphics screen
+VIDEO_BASE		equ 0xc000	; which is 0xc000-0xfeff
+VIDEO_END		equ VIDEO_BASE+0x1800
+VIDEO_FREG		equ VBANKV*512
+; tty3 & tty4 are 512 byte text screens
+VC_FREG			equ VIDEO_FREG+192
+VC_BASE			equ VIDEO_END
+
+IDEDATA			equ 0xff50
+IDEDATA_L		equ 0xff58
+
+SPIDATA			equ 0xff6c
+SPISTATUS		equ SPIDATA+1
+SPICTRL			equ SPISTATUS
+SPICLK			equ SPICTRL+1
+SPISIE			equ SPICLK+1
+
+SPICS			equ 0x01	; hardcode SEL0 for now
+
+PROGBASE		equ 0x0100	; programs and data start here
+
+NBUFS			equ 5

@@ -9,7 +9,7 @@
 #include <fcntl.h>
 #include <string.h>
 
-int closedir(DIR * dir)
+int closedir(register DIR * dir)
 {
 	if (dir == NULL || dir->dd_fd == -1) {
 		errno = EBADF;

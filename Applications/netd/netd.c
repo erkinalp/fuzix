@@ -70,6 +70,13 @@ int freelist[NSOCKET];
 int freeptr = 0;
 int looplen = 0;
 
+/*
+ * Raw/UDP transmit currently being processed through uIP.
+ * uIP has a single packet buffer, so only one transmit can
+ * be under consideration here at a time.
+ */
+static struct link *tx_pending = NULL;
+
 uint16_t activity;		/* Must be enough bits for NSOCKET */
 
 /* print an error message */
@@ -155,6 +162,40 @@ void send_tcp( struct link *s )
 	uip_send( uip_appdata, s->len );
 }
 
+/*
+ * Complete a pending raw/UDP transmission.
+ *
+ * uip_arp_out() replaces an IP packet with an ARP request when the
+ * destination MAC address is not yet known.  In that case the original
+ * raw/UDP packet must remain in the transmit ring for a later retry.
+ */
+static void tx_consume_pending(void)
+{
+	struct link *s = tx_pending;
+
+	if (s == NULL)
+		return;
+
+	/*
+	 * If ARP replaced the IP packet, leave tstart unchanged.
+	 * Be conservative: only consume a confirmed IP frame.
+	 */
+	if (has_arp && BUF->type != UIP_HTONS(UIP_ETHTYPE_IP)) {
+		tx_pending = NULL;
+		return;
+	}
+
+	if (++s->tstart == NSOCKBUF)
+		s->tstart = 0;
+
+	/* Tell the kernel that this transmit-ring slot is now free. */
+	ne.socket = s->socketn;
+	ne.data = s->tstart;
+	ksend(NE_ROOM);
+
+	tx_pending = NULL;
+}
+
 /* send udp data */
 void send_udp( struct link *s )
 {
@@ -170,12 +211,7 @@ void send_udp( struct link *s )
 		exit_err("cannot read from backing file\n");
 #endif
 	uip_udp_send( len );
-	if ( ++s->tstart == NSOCKBUF )
-		s->tstart = 0;
-	/* Send Room event back to kernel */
-	ne.socket = s->socketn;
-	ne.data = s->tstart;
-	ksend( NE_ROOM );
+	tx_pending = s;
 }
 
 /* send raw data FIXME: fold together with send_udp */
@@ -193,12 +229,7 @@ void send_raw( struct link *s )
 		exit_err("cannot read from backing file\n");
 #endif
 	uip_raw_send( len );
-	if ( ++s->tstart == NSOCKBUF )
-		s->tstart = 0;
-	/* Send Room event back to kernel */
-	ne.socket = s->socketn;
-	ne.data = s->tstart;
-	ksend( NE_ROOM );
+	tx_pending = s;
 }
 
 /* return amout of free room for adding data in recv ring buffer */
@@ -710,17 +741,17 @@ int dokernel( void )
 	return 0;
 }
 
-/* 
+/*
    The next two functions wrap low-level device sending and receiving.
    This allows uip to connect to itself by short-circuiting frames
    we send that are destined for us.
 */
 void send_or_loop( void )
 {
-	/* 
+	/*
 	   This filters on layer 2 destination address. (mac address)
 	   for devices (like SLIP) that interface on layer 3 (ip),
-	   we'll have to filter for IP address, rather 
+	   we'll have to filter for IP address, rather
 	*/
 	static uint8_t broad[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 
@@ -762,6 +793,41 @@ int loop_or_read( void )
 	return device_read( uip_buf, UIP_BUFSIZE );
 }
 
+/*
+ * Poll UDP and raw connections for queued output.
+ *
+ * This is normally done by the periodic timer, but we also call it
+ * immediately after processing an ARP packet so a datagram preserved
+ * across an ARP miss can be retried without waiting for the next tick.
+ */
+static void poll_datagrams(void)
+{
+	int i;
+
+	for (i = 0; i < UIP_UDP_CONNS; i++) {
+		tx_pending = NULL;
+		uip_udp_periodic(i);
+		if (uip_len > 0) {
+			if (has_arp)
+				uip_arp_out();
+			send_or_loop();
+			tx_consume_pending();
+		}
+		tx_pending = NULL;
+	}
+
+	for (i = 0; i < UIP_RAW_CONNS; i++) {
+		tx_pending = NULL;
+		uip_raw_periodic(i);
+		if (uip_len > 0) {
+			if (has_arp)
+				uip_arp_out();
+			send_or_loop();
+			tx_consume_pending();
+		}
+		tx_pending = NULL;
+	}
+}
 
 /* handle events from uIP */
 /* returns 0 if nothing going on */
@@ -784,10 +850,26 @@ int douip( void )
 						uip_arp_out();
 					send_or_loop();
 				}
-			} else if (has_arp &&  BUF->type == UIP_HTONS(UIP_ETHTYPE_ARP)){
+			} else if (has_arp && BUF->type == UIP_HTONS(UIP_ETHTYPE_ARP)){
+				int arp_for_us;
+
+				/*
+				 * send_or_loop() loops broadcast frames back into netd, including
+				 * our own ARP requests.  Do not let those broadcasts trigger an
+				 * immediate retry.  An ARP frame addressed to our MAC may have
+				 * updated the ARP cache, so retry deferred traffic after processing it.
+				 *
+				 * Test this before uip_arp_arpin(), since that function may modify
+				 * the packet buffer.
+				 */
+				arp_for_us = !memcmp(BUF->dest.addr, uip_lladdr.addr, 6);
+
 				uip_arp_arpin();
-				if (uip_len > 0 )
+				if (uip_len > 0)
 					send_or_loop();
+
+				if (arp_for_us)
+					poll_datagrams();
 			}
 		}
 	}
@@ -814,22 +896,9 @@ int douip( void )
 				send_or_loop();
 			}
 		}
-		for (i = 0; i < UIP_UDP_CONNS; i++) {
-			uip_udp_periodic(i);
-			if (uip_len > 0) {
-				if (has_arp)
-					uip_arp_out();
-				send_or_loop();
-			}
-		}
-		for (i = 0; i < UIP_RAW_CONNS; i++) {
-			uip_raw_periodic(i);
-			if (uip_len > 0) {
-				if (has_arp)
-					uip_arp_out();
-				send_or_loop();
-			}
-		}
+
+		poll_datagrams();
+
 		if (has_arp &&  timer_expired(&arp_timer)){
 			timer_reset(&arp_timer);
 			uip_arp_timer();
@@ -987,11 +1056,13 @@ void cleanup(int sig)
 	exit(0);
 }
 
-int main( int argc, char *argv[] )
+int main( int argc, const char *argv[])
 {
 	int ret;
 	uip_ipaddr_t ipaddr;
 	uip_eth_addr ethaddr;       /* mac address buffer */
+
+	arguments(argc, argv);
 
 	signal(SIGHUP, cleanup);
 	signal(SIGINT, cleanup);

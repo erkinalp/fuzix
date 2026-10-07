@@ -2,8 +2,8 @@
 #include <timer.h>
 #include <kdata.h>
 #include <printf.h>
-#include <blkdev.h>
-#include <devide.h>
+#include <tinydisk.h>
+#include <tinyide.h>
 #include <devtty.h>
 
 uint8_t kernel_flag = 1;
@@ -46,8 +46,8 @@ static volatile uint8_t *via = (volatile uint8_t *)0xFE60;
 
 void device_init(void)
 {
-#ifdef CONFIG_IDE
-	devide_init();
+#ifdef CONFIG_TD_IDE
+	ide_probe();
 #endif
 	/* FIXME: we need a way to time the CPU against something to get
 	   the VIA clock rate. For now hard code 4MHz */
@@ -70,27 +70,29 @@ void plt_interrupt(void)
 	}
 }
 
-/* For now this and the supporting logic don't handle swap */
-
-extern uint8_t hd_map;
-extern void hd_read_data(uint8_t *p);
-extern void hd_write_data(uint8_t *p);
-
-void devide_read_data(void)
+/* TODO: put these into the asm bits */
+unsigned strlen(const char *p)
 {
-	if (blk_op.is_user)
-		hd_map = 1;
-	else
-		hd_map = 0;
-	hd_read_data(blk_op.addr);	
+	unsigned n = 0;
+	while(*p++)
+		n++;
+	return n;
 }
 
-void devide_write_data(void)
+void *memcpy(void *to, const void *from, unsigned len)
 {
-	if (blk_op.is_user)
-		hd_map = 1;
-	else
-		hd_map = 0;
-	hd_write_data(blk_op.addr);	
+	const uint8_t *f = from;
+	uint8_t *t = to;
+	while(len--)
+		*t++ = *f++;
+	return to;
+}
+
+void *memset(void *to, int v, unsigned len)
+{
+	uint8_t *t = to;
+	while(len--)
+		*t++ = v;
+	return to;
 }
 

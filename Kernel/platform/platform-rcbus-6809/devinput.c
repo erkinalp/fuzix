@@ -87,7 +87,7 @@ void plt_ps2mouse_event(uint8_t *event)
 
 int plt_input_read(uint8_t *slot)
 {
-    uint8_t r, k;
+    uint_fast8_t r, k;
     if (ps2pend) {
         irqflags_t irq = di();
         memcpy(slot, ps2event, 4);
@@ -120,7 +120,7 @@ void poll_input(void)
             wakeup(&kqueue);
 }
 
-int plt_input_write(uint8_t flag)
+int plt_input_write(uint_fast8_t flag)
 {
     flag;
     udata.u_error = EINVAL;

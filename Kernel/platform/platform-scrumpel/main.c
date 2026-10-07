@@ -25,33 +25,23 @@ void plt_discard(void)
 
 void z180_timer_interrupt(void)
 {
-	uint8_t a;
-
 	/* we have to read both of these registers in order to reset the timer */
-	a = TIME_TCR;
-	a = TIME_TMDR0L;
+	in(TIME_TCR);
+	in(TIME_TMDR0L);
 	timer_interrupt();
-}
-
-void plt_idle(void)
-{
-	/* Let's go to sleep while we wait for something to interrupt us */
-	__asm
-		halt
-	__endasm;
 }
 
 void plt_interrupt(void)
 {
     switch(irqvector){
         case Z180_INT_TIMER0:
-            z180_timer_interrupt(); 
+            z180_timer_interrupt();
             return;
         case Z180_INT_ASCI0:
-            tty_pollirq_asci0();
+            tty_pirq_asci0();
             return;
         case Z180_INT_ASCI1:
-            tty_pollirq_asci1();
+            tty_pirq_asci1();
             return;
         default:
             return;

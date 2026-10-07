@@ -22,9 +22,9 @@ Cambridge, MA 02139, USA.  */
    of S which contains only characters in ACCEPT.  */
 size_t strspn(const char *s, const char *accept)
 {
-  const char *p;
-  const char *a;
-  size_t count = 0;
+  register const char *p;
+  register const char *a;
+  register size_t count = 0;
 
   for (p = s; *p != '\0'; ++p)
     {

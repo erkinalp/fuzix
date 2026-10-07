@@ -8,10 +8,10 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-long atol(const char *str)
+long atol(register const char *str)
 {
-	uint8_t neg = 0;
-	long sum = 0;
+	register long sum = 0;
+	register uint8_t neg = 0;
 
 	while(isspace(*str))
 		str++;

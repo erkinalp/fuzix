@@ -8,11 +8,12 @@
 
 extern unsigned char uart0_type;
 
-unsigned char uart0_detect();
+unsigned char uart0_detect(void);
 
 /* uart0_init - detect UART type, print it, enable FIFO if present
  */
-void uart0_init() {
+void uart0_init(void)
+{
 	const char *uart_name;
 	uart0_type = uart0_detect();
 	switch (uart0_type & UART_NAME) {
@@ -41,27 +42,27 @@ void uart0_init() {
 		/* enable FIFOs
                    set interrupt theshold to 8 bytes
                    */
-		UART0_FCR = 0x83;
+		out(UART0_FCR, 0x83);
 	}
 	kprintf(".\n");
 }
 
 /* uart0_init - detect UART type and capabilities
  */
-unsigned char uart0_detect() {
+unsigned char uart0_detect(void)
+{
 	unsigned char type, scratch;
 
 	type = UART_8250;		/* default */
 
 	/* 8250 doesn't have scratch register, 8250A and later UARTs do.
-           Try writting a value to that register, read it back and compare
            */
-	UART0_SCR = 0x5A;
-	if (UART0_SCR != 0x5A)
+	out(UART0_SCR, 0x5A);
+	if (in(UART0_SCR) != 0x5A)
 		goto out;		/* no scratch register - 8250 */
 
-	UART0_SCR = 0xA5;
-	if (UART0_SCR != 0xA5)
+	out(UART0_SCR, 0xA5);
+	if (in(UART0_SCR) != 0xA5)
 		goto out;		/* no scratch register - 8250 */
 
 	/* Test for FIFO. Enable FIFO, and test bits 6 & 7 of IIR.
@@ -70,9 +71,9 @@ unsigned char uart0_detect() {
 	   only bit 7 set.
            */
 
-	UART0_FCR = 0x01;		/* try to enable FIFO */
-	scratch = UART0_IIR;		/* read IIR */
-	UART0_FCR = 0x00;		/* disable FIFO */
+	out(UART0_FCR, 0x01);		/* try to enable FIFO */
+	scratch = in(UART0_IIR);	/* read IIR */
+	out(UART0_FCR, 0x00);		/* disable FIFO */
 	scratch &= 0xC0;		/* get FIFO status bits */
 
 	if (!scratch) {
@@ -92,24 +93,21 @@ unsigned char uart0_detect() {
 
 	/* Test for auto-flow control. This feature is present in some
 	   16550 versions (TI TL16C550C, NXP SC16C550B) */
-	__critical {
-		UART0_IER = 0x00;	/* disable interrupts */
-		UART0_MCR = 0x30;	/* enable auto-flow and loopback */
-		UART0_IER = 0x08;	/* enable modem status interrupt */
-		scratch = UART0_MSR;	/* read MSR to reset IIR */
-		UART0_MCR = 0x32;	/* set RTS = 1 */
-		scratch = UART0_IIR;	/* read IIR */
-		UART0_MCR = 0x00;	/* reset MCR bits */
-		scratch &= 0x0F;	/* get the interrupt type bits */
+	out(UART0_IER, 0x00);	/* disable interrupts */
+	out(UART0_MCR, 0x30);	/* enable auto-flow and loopback */
+	out(UART0_IER, 0x08);	/* enable modem status interrupt */
+	scratch = in(UART0_MSR);/* read MSR to reset IIR */
+	out(UART0_MCR, 0x32);	/* set RTS = 1 */
+	scratch = in(UART0_IIR);/* read IIR */
+	out(UART0_MCR, 0x00);	/* reset MCR bits */
+	scratch &= 0x0F;	/* get the interrupt type bits */
 
-		if (scratch == 0x01) {
-			/* No interrupt detected, RTS change has been eaten by 
-			   auto-flow control */
-			type |= UART_CAP_AFE;
-		}
-		scratch = UART0_MSR;	/* reset IIR again */
-		UART0_IER = 0x01;	/* enable receive interrupt */
-	}
+	if (scratch == 0x01)
+		/* No interrupt detected, RTS change has been eaten by
+		   auto-flow control */
+		type |= UART_CAP_AFE;
+	scratch = in(UART0_MSR);/* reset IIR again */
 out:
+	out(UART0_IER, 0x01);	/* enable receive interrupt */
 	return type;
 }

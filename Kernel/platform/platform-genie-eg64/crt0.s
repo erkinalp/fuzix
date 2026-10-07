@@ -1,91 +1,62 @@
-		; Low 16K
-	        .area _CODE
-		.area _CODE2
-		.area _VIDEO
-	        .area _DATA
-	        .area _BSEG
-	        .area _BSS
-	        .area _HEAP
-	        ; note that areas below here may be overwritten by the heap at runtime, so
-	        ; put initialisation stuff in here
-	        .area _GSINIT
-	        .area _GSFINAL
-		; Buffers must be directly before discard as they will
-		; expand over it
-		; We want the DISCARD area last as we eventually want to
-		; expand all over it for buffers
-		; 16 to 32K
-	        .area _COMMONMEM
-	        .area _CONST
-	        .area _INITIALIZED
-		.area _BUFFERS
-		.area _DISCARD
-	        .area _INITIALIZER
+# 1 "crt0.S"
+# 1 "kernelu.def"
+; UZI mnemonics for memory addresses etc
 
-		; 32K-64K kernel only map
-		.area _CODE1
+U_DATA__TOTALSIZE           .equ 0x200        ; 256+256
 
-		.area _BOOT
+PROGBASE		    .equ 0x6000
+PROGLOAD		    .equ 0x6000
 
-		; Tell binman to leave the image alone
-		.area _PAGE0
+Z80_TYPE		    .equ 1
 
-        	; imported symbols
-        	.globl _fuzix_main
-	        .globl init_early
-	        .globl init_hardware
-		.globl _vtinit
-	        .globl s__BUFFERS
-	        .globl l__BUFFERS
-	        .globl s__COMMONMEM
-	        .globl l__COMMONMEM
-	        .globl s__DATA
-	        .globl l__DATA
-		.globl s__INITIALIZER
-	        .globl kstack_top
+NBUFS			    .equ 4
 
-                .include "kernel.def"
-                .include "../../cpu-z80/kernel-z80.def"
+Z80_MMU_HOOKS		    .equ 0
 
-	        ; startup code
-	        .area _BOOT
-
+CONFIG_SWAP		    .equ 1
+# 1 "../../cpu-z80u/kernel-z80.def"
+ 
+# 26
+ 
+# 44
+ 
+# 4 "crt0.S"
+	.common
 ;
-;		On entry the bootloader has put the banker into the
-;		kernel map and loaded us at 0x100 (it's at 0x0)
+;	On entry the bootloader has put the banker into the
+;	kernel map and loaded us at 0x100 (it's at 0x0)
 ;
 start:
-		ld sp, #kstack_top
-		ld a,#0xD0
-		; Unmap I/O space as it may have _DATA over it
-		out (0xC0),a
-		; Zero the data area
-		ld hl, #s__DATA
-		ld de, #s__DATA + 1
-		ld bc, #l__DATA - 1
-		ld (hl), #0
-		ldir
-		ld hl, #s__BUFFERS
-		ld de, #s__BUFFERS + 1
-		ld bc, #l__BUFFERS - 1
-		ld (hl), #0
-		ldir
-		call init_early
-		call init_hardware
-		call _vtinit
-		call _fuzix_main
-		di
-stop:		halt
-		jr stop
+	ld	sp, kstack_top
+	ld	a,0xE0
+	; Unmap I/O space as it may have BSS over it
+	out	(0xC0),a
+	; Zero the BSS
+	ld 	hl, __bss
+	ld 	de, __bss + 1
+	ld 	bc, __bss_size - 1
+	ld	(hl), 0
+	ldir
+	ld	hl, __buffers
+	ld	de, __buffers + 1
+	ld	bc, __buffers_size - 1
+	ld	(hl), 0
+	ldir
+	call	init_early
+	call	init_hardware
+	call	_vtinit
+	call	_fuzix_main
+	di
+stop:	halt
+	jr	stop
 
 ;
 ; Buffers (we use asm to set this up as we need them in a special segment
 ; so we can recover the discard memory into the buffer pool
 ;
 
-	    .globl _bufpool
-	    .area _BUFFERS
+	.buffers
 
+	.export _bufpool
 _bufpool:
-	    .ds BUFSIZE * NBUFS
-
+	.ds	520  * NBUFS

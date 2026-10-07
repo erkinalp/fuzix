@@ -57,15 +57,15 @@ static uint8_t light = 0xF0;
 static uint8_t lightdir = 1;
 static uint8_t lightct = 0;
 
-__sfr __at 0x0D led;
+#define LED 0x0D
 
 void z180_timer_interrupt(void)
 {
 	unsigned char a;
 
 	/* we have to read both of these registers in order to reset the timer */
-	a = TIME_TCR;
-	a = TIME_TMDR0L;
+	a = in(TIME_TCR);
+	a = in(TIME_TMDR0L);
 	timer_interrupt();
 
 	/* No blinkenlights on the standard systems */
@@ -82,14 +82,7 @@ void z180_timer_interrupt(void)
 		lightdir = 0;
 	else if (light == 0xF0)
 		lightdir = 1;
-	led = light;
-}
-
-void plt_idle(void)
-{
-	/* Let's go to sleep while we wait for something to interrupt us */
-	led = 0xFF;
-	__asm halt __endasm;
+	out(LED, light);
 }
 
 void plt_interrupt(void)
@@ -101,13 +94,13 @@ void plt_interrupt(void)
 		/* We can't poll the Wiznet if the SD card is mid transaction */
 		if (tinysd_busy == 0)
 			w5x00_poll();
-#endif		
+#endif
 		return;
 	case Z180_INT_ASCI0:
-		tty_pollirq_asci0();
+		tty_pirq_asci0();
 		return;
 	case Z180_INT_ASCI1:
-		tty_pollirq_asci1();
+		tty_pirq_asci1();
 		return;
 	default:
 		return;
@@ -117,13 +110,13 @@ void plt_interrupt(void)
 /* The RTC and GPIO share the same port so manage them together using
    the rtc shadow byte */
 
-__sfr __at 0x0C gpio;
+#define GPIO	0x0C
 
 void gpio_set(uint8_t mask, uint8_t val)
 {
 	rtc_shadow &= ~mask;
 	rtc_shadow |= val;
-	gpio = rtc_shadow;
+	out(GPIO, rtc_shadow);
 }
 
 void plt_ds1302_setup(void)
@@ -132,5 +125,5 @@ void plt_ds1302_setup(void)
 
 void plt_ds1302_restore(void)
 {
-	gpio = rtc_shadow;
+	out(GPIO, rtc_shadow);
 }

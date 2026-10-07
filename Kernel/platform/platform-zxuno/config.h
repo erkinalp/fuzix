@@ -76,11 +76,9 @@
 #define CONFIG_TD_SD
 /* Emulator for this platform needs bug workarounds */
 #define CONFIG_TD_SD_EMUBUG
-#define SD_SPI_CALLTYPE __z88dk_fastcall
+#define SD_SPI_CALLTYPE
 
 /* We need to direct map things because of the Timex MMU modes */
 #define swap_map(x)		((uint8_t *)x)
 
 #define BOOTDEVICENAMES "hd#"
-
-#define CONFIG_SMALL

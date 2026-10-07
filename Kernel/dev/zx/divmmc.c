@@ -2,22 +2,22 @@
 #include <tinysd.h>
 #include "printf.h"
 
-__sfr __at 0xE7 divmmc_cs;
-__sfr __at 0xEB divmmc_data;
+#define DIVMMC_CS	0xE7
+#define DIVMMC_DATA	0xEB
 
 void sd_spi_raise_cs(void)
 {
-    divmmc_cs = 0xFF;//0x03;		/* Active low */
+    out(DIVMMC_CS, 0xFF);//0x03;		/* Active low */
 }
 
-void sd_spi_tx_byte(uint8_t b) SD_SPI_CALLTYPE
+void sd_spi_tx_byte(uint_fast8_t b)
 {
-    divmmc_data = b;
+    out(DIVMMC_DATA, b);
 }
 
-uint8_t sd_spi_rx_byte(void)
+uint_fast8_t sd_spi_rx_byte(void)
 {
-    return divmmc_data;
+    return in(DIVMMC_DATA);
 }
 
 /*
@@ -28,9 +28,9 @@ uint8_t sd_spi_rx_byte(void)
 void sd_spi_lower_cs(void)
 {
     if (tinysd_unit == 0)
-      divmmc_cs = 0xFE;	/* Lower bit 0 (active low) */
+      out(DIVMMC_CS, 0xFE);	/* Lower bit 0 (active low) */
     else
-      divmmc_cs = 0xFD;	/* Lower bit 1 (active low) */
+      out(DIVMMC_CS, 0xFD);	/* Lower bit 1 (active low) */
 }
 
 void sd_spi_fast(void)
@@ -41,6 +41,7 @@ void sd_spi_slow(void)
 {
 }
 
+#if 0
 COMMON_MEMORY
 
 /*
@@ -59,7 +60,7 @@ bool sd_spi_rx_sector(uint8_t *data) __naked SD_SPI_CALLTYPE
     push hl
     push de
     push bc
-#endif    
+#endif
     ld a, (_td_raw)
     push af
 #ifdef SWAPDEV
@@ -99,7 +100,7 @@ bool sd_spi_tx_sector(uint8_t *data) __naked SD_SPI_CALLTYPE
     push hl
     push de
     push bc
-#endif    
+#endif
     ld a, (_td_raw)
     push af
 #ifdef SWAPDEV
@@ -128,3 +129,4 @@ dowrite:
     ret
   __endasm;
 }
+#endif

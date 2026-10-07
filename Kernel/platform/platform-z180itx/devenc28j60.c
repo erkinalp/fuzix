@@ -17,7 +17,7 @@
 #define OUT_CLOCK		0x04
 #define OUT_DATA		0x80
 
-__sfr __at ENC_PORT	enc_gpio;
+#define ENC_GPIO	0x03
 
 uint8_t enc_gpio_state;
 
@@ -32,7 +32,7 @@ static void enc_set_gpio(uint8_t m, uint8_t v)
 void enc_nap_1ms(void)
 {
     /* Wait 1ms : FIXME tune this */
-    volatile unsigned int n = 0;
+    volatile unsigned int n = 1000;
     while(--n);
 }
 
@@ -81,6 +81,6 @@ void devenc_init(void)
     spi_piostate = 0x00;
     spi_data = OUT_DATA;
     spi_clock = OUT_CLOCK;
-    
+
     enc_init();
 }

@@ -24,12 +24,13 @@ C000-FFFF	All kernel data common and stacks
 
 User
 
-0000-00FF	Vectors (present in both banks)
+0000-00FF	Vectors (present in all banks)
 0100-BFFF	User space
 C000-FFFF	Kernel data command and stacks
 ```
 
 ## To Do
+- Figure out how to tighten support code
 - Push the data and common up higher
 - Maybe support the CP/M emulator
 - Swap only needed blocks for speed up
@@ -37,6 +38,10 @@ C000-FFFF	Kernel data command and stacks
 The ideal case of 128K RAM + banked ROM kernel would need a banked thunked
 Z80 setup which we don't yet support and would be a little bit too
 interesting right now!
+
+The ROM loader assumes that the last bank of ROM will be 4K of discard then
+12K of main code (C000+) minus 40 bytes. If you exceed this you will need
+to rework the ROM image map
 
 ## Emulation
 

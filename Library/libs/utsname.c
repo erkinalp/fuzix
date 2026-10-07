@@ -6,9 +6,6 @@
 
 int uname(struct utsname *utsbuf)
 {
-#ifndef PREFER_STACK
-	static
-#endif
 	struct {
 		struct _uzisysinfoblk i;
 		char buf[128];
@@ -16,7 +13,7 @@ int uname(struct utsname *utsbuf)
 	char *x[5];
 	int bytes = _uname(&uts.i, sizeof(uts));
 	char *p = uts.buf;
-	char *xp;
+	register char *xp;
 	int ct = 0;
 
 	if (bytes == -1)

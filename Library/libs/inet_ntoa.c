@@ -11,9 +11,9 @@
 char *_inet_ntoa(uint32_t in)
 {
   static char b[18];
-  uint8_t *p = (uint8_t *)&in;
-  char *o = b;
-  
+  register char *o = b;
+  register uint8_t *p = (uint8_t *)&in;
+
   while(p != ((uint8_t *)&in) + 4) {
     strcpy(o, _itoa(*p++));
     o += strlen(o);
@@ -23,5 +23,4 @@ char *_inet_ntoa(uint32_t in)
   return b;
 }
 
-  
-  
+

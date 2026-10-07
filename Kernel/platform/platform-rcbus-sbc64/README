@@ -27,7 +27,7 @@ Things That Don't Work (yet)
 	SIO/2 flow control
 
 Notes
-	The Z80MB64 is 22MHz which means there are not yet a CTC for it!
+	The Z80MB64 is 22MHz which means there is not yet a CTC for it!
 	
 Setting It Up
 

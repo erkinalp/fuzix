@@ -36,7 +36,7 @@ extern uint8_t video_lower;	/* Lowercase available */
  *			Lower case !!
  *
  *	Note that the Colour Genie is a very different beast.
- *	
+ *
  */
 
 extern void bufsetup(void);
@@ -45,4 +45,5 @@ extern void bufsetup(void);
 extern void keyscan(void);
 extern uint8_t anykey(void);
 extern void vt_check_lower(void);
-extern uint8_t ioread(uint16_t addr) __z88dk_fastcall;
+extern uint8_t ioread(uint16_t addr);
+

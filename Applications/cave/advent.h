@@ -15,7 +15,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#define ADVDB_PATH		    "/usr/games/lib/advent.db"
+#define ADVDB_PATH		    "/usr/lib/games/advent.db"
 
 #define NUL			    '\0'
 

@@ -1,0 +1,197 @@
+"""Generate mmbedit's keyword tables.
+
+Two sources, neither of them hand-maintained:
+
+  - the NAMES come from MMBasic's own AllCommands.h, so the editor
+    colours exactly what MMBasic recognises;
+  - the SUPPORTED flag comes from mmb2c.py's statement dispatch and
+    BUILTINS table, via the same reader fcc/coverage.py uses, so what
+    the editor calls translatable is what the translator actually does.
+
+Regenerate after either changes:
+    python3 genkw.py > .../mmbedit/keywords.c
+"""
+import re
+import os
+import sys
+
+MMB = "/mnt/d/Dropbox/PicoMite/PicoMiteV6.03.00/AllCommands.h"
+MMB2C = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     os.pardir, "mmb2c", "mmb2c.py")
+
+src = open(MMB, encoding="utf-8", errors="replace").read().split("\n")
+
+
+def region(start_marker, end_marker):
+    out = []
+    on = False
+    for line in src:
+        if start_marker in line:
+            on = True
+            continue
+        if on and end_marker in line:
+            break
+        if on:
+            out.append(line)
+    return out
+
+
+def names(lines):
+    out = []
+    for line in lines:
+        if line.lstrip().startswith("//") or line.lstrip().startswith("/*"):
+            continue
+        m = re.search(r'\(unsigned char \*\)"([^"]*)"', line)
+        # MMBasic keeps two empty-named placeholder rows.  They must not
+        # reach the editor: EditCompStr indexes name[1] on the "."/"_"
+        # alias path, which reads past the end of a one-byte string, and
+        # an empty name matches any character that is not a name char.
+        if m and m.group(1):
+            out.append(m.group(1))
+    return out
+
+
+cmds = names(region("#ifdef INCLUDE_COMMAND_TABLE",
+                    "#endif /* INCLUDE_COMMAND_TABLE"))
+toks = names(region("#ifdef INCLUDE_TOKEN_TABLE",
+                    "#endif /* INCLUDE_TOKEN_TABLE"))
+
+# ---- what mmbc can translate ------------------------------------------
+text = open(MMB2C).read()
+body = text[text.index("def statement_inner"):]
+body = body[:body.index("\n    def ", 10)]
+supported = set()
+# 0-9 in the class, for the same reason the dot matters below: without
+# it a keyword with a digit in it never matched its own dispatch, so
+# I2C2 was painted "the interpreter knows this and mmbc does not" for as
+# long as it had been translating.  The BUILTINS pattern below always
+# allowed digits; these two did not.
+for m in re.finditer(r"up == '([A-Z0-9$?]+)'", body):
+    supported.add(m.group(1))
+for m in re.finditer(r"up in \(([^)]*)\)", body):
+    for w in re.findall(r"'([A-Z0-9$?]+)'", m.group(1)):
+        supported.add(w)
+tbl = text[text.index("BUILTINS = {"):]
+tbl = tbl[:tbl.index("\n}")]
+# the dot matters: without it MM.HRES and the rest never matched, and
+# every MM.xxx read as untranslatable (fcc/coverage.py had the same bug)
+for name, lo, hi in re.findall(r"'([A-Z0-9.$]+)': \((\d+), (\d+)\)", tbl):
+    supported.add(name)
+for m in re.finditer(r"MATHFUNCS = \{([^}]*)\}", text):
+    supported.update(re.findall(r"'([A-Z0-9]+)'", m.group(1)))
+# operators and structural words the translator always handles.
+# TYPE blocks are dispatched through skip_type_block/pass_types rather
+# than an `up ==` test in statement_inner, so the scan above cannot see
+# them - they are listed here like the other block-structure words.
+supported.update(["AND", "OR", "NOT", "XOR", "MOD", "INV", "THEN", "TO",
+                  "STEP", "AS", "ELSE", "ELSEIF", "END IF", "END SUB",
+                  "END FUNCTION", "END SELECT", "CASE ELSE", "SELECT CASE",
+                  "EXIT DO", "EXIT FOR", "EXIT SUB", "EXIT FUNCTION",
+                  "LOOP", "UNTIL", "WHILE", "WEND", "NEXT",
+                  "TYPE", "END TYPE",
+                  # DefineFont is the same shape: pass_fonts() lifts the
+                  # whole block out before statement_inner ever runs, so
+                  # the dispatch scan cannot see it and the editor painted
+                  # a font the translator DOES build as interpreter-only.
+                  # AllCommands.h spells the close "End DefineFont".
+                  "DEFINEFONT", "END DEFINEFONT",
+                  # OPTION's second words that do_option reads, the type
+                  # names DIM takes, and the modes OPEN takes - none of
+                  # them commands, all of them translated
+                  "BASE", "EXPLICIT", "DEFAULT", "SELECT",
+                  "INTEGER", "FLOAT", "STRING",
+                  "OUTPUT", "APPEND", "RANDOM"])
+
+# MMBasic gives some commands a TWO-WORD name in AllCommands.h, while
+# the translator dispatches on the first word and reads the second
+# itself (`up == 'TEMPR' and self.is_kw('START', 1)`).  The scan above
+# only ever sees the first word, so without this every one of them is
+# painted "the interpreter knows this and mmbc does not" - the same
+# failure I2C2 had, from the other direction.  Each of these was
+# checked by translating a program that uses it; a two-word name is NOT
+# added here on the strength of its first word being supported, because
+# most of them are not (ARRAY SLICE and ARRAY INSERT are the examples).
+supported.update(["TEMPR START", "LINE INPUT", "ARRAY SET", "ARRAY ADD",
+                  # "Else If" and "ElseIf" are separate rows in
+                  # AllCommands.h binding to the same cmd_else, and the
+                  # translator takes ELSE followed by IF as ELSEIF
+                  "ELSE IF"])
+
+
+def is_supported(nm):
+    # MMBasic spells a function with its opening bracket ("Sqr(", "Left
+    # while the translator's tables do not, so strip it before comparing -
+    # without this every function in the language reads as unsupported.
+    u = nm.upper()
+    if u.endswith("("):
+        u = u[:-1]
+    return u in supported
+
+
+def emit(tblname, lst):
+    print("const struct mmb_keyword %s[] = {" % tblname)
+    for nm in lst:
+        esc = nm.replace("\\", "\\\\").replace('"', '\\"')
+        print('    { "%s", %d },' % (esc, 1 if is_supported(nm) else 0))
+    print("    { NULL, 0 }")
+    print("};")
+    print("")
+
+
+print("""/* keywords.c - GENERATED by genkw.py in this directory - do not edit.
+ *
+ * The names are MMBasic's own, read out of AllCommands.h, so the editor
+ * colours exactly what MMBasic recognises.  The `supported` flag is read
+ * out of mmb2c.py's statement dispatch and BUILTINS table - the same
+ * source fcc/coverage.py generates the manual's coverage appendix from -
+ * so "this compiles" is never a guess and cannot drift.
+ *
+ * That is what makes the third colour honest: cyan is a keyword mmbc can
+ * translate, blue is one only the interpreter knows.
+ */
+
+#include <stddef.h>
+#include "mmb_compat.h"
+""")
+
+emit("commandtbl", cmds)
+emit("tokentbl", toks)
+
+print("""/* MMBasic rewrites these to other tokens during tokenise(), so they are
+ * in neither table and would otherwise not be coloured.  They carry the
+ * supported flag like everything else: the editor used to paint the lot
+ * as translatable, which said MM.WATCHDOG and MM.INFO$ would compile. */""")
+emit("overlaid_functions",
+     ["MM.DEVICE$(", "MM.FONTHEIGHT", "MM.FONTWIDTH", "MM.HRES", "MM.VRES",
+      "MM.ERRNO", "MM.ERRMSG$", "MM.INFO$(", "MM.INFO(", "MM.VER",
+      "MM.CMDLINE$", "MM.HPOS", "MM.VPOS", "MM.WATCHDOG"])
+print("""const int MMEND = (int)(sizeof(overlaid_functions) /
+                        sizeof(overlaid_functions[0])) - 1;
+""")
+
+print("""/* Rewritten to other tokens during tokenise() as well, but ordinary
+ * functions rather than the MM.xxx set. */""")
+emit("hidden_functions",
+     ["BIN$(", "OCT$(", "HEX$(", "LCASE$(", "UCASE$(", "LEFT$(", "RIGHT$(",
+      "MIN(", "MAX(", "MM.INFO$("])
+
+print("""/* The second word of a two-word command.  Only OPTION's are listed:
+ * mmb2c reads BASE, EXPLICIT and DEFAULT and skips the rest. */""")
+emit("twokeyword_tbl",
+     ["BASE", "EXPLICIT", "DEFAULT", "BREAK", "AUTORUN", "BAUDRATE",
+      "DISPLAY"])
+
+print("""/* Type names and the OPEN modes - words that are not commands but
+ * read as keywords wherever they appear. */""")
+emit("special_keywords",
+     ["SELECT", "INTEGER", "FLOAT", "STRING", "DISPLAY", "SDCARD", "OUTPUT",
+      "APPEND", "WRITE", "SLAVE", "TARGET", "PROGRAM"])
+
+# MMBasic's loops run to Size - 1, so the published size counts the
+# terminator the way its own tables do.
+print("const int CommandTableSize = %d;" % (len(cmds) + 1))
+print("const int TokenTableSize = %d;" % (len(toks) + 1))
+
+sys.stderr.write("commands %d (%d supported), tokens %d (%d supported)\n" % (
+    len(cmds), sum(1 for c in cmds if is_supported(c)),
+    len(toks), sum(1 for t in toks if is_supported(t))))

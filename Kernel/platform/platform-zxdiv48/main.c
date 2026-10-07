@@ -7,16 +7,6 @@
 
 uint16_t ramtop = PROGTOP;
 
-/* On idle we spin checking for the terminals. Gives us more responsiveness
-   for the polled ports */
-void plt_idle(void)
-{
-  /* We don't want an idle poll and IRQ driven tty poll at the same moment */
-  __asm
-   halt
-  __endasm;
-}
-
 uint8_t timer_wait;
 
 void plt_interrupt(void)
@@ -26,19 +16,6 @@ void plt_interrupt(void)
  poll_input();
  if (timer_wait)
   wakeup(&timer_interrupt);
-}
-
-/*
- *	So that we don't suck in a library routine we can't use from
- *	the runtime
- */
-
-size_t strlen(const char *p)
-{
-  size_t len = 0;
-  while(*p++)
-    len++;
-  return len;
 }
 
 /*

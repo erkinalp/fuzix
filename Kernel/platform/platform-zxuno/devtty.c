@@ -35,7 +35,7 @@ struct s_queue ttyinq[NUM_DEV_TTY + 1] = {	/* ttyinq[0] is never used */
 /* tty1 is the screen */
 
 /* Output for the system console (kprintf etc) */
-void kputchar(char c)
+void kputchar(uint_fast8_t c)
 {
 	if (c == '\n')
 		tty_putc(0, '\r');
@@ -43,36 +43,32 @@ void kputchar(char c)
 }
 
 /* Both console and debug port are always ready */
-ttyready_t tty_writeready(uint8_t minor)
+ttyready_t tty_writeready(uint_fast8_t minor)
 {
-	minor;
 	return TTY_READY_NOW;
 }
 
-void tty_putc(uint8_t minor, unsigned char c)
+void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 {
-	minor;
+	char ch = c;
 	if (video_mode == 0)
-		vtoutput(&c, 1);
+		vtoutput(&ch, 1);
 }
 
-int tty_carrier(uint8_t minor)
+int tty_carrier(uint_fast8_t minor)
 {
-	minor;
 	return 1;
 }
 
-void tty_setup(uint8_t minor, uint8_t flags)
+void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 {
-	minor;
 }
 
-void tty_sleeping(uint8_t minor)
+void tty_sleeping(uint_fast8_t minor)
 {
-	minor;
 }
 
-void tty_data_consumed(uint8_t minor)
+void tty_data_consumed(uint_fast8_t minor)
 {
 }
 
@@ -80,7 +76,7 @@ void tty_data_consumed(uint8_t minor)
 /* This is used by the vt asm code, but needs to live in the kernel */
 uint16_t cursorpos;
 
-static struct display specdisplay = {
+static const struct display specdisplay = {
 	0,
 	256, 192,
 	256, 192,
@@ -106,13 +102,11 @@ static struct videomap specmap = {
  *	Graphics glue
  */
 
-__sfr __at 0xFE border;
-
-static struct fontinfo fontinfo = {
+static const struct fontinfo fontinfo = {
 	0, 255, 128, 255, FONT_INFO_8X8
 };
 
-static struct display vid_mode[3] = {
+static const struct display vid_mode[4] = {
 	{	/* Timex hi-res */
 		0,
 		512, 192,
@@ -160,50 +154,49 @@ static struct display vid_mode[3] = {
 	}
 };
 
-static uint8_t modebits[] = {
+static uint_fast8_t modebits[] = {
 	6, 2, 0
 };
 
-__sfr __at 0xFF timex;
+#define BORDER		0xFE
+#define TIMEX		0xFF
+#define UNO_CTRL	0xFC3B
+#define	UNO_DATA	0xFD3B
+#define ULA_CTRL	0xBF3B
+#define ULA_DATA	0xFF3B
 
-__sfr __banked __at 0xfc3b uno_ctrl;
-__sfr __banked __at 0xfd3b uno_data;
-
-__sfr __banked __at 0xbf3b ula_ctrl;
-__sfr __banked __at 0xff3b ula_data;
-
-static void video_set(uint8_t mode)
+static void video_set(uint_fast8_t mode)
 {
 	irqflags_t irq = di();
 
 	if (mode < 3) {
 		if (radastan) {
-			uno_ctrl = 64;
-			uno_data = 0;
+			out(UNO_CTRL, 64);
+			out(UNO_DATA, 0);
 		}
 		portff &= 0xF8;
 		portff |= modebits[mode];
-		timex = portff;
+		out(TIMEX, portff);
 		video_mode = mode;
 	} else {
 		/* Radastan, no offset, pad for scrolling */
-		uno_ctrl = 15;
-		uno_data = 0;
-		uno_ctrl = 64;
-		uno_data = 3;
-		uno_ctrl = 65;
-		uno_data = 0;
-		uno_data = 0;
-		uno_ctrl = 66;
-		uno_data = 128;
+		out(UNO_CTRL, 15);
+		out(UNO_DATA, 0);
+		out(UNO_CTRL, 64);
+		out(UNO_DATA, 3);
+		out(UNO_CTRL, 65);
+		out(UNO_DATA, 0);
+		out(UNO_DATA, 0);
+		out(UNO_CTRL, 66);
+		out(UNO_DATA, 128);
 		video_mode = mode;
 	}
 	irqrestore(irq);
 }
 
-int gfx_ioctl(uint8_t minor, uarg_t arg, char *ptr)
+int gfx_ioctl(uint_fast8_t minor, uarg_t arg, char *ptr)
 {
-	uint8_t n;
+	uint_fast8_t n;
 
 	if (minor == 1) {
 		switch (arg) {
@@ -250,9 +243,9 @@ int gfx_ioctl(uint8_t minor, uarg_t arg, char *ptr)
 			}
 			/* Turn into a byte offset */
 			xs += ys * 128;
-			uno_ctrl = 65;
-			uno_data = xs;
-			uno_data = xs >> 8;
+			out(UNO_CTRL, 65);
+			out(UNO_DATA, xs);
+			out(UNO_DATA, xs >> 8);
 			return 0;
 		}
 		/* TODO: ULAplus palette */
@@ -260,7 +253,7 @@ int gfx_ioctl(uint8_t minor, uarg_t arg, char *ptr)
 			n = ugetc(ptr);
 			vtborder &= 0xF8;
 			vtborder |= (n & 0x07);
-			border = vtborder;
+			out(BORDER, vtborder);
 			return 0;
 		case VTFONTINFO:
 			return uput(&fontinfo, ptr, sizeof(fontinfo));

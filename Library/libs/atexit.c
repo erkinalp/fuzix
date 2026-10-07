@@ -26,7 +26,7 @@ int __atexit_count = 0;
 
 void __do_exit(int rv)
 {
-	int count;
+	register int count;
 	vfuncp ptr;
 
 	count = __atexit_count - 1;

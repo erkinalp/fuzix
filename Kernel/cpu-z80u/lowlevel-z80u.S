@@ -42,6 +42,17 @@
 	; This up and down makes sure we can include it from cpu-z180.
 #include "../cpu-z80u/kernel-z80.def"
 
+#ifdef BANKED_Z80
+#define CPUSH	push af
+#define CPOP	pop af
+#else
+#define CPUSH
+#define CPOP
+#endif
+#ifndef HELPER_BANK
+#define HELPER_BANK	.overlay1
+#endif
+
 	.common
 ;
 ;	Called on the user stack in order to process signals that
@@ -117,7 +128,9 @@ signal_return:
 	ld a,1
 	ld (_int_disabled),a
 	call map_kernel_di
+	CPUSH
 	call _chksigs
+	CPOP
 	call map_proc_always_di
 	ld sp, (_udata + U_DATA__U_SYSCALL_SP)
 	jr deliver_signals
@@ -177,8 +190,10 @@ unix_syscall_entry:
         ; re-enable interrupts
         ei
 
+	CPUSH
         ; now pass control to C
         call _unix_syscall
+	CPOP
 
 	;
 	; WARNING: There are two special cases to beware of here
@@ -270,7 +285,10 @@ _doexec:
         di
         call map_proc_always_di
 
-        pop bc ; return address
+        pop hl ; return address
+#ifdef BANKED_Z80
+	pop hl ; old af
+#endif
         pop de ; start address
 
         ld hl, (_udata + U_DATA__U_ISP)
@@ -313,7 +331,9 @@ synchronous_fault:
 	ld sp,kstack_top
 	call map_kernel_di
 	push hl
+	CPUSH
 	call _doexit
+	CPOP
 trap_illegal:
         ld hl, illegalmsg
 traphl:
@@ -422,7 +442,9 @@ mmu_irq_ret:
 	ld hl,(__retaddr)
 	push hl
 
+	CPUSH
 	call _plt_interrupt
+	CPOP
 
 	pop hl
 	ld (__retaddr),hl
@@ -525,7 +547,9 @@ trap_signal:
 	push hl
 	ld hl,(_udata + U_DATA__U_PTAB)
 	push hl
+	CPUSH
         call _ssig
+	CPOP
 	; Now fall into pre-emption from which we will not return
 ;
 ;	Pre-emption. We need to get off the interrupt stack, switch task
@@ -577,7 +601,9 @@ intret2:call map_kernel_di
 	;
 	; Check for signals
 	;
+	CPUSH
 	call _chksigs
+	CPOP
 	;
 	; Process status is offset 0
 	;
@@ -589,7 +615,9 @@ intret2:call map_kernel_di
 	inc hl
 	set #PFL_BATCH,(hl)
 not_running:
+	CPUSH
 	call _plt_switchout
+	CPOP
 	;
 	; We are no longer in an interrupt or a syscall
 	;
@@ -715,7 +743,11 @@ numeral:add a, 0x30 ; start at '0' (0x30='0')
 _out:
 _out16:
 	push	bc
-	ld	hl,#4
+#ifdef BANKED_Z80
+	ld	hl,6
+#else
+	ld	hl,4
+#endif
 	add	hl,sp
 	ld	c,(hl)
 	inc	hl
@@ -732,7 +764,11 @@ _out16:
 _in16:
 _in:
 	push	bc
-	ld	hl,#4
+#ifdef BANKED_Z80
+	ld	hl,6
+#else
+	ld	hl,4
+#endif
 	add	hl,sp
 	ld	c,(hl)
 	inc	hl
@@ -764,12 +800,14 @@ ___hard_di:
 	ret
 
 ___hard_irqrestore:
-	pop de
-	pop hl
-	push hl
-	push de
+#ifdef BANKED_Z80
+	ld hl,4
+#else
+	ld hl,2
+#endif
+	add hl,sp
+	ld a,(hl)
 	di
-	ld a,l
 	ld (_int_disabled),a
 	or a
 	ret nz
@@ -814,3 +852,199 @@ is_z80:
 	ld l,1		; 8080 family
 	ld (_sys_cpu),hl	; Write cpu and cpu feat
 	ret
+
+#ifdef BANKED_Z80
+	HELPER_BANK
+#else
+	.code
+#endif
+
+;
+;	Private bank correct helpers
+;
+;
+		.export _memcpy
+_memcpy:
+		push	bc
+#ifdef BANKED_Z80
+		ld	hl,11
+#else
+		ld	hl,9
+#endif
+		add	hl,sp
+		ld	b,(hl)	; Count
+		dec	hl
+		ld	c,(hl)
+		dec	hl
+		ld	d,(hl)	; Source
+		dec	hl
+		ld	e,(hl)
+		dec	hl
+		ld	a,(hl)	; Destination
+		dec	hl
+		ld	l,(hl)
+		ld	h,a
+
+		ld	a,b
+		or	c
+		jr	z,done
+
+		push	hl
+		ex	de,hl
+		ldir
+		pop	hl
+done:
+		pop	bc
+		ret
+
+;
+;	Memset
+;
+;	TODO: rewrite into Z80 style with a set and copy
+;
+		.export _memset
+_memset:
+		push	bc
+#ifdef BANKED_Z80
+		ld	hl,6		; Allow for the push of BC
+#else
+		ld	hl,4		; Allow for the push of BC
+#endif
+		add	hl,sp
+		ld	e,(hl)
+		inc	hl
+		ld	d,(hl)		; Pointer
+		push	de		; Return is the passed pointer
+		inc	hl
+		ld	a,(hl)		; fill byte
+		inc	hl		; skip fill high
+		inc	hl
+		ld	c,(hl)
+		inc	hl
+		ld	b,(hl)		; length into BC
+
+		ld	l,a		; We need to free up A for the loop check
+		ex	de,hl		; now have HL as the pointer and E as the fill byte
+		jp	loopin
+
+loop:
+		ld	(hl),e
+		inc	hl
+		dec	bc
+loopin:
+		ld	a,b
+		or	c
+		jr	nz,loop
+		pop	hl		; Address passed in
+		pop	bc		; Restore BC
+		ret
+
+		.export _strlen
+_strlen:
+#ifdef BANKED_Z80
+		ld	hl,4		; Allow for the push of BC
+#else
+		ld	hl,2		; Allow for the push of BC
+#endif
+		add	hl,sp
+		ld	e,(hl)
+		inc	hl
+		ld	d,(hl)		; Pointer
+		ex	de,hl
+		xor	a
+		ld	de, 0xFFFF
+sloop:		inc	de
+		cp	(hl)
+		inc	hl
+		jr	nz, sloop
+		ex	de,hl
+		ret
+
+;
+;	memcpy
+;
+		.export _memcmp
+_memcmp:
+		push	bc
+#ifdef BANKED_Z80
+		ld	hl,11
+#else
+		ld	hl,9
+#endif
+		add	hl,sp
+		ld	b,(hl)	; Count
+		dec	hl
+		ld	c,(hl)
+		dec	hl
+		ld	d,(hl)	; Source 1
+		dec	hl
+		ld	e,(hl)
+		dec	hl
+		ld	a,(hl)	; Source 2
+		dec	hl
+		ld	l,(hl)
+		ld	h,a
+
+next:
+		ld	a,b
+		or	c
+		jr	z,ret0
+
+		ld	a,(de)		; get src 2
+		cp	(hl)		; check v src 1
+		jr	nz, mismatch	; and C if src2 < src1
+		inc	de
+		inc	hl
+		dec	bc
+		jr	next
+mismatch:
+		ld	hl,1
+		jr	c, mis_low
+		ld	hl,-1
+mis_low:
+		pop	bc
+		ret
+ret0:		ld	hl,0
+		pop	bc
+		ret
+
+;
+;	strcmp
+;
+		.export _strcmp
+_strcmp:
+		push	bc
+#ifdef BANKED_Z80
+		ld	hl,11
+#else
+		ld	hl,9
+#endif
+		add	hl,sp
+		ld	b,(hl)	; Count
+		dec	hl
+		ld	c,(hl)
+		dec	hl
+		ld	d,(hl)	; Source 1
+		dec	hl
+		ld	e,(hl)
+		dec	hl
+		ld	a,(hl)	; Source 2
+		dec	hl
+		ld	l,(hl)
+		ld	h,a
+
+snext:
+		ld	a,b
+		or	c
+		jr	z,ret0
+
+		ld	a,(de)		; get src 2
+		cp	(hl)		; check v src 1
+		jr	nz, mismatch	; and C if src2 < src1
+		or	a		; Same and end
+		jr	z,ret0
+
+		inc	de
+		inc	hl
+		dec	bc
+		jr	snext

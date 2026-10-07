@@ -121,7 +121,7 @@ arg_t _setgid(void)
 {
 	/* We must be superuser, have the group in question is our effective
 	   ore real group, or be a member of that group */
-	if (super() || udata.u_gid == gid || udata.u_egid == gid 
+	if (super() || udata.u_gid == gid || udata.u_egid == gid
 		|| in_group(gid)) {
 		if (udata.u_egid == 0)
 			udata.u_gid = gid;
@@ -206,7 +206,7 @@ arg_t _times(void)
 {
 	irqflags_t irq;
 
-	irq = di();	
+	irq = di();
 
 	uput(&udata.u_ptab->p_utime, buf, 4 * sizeof(clock_t));
 	uput(&ticks, buf + 4 * sizeof(clock_t),
@@ -282,8 +282,8 @@ uint16_t incr;
 
 arg_t _sbrk(void)
 {
-	uaddr_t oldbrk;
-	ssize_t inc = incr;
+	register uaddr_t oldbrk;
+	arg_t inc = incr;
 
 	udata.u_argn += (oldbrk = udata.u_break);
 
@@ -295,7 +295,7 @@ arg_t _sbrk(void)
 	if (_brk())		/* brk (udata.u_argn) */
 		return (-1);
 
-	return ((unsigned) oldbrk);
+	return oldbrk;
 }
 
 #undef incr
@@ -312,7 +312,7 @@ int options;
 
 arg_t _waitpid(void)
 {
-	regptr ptptr p;
+	register ptptr p;
 	int retval;
 	uint_fast8_t found;
 
@@ -325,8 +325,7 @@ arg_t _waitpid(void)
 		pid = -udata.u_ptab->p_pgrp;
 	/* Search for an exited child; */
 	for (;;) {
-		chksigs();
-		if (udata.u_cursig) {
+		if (chksigs()) {
 			udata.u_error = EINTR;
 			return -1;
 		}
@@ -350,7 +349,7 @@ arg_t _waitpid(void)
 						return retval;
 					}
 					if (p->p_event && (options & WUNTRACED)) {
-						retval = (uint16_t)p->p_event << 8 | _WSTOPPED;
+						retval = (uint16_t)(p->p_event << 8) | _WSTOPPED;
 						p->p_event = 0;
 						return retval;
 					}
@@ -363,7 +362,7 @@ arg_t _waitpid(void)
 		}
 		/* Nothing yet, so wait */
 		if (options & WNOHANG)
-			break;
+			return 0;
 		psleep(udata.u_ptab);
 	}
 	udata.u_error = EINTR;
@@ -493,33 +492,48 @@ signal (sig, func)               Function 35        ?
 int16_t sig;
 int16_t (*func)();
 ********************************************/
+
+
 #define sig (int16_t)udata.u_argn
 #define func (int (*)(int))udata.u_argn1
 
-arg_t _signal(void)
+/* Helper that checks the signal is within range and returns
+   the correct sigbits and mask */
+struct sigbits *sigbits(uint16_t *m)
 {
-	int16_t retval;
-	irqflags_t irq;
 	register struct sigbits *sb = udata.u_ptab->p_sig;
-
-	if (sig < 1 || sig >= NSIGS) {
+	if (sig < 1 || sig > NSIGS) {
 		udata.u_error = EINVAL;
-		goto nogood;
+		return NULL;
 	}
 	if (sig > 15)
 		sb++;
+	*m = sigmask(sig);
+	return sb;
+}
+
+arg_t _signal(void)
+{
+	irqflags_t irq;
+	uint16_t m;
+	register struct sigbits *sb;
+	arg_t retval;
+
+	sb = sigbits(&m);
+	if (sb == NULL)
+		return -1;
 
 	irq = di();
 
 	if (func == SIG_IGN) {
 		if (sig != SIGKILL && sig != SIGSTOP)
-			sb->s_ignored |= sigmask(sig);
+			sb->s_ignored |= m;
 	} else {
 		if (func != SIG_DFL && !valaddr_r((uint8_t *) func, 1)) {
 			udata.u_error = EFAULT;
-			goto nogood;
+			return -1;
 		}
-		sb->s_ignored &= ~sigmask(sig);
+		sb->s_ignored &= ~m;
 	}
 	retval = (arg_t) udata.u_sigvec[sig];
 	if (sig != SIGKILL && sig != SIGSTOP)
@@ -527,11 +541,7 @@ arg_t _signal(void)
 	/* Force recalculation of signal pending in the syscall return path */
 	recalc_cursig();
 	irqrestore(irq);
-	
-	return (retval);
-
-nogood:
-	return (-1);
+	return retval;
 }
 
 #undef sig
@@ -548,17 +558,18 @@ int16_t disp;
 /* Implement sighold/sigrelse */
 arg_t _sigdisp(void)
 {
-	register struct sigbits *sb = udata.u_ptab->p_sig;
-	if (sig < 1 || sig >= NSIGS || sig == SIGKILL || sig == SIGSTOP) {
+	register struct sigbits *sb;
+	uint16_t m;
+
+	sb = sigbits(&m);
+	if (sb == NULL || sig == SIGKILL || sig == SIGSTOP) {
 		udata.u_error = EINVAL;
 		return -1;
 	}
-	if (sig > 15)
-		sb++;
 	if (disp == 1)
-		sb->s_held |= sigmask(sig);
+		sb->s_held |= m;
 	else
-		sb->s_held &= ~sigmask(sig);
+		sb->s_held &= ~m;
 	/* Force recalculation of signal pending in the syscall return path */
 	recalc_cursig();
 	return 0;
@@ -577,7 +588,7 @@ int16_t sig;
 
 arg_t _kill(void)
 {
-	regptr ptptr p;
+	register ptptr p;
 	register unsigned f = 0, s = 0;
 
 	if (sig < 0 || sig >= NSIGS) {
@@ -649,7 +660,7 @@ arg_t _setpgrp(void)
 	udata.u_ptab->p_pgrp = udata.u_ptab->p_pid;
 	udata.u_ptab->p_tty = 0;
 	return 0;
-#endif	
+#endif
 }
 
 /********************************************

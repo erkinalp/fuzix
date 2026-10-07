@@ -13,12 +13,14 @@ Kernel
 0000-04FF	Loader / standard boot ROM image
 0500-7FFF	Monitor/Kernel ROM
 8000-AFFF	User hole
-B000-FFFF	Kernel/Common
+B000-FDFF	Kernel/Common (starting with IM2 vectors)
+FE00-FEFF	Serial buffers (A)
+FF00-FFFF	Serial buffers (B)
 
 User
 
-0000-BFFF	Process
-C000-FFFF	Kernel/Common
+0000-AFFF	Process
+B000-FFFF	Kernel/Common
 
 Hardware
 -	Z80 DART
@@ -28,6 +30,7 @@ Hardware
 -	Printer port (output/strobe/busy only)
 
 TODO
+-	Floppy formatting, floppy disk media setting ioctls
 -	In general needs soft interrupts implementing so
 	that our entry for timer is something like
 

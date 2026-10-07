@@ -55,7 +55,11 @@ arg_t _execve(void)
 	uaddr_t dynamic;
 	uaddr_t lomem;
 	uaddr_t himem;
+	uaddr_t stacksize;
 	uint_fast8_t mflags;
+#ifdef CONFIG_SCRIPT_INTERP
+	uint_fast8_t script = 0;
+#endif
 
 	himem = ramtop - PROGLOAD;
 
@@ -63,13 +67,16 @@ arg_t _execve(void)
 	kprintf("_execve(%s)\n", name);
 #endif
 
-	if (!(ino = n_open_lock(name, NULLINOPTR))) {
-		#ifdef DEBUG
-			kprintf("failed: file not found\n");
-		#endif
+	if (!(ino = n_open_argn())) {
+#ifdef DEBUG
+		kprintf("failed: file not found\n");
+#endif
 		return (-1);
 	}
 
+#ifdef CONFIG_SCRIPT_INTERP
+restart:
+#endif
 	if (!((getperm(ino) & OTH_EX) &&
 	      (ino->c_node.i_mode & F_REG) &&
 	      (ino->c_node.i_mode & (OWN_EX | OTH_EX | GRP_EX)))) {
@@ -99,6 +106,31 @@ arg_t _execve(void)
 #endif
 		goto enoexec;
 	}
+
+#ifdef CONFIG_SCRIPT_INTERP
+	/*
+	 *	"#!" scripts, one interpreter and one level: a file whose
+	 *	first bytes are #! executes the platform's fixed
+	 *	interpreter instead, which is how the bytecode compiler's
+	 *	output runs as ./prog.  The line's text is not parsed -
+	 *	the interpreter is fixed - and the script's own path
+	 *	reaches the interpreter as argv[1] because the arg block
+	 *	below gains the interpreter's name in front of the
+	 *	shell-supplied argv[0].  The kernel-space path works as a
+	 *	"user" address because the platform's valaddr blesses
+	 *	reads of exactly that string.
+	 */
+	if (!script && ((uint8_t *)&ehdr)[0] == '#' &&
+	    ((uint8_t *)&ehdr)[1] == '!') {
+		extern const uint8_t *plt_script_interp(void);
+		script = 1;
+		i_unlock_deref(ino);
+		if (!(ino = n_open_lock((uint8_t *)plt_script_interp(),
+					NULLINOPTR)))
+			return (-1);
+		goto restart;
+	}
+#endif
 
 	if (!IS_ELF(ehdr)) {
 #ifdef DEBUG
@@ -138,6 +170,7 @@ arg_t _execve(void)
 
 	lomem = 0;
 	dynamic = 0;
+	stacksize = USERSTACK;
 	for (int i=0; i<ehdr.e_phnum; i++) {
 		Elf32_Phdr* ph = &phdr[i];
 		switch (ph->p_type)
@@ -155,6 +188,26 @@ arg_t _execve(void)
 				dynamic = ph->p_vaddr;
 				break;
 			}
+
+			case PT_GNU_STACK:
+			{
+				/*
+				 * The stack is a fixed window between BSS and
+				 * heap, so its size is decided here, once, and
+				 * a program that needs more than the default
+				 * has no way to say so at run time - it just
+				 * runs off the bottom into its own BSS.  The
+				 * linker will record a request (ld -z
+				 * stack-size=N); honour it, within reason, so
+				 * a recursive-descent compiler can ask for
+				 * what it needs without every other program
+				 * paying for it out of its heap.
+				 */
+				if (ph->p_memsz > stacksize &&
+				    ph->p_memsz <= USERSTACK_MAX)
+					stacksize = (uaddr_t)ALIGNUP(ph->p_memsz);
+				break;
+			}
 		}
 	}
 	if (dynamic == 0) {
@@ -165,7 +218,7 @@ arg_t _execve(void)
 	}
 	/* dynamic points at the load address of the relocation data; this is also
 	 * the top of BSS. */
-	uaddr_t stacktop = (uaddr_t)ALIGNUP(dynamic) + USERSTACK;
+	uaddr_t stacktop = (uaddr_t)ALIGNUP(dynamic) + stacksize;
 	if ((stacktop > himem) || (lomem > himem)) {
 #ifdef DEBUG
 		kprintf("failed: out of memory (have %p, asked for %p)\n", himem, stacktop);
@@ -186,6 +239,25 @@ arg_t _execve(void)
 #endif
 		goto enomem;
 	}
+
+#ifdef CONFIG_SCRIPT_INTERP
+	/* A script execution: the interpreter's path becomes argv[0],
+	   pushing the script's path (the shell's argv[0]) to argv[1],
+	   which is where the interpreter looks for what to run. */
+	if (script) {
+		extern const uint8_t *plt_script_interp(void);
+		const uint8_t *ip = plt_script_interp();
+		unsigned il = strlen((const char *)ip) + 1;
+		if (abuf->a_arglen + il + 4 > BLKSIZE - 3 * sizeof(int) - 12) {
+			udata.u_error = E2BIG;
+			goto enomem;
+		}
+		memmove(abuf->a_buf + il, abuf->a_buf, abuf->a_arglen);
+		memcpy(abuf->a_buf, ip, il);
+		abuf->a_argc++;
+		abuf->a_arglen = (int)(size_t)ALIGNUP(abuf->a_arglen + il);
+	}
+#endif
 	udata.u_ptab->p_status = P_NOSLEEP;
 
 	/* At this point we should call pagemap_realloc(), for this to work on a
@@ -194,6 +266,15 @@ arg_t _execve(void)
 
 	if (pagemap_realloc(NULL, lomem))
 		goto enomem;
+
+#ifdef CONFIG_PLT_EXEC_CLEANUP
+	/* The old image's out-of-process resources (the PSRAM arenas
+	   here) do not survive into the new program */
+	{
+		extern void plt_exec_cleanup(void);
+		plt_exec_cleanup();
+	}
+#endif
 
 	/* At this point, we are committed to reading in and
 	 * executing the program. This call must not block. */
@@ -263,7 +344,7 @@ arg_t _execve(void)
 #ifdef DEBUG
 	kprintf("found %d relocations at %p\n", relcount, rel);
 #endif
-		
+
 	/* Relocate, if a relocation table was found. */
 
 	while (relcount--)
@@ -305,7 +386,7 @@ arg_t _execve(void)
 
 	/* Clear the stack (the BSS has already been cleared by the loader). */
 
-	uzero((void*)dynamic, USERSTACK);
+	uzero((void*)dynamic, stacksize);
 
 	if (!(mflags & MS_NOSUID)) {
 		/* setuid, setgid if executable requires it */
@@ -328,6 +409,19 @@ arg_t _execve(void)
 	int argc;
 	uint8_t** nargv = wargs(((char *) stacktop - sizeof(uaddr_t)), abuf, &argc);
 	uint8_t** nenvp = wargs((char *) (nargv), ebuf, NULL);
+
+	/* The stack pointer ends up wherever the argument and environment
+	 * strings happen to leave it: wargs subtracts their exact byte
+	 * length, and ALIGNUP is the identity on this platform. AAPCS
+	 * requires an 8-byte aligned stack on entry to a function, so on
+	 * ARM a program handed an odd multiple of 4 miscompiles its own
+	 * 64-bit accesses. Lay the block out again 4 bytes lower when it
+	 * lands wrong -- sp addresses [argc][argv][envp...] as one unit, so
+	 * the whole block has to move together, not just sp. */
+	if ((uaddr_t)(nenvp - 2) & 7) {
+		nargv = wargs(((char *) stacktop - 2 * sizeof(uaddr_t)), abuf, &argc);
+		nenvp = wargs((char *) (nargv), ebuf, NULL);
+	}
 
 	/* Fill in udata.u_name with program invocation name. */
 
@@ -377,7 +471,7 @@ error:
 		tmpfree(ebuf);
 	if (phdr)
 		tmpfree(phdr);
-	i_unlock_deref(ino);
+	i_deref(ino);
 	return -1;
 
 enomem:

@@ -24,15 +24,16 @@
 ;	Step rate
 ;	Head load/unload times
 ;	Write off time	af
-;	(12ms step 30ms head stabilize, 4ms head load, max (0xf) head
-;	unload)
+;	(4ms step ~28ms head stabilize, 4ms head load, 16ms head unload)
 ;
 		.module fdc765
 
 		.include "kernel.def"
 		.include "../../cpu-z80/kernel-z80.def"
 
+.if CONFIG_FDC765
 
+;	.globl _fd765_do_init
 	.globl _fd765_do_nudge_tc
 	.globl _fd765_do_recalibrate
 	.globl _fd765_do_seek
@@ -52,39 +53,63 @@
 	.globl _fd765_drive
 
 	.globl _vtborder
+	.globl _int_disabled
 	.globl a_map_to_bc
 
 
 	.globl diskmotor
 
-	.area _COMMONMEM
+	.area _CODE
 
-diskmotor:
-	 .db 0
-;
-; Twiddle the Terminal Count line to the FDC. Not supported by the
-; CPC
-;
-_fd765_do_nudge_tc:
-	ret
+; AMSDOS BIOS parameters for CPC 3" drive (Setted by firmware, but...):
+;   SRT = 10: (16 - 10) * 2 ms = 12 ms per step
+;   HUT = 1: 1 * 32 ms = 32 ms head unload
+;   HLT = 1: 1 * 4 ms = 4 ms head load
+;   ND  = 1: non-DMA / PIO mode
 
-; Writes A to the FDC data register.
+;_fd765_do_init:
+
+;SRT	.equ 10
+;HUT	.equ 1
+;HLT	.equ 1
+;ND	.equ 1
+
+;SPECIFY_BYTE_1:	.db (SRT << 4) | HUT
+;SPECIFY_BYTE_2:	.db (HLT << 1) | ND
+
+;_fd765_do_init:
+;	ld a,#0x03             ; SPECIFY
+;	call fd765_tx
+;
+;	ld a,(SPECIFY_BYTE_1)             ; SRT=12 ms, HUT=16 ms
+;	call fd765_tx
+;
+;	ld a,(SPECIFY_BYTE_2)             ; HLT=2 ms, ND=1
+;	call fd765_tx
+;Drain 765
+;	ld e,#4
+;drain_loop:
+;	ld a,#0x08             ; SENSE INTERRUPT STATUS
+;	call fd765_tx
+;	call fd765_read_status ; ST0, PCN
+;	dec e
+;	jr nz,drain_loop
+;	ret	
+
 
 fd765_tx:
-	push bc
-	ld bc,#0xfb7e					;; I/O address for FDC main status register
+	ld bc,#0xfb7e				;; I/O address for FDC main status register
 	push af						;;
-	fwc1: in a,(c)				;; 
+fwc1:
+	in a,(c)					;; 
 	add a,a						;; 
 	jr nc,fwc1					;; 
 	add a,a						;; 
 	jr nc,fwc2					;; 
 	pop af						;; 
 	ret							
-
-	fwc2: 
-	pop af				;; 
-
+fwc2:
+	pop af						;; 
 	inc c						;; 
 	out (c),a					;; write command byte 
 	dec c						;; 
@@ -92,41 +117,56 @@ fd765_tx:
 	;; some FDC documents say there must be a delay between each
 	;; command byte, but in practice it seems this isn't needed on CPC.
 	;; Here for compatiblity.
-	ld a,#5				;;
-	fwc3: dec a			;; 
-	jr nz,fwc3			;; 
-	pop bc
+	ld a,#5	
+fwc3:
+	dec a
+	jr nz,fwc3
+
 	; FIXME: is our delay quite long enough for spec ?
 	; might need them to be ex (sp),ix ?
 	ret
+;
+; Twiddle the Terminal Count line to the FDC. Not supported by the
+; CPC
+;
+_fd765_do_nudge_tc:
+	ret
+
+; Read the next sector ID off the disk.
+; (Only used for debugging.)
+
+_fd765_do_read_id:
+	ld a, #0x4a 				; READ MFM ID
+	call fd765_tx
+	call send_head				; specified head, drive 0
 
 ; Reads bytes from the FDC data register until the FDC tells us to stop (by
 ; lowering DIO in the status register).
 
 fd765_read_status:
 	ld hl, #_fd765_status
-	ld bc,#0xfb7e
-	fr1:
+	ld bc, #0xfb7e
+
+fr1:
 	in a,(c)
 	cp #0xc0 
 	jr c,fr1
 	
 	inc c 
-	in a,(c) 
+	ini
+	inc b 
 	dec c 
-	ld (hl),a 
-	inc hl 
 
 	ld a,#5 
-	fr2: 
+fr2: 
 	dec a 
 	jr nz,fr2
 	in a,(c) 
 	and #0x10 
 	jr nz,fr1
 
-
 	ret
+
 _fd765_status:
 	.ds 8				; 8 bytes of status data
 
@@ -138,7 +178,7 @@ send_head:
 	add a
 	add a
 	add h
-	jr fd765_tx
+	jp fd765_tx
 
 ; Performs a RECALIBRATE command.
 
@@ -183,24 +223,10 @@ wait_for_seek_ending:
 
 	bit 4,a
 	
-	ret
+	; Head settle: ~14 ms (one external loop, AMSDOS BIOS = 15ms)
+	ld e,#1
+	jr wait2
 
-	; Now settle the head (FIXME: what is the right value ?)
-	ld a, #30		; 30ms
-;
-;	This assumes uncontended timing
-;
-wait_ms:
-	push bc
-wait_ms_loop:
-	ld b,#0xDC
-wait_ms_loop2:
-	dec b
-	jr nz, wait_ms_loop2
-	dec a
-	jr nz, wait_ms_loop
-	pop bc
-	ret
 
 _fd765_motor_off:
 	push bc
@@ -222,10 +248,14 @@ _fd765_motor_on:
 	out (c),a
 	; Now wait for spin up
 
-	ld e,#10		; FIXME right value ?? 	
+    ; CPC Z80 clock: 4 MHz.
+    ; On CPC, this inner loop takes ~7 us per iteration because
+    ; instruction timings are stretched to whole microseconds by the gate array.
+    ; 2000 * 7 us * 9 ~= 252 ms.
+    ld e,#18
+
 wait2:
-	; The classic Z80 KHz timing loop
-	ld bc,#3548	; 3.548MHz for spectrum, should change for cpc.FIXME
+    ld bc,#2000
 wait1:
 	dec bc
 	ld a,b
@@ -234,69 +264,7 @@ wait1:
 	dec e
 	jr nz, wait2
 	ret
-;
-; Reads a 512-byte sector, after having previously saught to the right track.
-;
-; We need to be doubly careful here as the 765A has a 'feature' whereby it
-; won't report an overrun on the last byte so we must always make timing
-;
-_fd765_do_read:
-	ld a, #0x46			; READ SECTOR MFM
 
-	; FIXME: need to return a last cmd byte here and write it
-	; after this crap or we may miss if we write just the sector hits
-	; the head (BACKPORT ME ??)
-	call setup_read_or_write
-
-	ld hl, (_fd765_buffer)
-	ld a, (_fd765_map)
-	or a
-	;push af
-	jr z, cont_read_nomap
-	call a_map_to_bc
-	out (c),c
-cont_read_nomap:
-	ld bc,#0x7f10
-	out (c),c
-	ld c,#0x46		;Cyan
-	out (c),c
-
-	di				; performance critical,
-					; run with interrupts off
-	xor a
-	call fd765_tx			; send the final unused byte
-					; to fire off the command	
-	ld bc, #0xfb7e
-
-fdc_data_read: 
-	in a,(c)				          ;; FDC has data and the direction is from FDC to CPU
-	jp p,fdc_data_read		;; 
-	and #0x20					;; "Execution phase" i.e. indicates reading of sector data
-	jp z,fdc_read_end 		
-
-	inc c					;; BC = I/O address for FDC data register
-	in a,(c)				;; read from FDC data register
-	ld (hl),a				;; write to memory
-	dec c					;; BC = I/O address for FDC main status register
-	inc hl					;; increment memory pointer
-	jp fdc_data_read
-
-fdc_read_end:
-	
-	ld bc,#0x7fc2
-	out (c),c
-	ld (_fd765_buffer), hl
-	call _fd765_do_nudge_tc		; Tell FDC we've finished
-	ei
-
-	call fd765_read_status
-	call tc_fix
-
-	ld bc,#0x7f10
-	out (c),c
-	ld a,(_vtborder)
-	out (c),a
-	ret
 ;
 ;	We will get an error reported that the command did not complete
 ;	because the tc bit is not controllable. Spot that specific error
@@ -316,86 +284,51 @@ tc_fix:
 	res 6,(hl)
 	ret
 
-;
-;	Write is much like read just the other direction
-;
-_fd765_do_write:
-					; interrupts off
-	ld a, #0x45			; WRITE SECTOR MFM
-	call setup_read_or_write
-
-	ld hl, (_fd765_buffer)
-	ld a, (_fd765_map)
-	or a
-	;push af
-	jr z, cont_write_nomap
-	call a_map_to_bc
-	out (c),c
-cont_write_nomap:
-
-	ld bc,#0x7f10
-	out (c),c
-	ld c,#0x47		;Pink
-	out (c),c
-
-	di
-
-	xor a
-	call fd765_tx			; send the final unused 0 byte
-					; to fire off the command	
-	ld bc, #0xfb7e
-fdc_data_write: 
-	in a,(c)				          ;; FDC has data and the direction is from FDC to CPU
-	jp p,fdc_data_write		;; 
-	and #0x20					;; "Execution phase" i.e. indicates reading of sector data
-	jp z,fdc_write_end 		
-
-	inc c					;; BC = I/O address for FDC data register
-	ld a,(hl)				;; read from memory
-	out (c),a				;; write to FDC data register
-	dec c					;; BC = I/O address for FDC main status register
-	inc hl					;; increment memory pointer
-	jp fdc_data_write
-
-fdc_write_end:
-
-	ld bc,#0x7fc2
-	out (c),c
-
-	ld (_fd765_buffer), hl
-	call _fd765_do_nudge_tc		; Tell FDC we've finished
-	ei
-	call fd765_read_status
-	call tc_fix
-
-	ld bc,#0x7f10
-	out (c),c
-	ld a,(_vtborder)
-	out (c),a
-
-	ret
 ; Given an FDC opcode in A, sets up a read or write.
 
 setup_read_or_write:
+	push af
 	call fd765_tx			; 0: send opcode (in A)
 	call send_head			; 1: specified head, drive #0
-	ld a, (_fd765_track)		; 2: specified track
+	ld a, (_fd765_track)	; 2: specified track
 	call fd765_tx
 	ld a, (_fd765_head)		; 3: specified head
 	call fd765_tx
-	ld a, (_fd765_sector)		; 4: specified sector
-	ld b, a
+	ld a, (_fd765_sector)	; 4: specified sector
+	ld d, a
 	call fd765_tx
-	ld a, #2			; 5: bytes per sector: 512
+	ld a, #2				; 5: bytes per sector: 512
 	call fd765_tx
 	ld a, (_fd765_sectors)		
-	add b				; add first sector
-	dec a				; 6: last sector (*inclusive*)
+	add d					; add first sector
+	dec a					; 6: last sector (*inclusive*)
 	call fd765_tx
-	ld a, #0x2A   			; 7: Gap 3 length (2A is standard for 3" drives)
+	ld a, (_fd765_gap)   	; 7: Gap 3 length (2A is standard for 3" drives)
 	call fd765_tx
 	; We return with the final unused 0 value not written. We need all
 	; the other stuff lined up before we write this.
+	ld hl, (_fd765_buffer)
+	pop af
+	push af
+	ld bc,#0x7f10
+	out (c),c
+	out (c),a				;use command # as color: read-0x46-cyan, write-0x45-purple
+	ld bc, #0xfb7e
+	ld a, (_fd765_map)
+	or a
+	jr z, cont_trans_nomap
+	exx
+	call a_map_to_bc
+	exx
+cont_trans_nomap:
+	di				; performance critical, interrupting 765 transfer sequences is not a good idea
+					; run with interrupts off
+	ex	af,af'
+	xor a
+	call fd765_tx	; send the final unused byte
+					; to fire off the command
+	pop af
+	ex	af,af'
 	ret
 
 _fd765_buffer:
@@ -404,12 +337,84 @@ _fd765_map:
 	.db 0
 _fd765_sectors:
 	.db 0
+_fd765_gap:
+	.db 0x2A
 
-; Read the next sector ID off the disk.
-; (Only used for debugging.)
+fdc_transfer_end:
+	ld (_fd765_buffer), hl		
+	ld a,(_int_disabled)
+	jr nz, cont_no_int
+	ei							
+cont_no_int:
+	call fd765_read_status
+	call tc_fix
 
-_fd765_do_read_id:
-	ld a, #0x4a 				; READ MFM ID
-	call fd765_tx
-	call send_head				; specified head, drive 0
-	jp fd765_read_status
+	ld bc,#0x7f10
+	out (c),c
+	ld a,(_vtborder)
+	out (c),a
+	ret
+
+.area _COMMONMEM
+;
+; Reads a 512-byte sector, after having previously saught to the right track.
+;
+; We need to be doubly careful here as the 765A has a 'feature' whereby it
+; won't report an overrun on the last byte so we must always make timing
+;
+_fd765_do_read:
+	ld a, #0x46			; READ SECTOR MFM
+	ld e, #1
+	jr fd765_do_trans
+
+
+_fd765_do_write:
+	ld a, #0x45			; WRITE SECTOR MFM
+	ld e, #0	
+
+	; FIXME: need to return a last cmd byte here and write it
+	; after this crap or we may miss if we write just the sector hits
+	; the head (BACKPORT ME ??)
+
+fd765_do_trans:
+	call setup_read_or_write
+	or a
+	jr z, fdc_data_trans
+	exx
+	out (c),c
+	exx
+fdc_data_trans:	
+	ld a, e
+	or a
+	jr z,fdc_data_write
+
+fdc_data_read:
+	in a,(c)				;; FDC has data and the direction is from FDC to CPU
+	jp p,fdc_data_read
+	and #0x20				;; "Execution phase" i.e. indicates reading of sector data
+	jr z,fdc_trans_end 	
+	inc c					;; BC = I/O address for FDC data register
+	ini						;; read from FDC data register
+	inc b
+	dec c					;; BC = I/O address for FDC main status register
+	jr fdc_data_read
+
+fdc_data_write:
+	in a,(c)				;; FDC has data and the direction is from FDC to CPU
+	jp p,fdc_data_write
+	and #0x20				;; "Execution phase" i.e. indicates reading of sector data
+	jr z,fdc_trans_end 	
+	inc b
+	inc c					;; BC = I/O address for FDC data register
+	outi					;; write to FDC data register
+	dec c					;; BC = I/O address for FDC main status register
+	jr fdc_data_write
+
+fdc_trans_end:
+	ld bc,#0x7fc2
+	out (c),c
+	jp fdc_transfer_end
+
+diskmotor:
+	.db 0
+.endif

@@ -48,16 +48,15 @@ extern uint16_t swap_dev;
 #define Z180_IO_BASE       0x40
 #define MARK4_IO_BASE      0x80
 
-#define MAX_BLKDEV 3	    /* 2 IDE drives, 1 SD drive */
-
-#define CONFIG_IDE
-#define IDE_REG_BASE       MARK4_IO_BASE
-#define IDE_8BIT_ONLY
-#define IDE_REG_CS1_FIRST
-
-/* On-board SD on Mark IV */
-#define CONFIG_SD
-#define SD_DRIVE_COUNT 1
+#define CONFIG_TD_NUM		3
+/* RC2014 style CF IDE */
+#define CONFIG_TD_IDE
+#define CONFIG_TINYIDE_8BIT
+#define CONFIG_TINYIDE_INDIRECT
+#define IDE_IS_8BIT(x)		1
+/* SD via CSIO : Needs an additional GPIO pin so not on all boards. */
+#define CONFIG_TD_SD
+#define TD_SD_NUM		1
 
 /* On-board DS1302 on Mark IV, we can read the time of day from it */
 #define CONFIG_RTC_DS1302
@@ -65,32 +64,17 @@ extern uint16_t swap_dev;
 #define CONFIG_RTC_FULL
 #define CONFIG_RTC_INTERVAL 30 /* deciseconds between reading RTC seconds counter */
 
-/* Memory backed devices */
-#define CONFIG_DEV_MEM          /* enable /dev/mem driver */
-#define CONFIG_RAMDISK          /* enable memory-backed device driver */
-#define DEV_RD_ROM_PAGES 64     /* size of the ROM disk (/dev/rd0) in 4KB pages */
-#define DEV_RD_RAM_PAGES 0      /* size of the RAM disk (/dev/rd1) in 4KB pages */
-
-#define DEV_RD_ROM_START ((uint32_t)(128-DEV_RD_ROM_PAGES) << 12)
-#define DEV_RD_RAM_START ((uint32_t)(256-DEV_RD_RAM_PAGES) << 12)
-#define DEV_RD_ROM_SIZE  ((uint32_t)DEV_RD_ROM_PAGES << 12)
-#define DEV_RD_RAM_SIZE  ((uint32_t)DEV_RD_RAM_PAGES << 12)
-
 /* Optional PropIOv2 board on ECB bus */
-/* #define CONFIG_PROPIO2 */		/* #define CONFIG_PROPIO2 to enable as tty3 */
+#define CONFIG_PROPIO2		/* #define CONFIG_PROPIO2 to enable as tty3 and disk */
 #define PROPIO2_IO_BASE		0xA8
 
 /* Device parameters */
 #ifdef CONFIG_PROPIO2
-	#define NUM_DEV_TTY 3
-
-	/* PropIO as the console */
-	#define TTYDEV   (512+3)  /* System console (used by kernel, init) */
+#define NUM_DEV_TTY 3
 #else
-	#define NUM_DEV_TTY 2
-
-	/* ASCI0 as the console */
-	#define TTYDEV   (512+1)  /* System console (used by kernel, init) */
+#define NUM_DEV_TTY 2
 #endif
+/* ASCI0 as the console. This matches the ROMWBW behaviour */
+#define TTYDEV   (512+1)  /* System console (used by kernel, init) */
 
 #define plt_copyright()

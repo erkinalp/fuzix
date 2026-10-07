@@ -9,7 +9,7 @@
  *	will hook into the rest of it once enabled.
  */
 
-__sfr __at 0x41 ppi_b;
+#define PPI_B	0x41
 
 static uint8_t buf[32];
 
@@ -29,7 +29,7 @@ static uint8_t js_data = 0x3F;
 uint8_t read_js(uint8_t *slot)
 {
     uint8_t d = 0;
-    uint8_t r = ppi_b & 0x3F;
+    uint8_t r = in(PPI_B) & 0x3F;
     if (r == js_data)
         return 0;
     js_data = r;
@@ -92,7 +92,7 @@ void plt_ps2mouse_event(uint8_t *event)
 
 int plt_input_read(uint8_t *slot)
 {
-    uint8_t r, k;
+    uint_fast8_t r, k;
     if (ps2pend) {
         irqflags_t irq = di();
         memcpy(slot, ps2event, 4);
@@ -118,11 +118,11 @@ void plt_input_wait(void)
 
 void poll_input(void)
 {
-    if ((ppi_b & 0x3F) != js_data)
+    if ((in(PPI_B) & 0x3F) != js_data)
         wakeup(&kqueue);
 }
 
-int plt_input_write(uint8_t flag)
+int plt_input_write(uint_fast8_t flag)
 {
     flag;
     udata.u_error = EINVAL;

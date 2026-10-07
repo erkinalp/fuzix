@@ -8,7 +8,7 @@
 
 #include "stdio-l.h"
 
-int fgetc(FILE * fp)
+int fgetc(register FILE * fp)
 {
 	int ch;
 

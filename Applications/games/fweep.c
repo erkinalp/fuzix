@@ -1,7 +1,7 @@
 /*
   Fweeplet -- a Z-machine interpreter for versions 1 to 5 and 8
   This program is license under GNU GPL v3 or later version.
-  
+
   Cut down from 'fweep'
 
   V6 was mostly used for the graphical games, and V7 is a bit of a rarity
@@ -139,7 +139,7 @@ uint8_t alpha[78] =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ ^0123456789.,!?_#'\"/\\-:()";
 #endif
 
-char *story_name;
+const char *story_name;
 int story = -1;
 byte auxname[11];
 boolean original = 1;
@@ -214,7 +214,7 @@ void waitcr(void)
 
 void input(char *b, uint16_t l)
 {
-	char *s = b;
+	register char *s = b;
 	char *e = b + l;
 	while(s < e && read(0, s, 1) == 1) {
 		if (*s == 13 || *s == 10) {
@@ -339,12 +339,13 @@ uint8_t memory[64];
 
 static uint8_t zbuf_alloc(void)
 {
+	register uint8_t *p = zbuf_pri;
 	uint8_t low = 255;
 	uint8_t i, lnum = 0;
-	for (i = 0; i < zbuf_num; i++) {
-		if (zbuf_pri[i] == 0)
+	for (i = 0; i < zbuf_num; i++, p++) {
+		if (*p == 0)
 			return i;
-		if (zbuf_pri[i] < low) {
+		if (*p < low) {
 			lnum = i;
 			low = zbuf_pri[i];
 		}
@@ -355,9 +356,10 @@ static uint8_t zbuf_alloc(void)
 static void zbuf_sweep(void)
 {
 	uint8_t i;
-	for (i = 0; i < zbuf_num; i++)
-		if (zbuf_pri[i] > 1)
-			zbuf_pri[i] /= 2;
+	register uint8_t *p = zbuf_pri;
+	for (i = 0; i < zbuf_num; i++, p++)
+		if (*p > 1)
+			*p /= 2;
 }
 
 static void zbuf_load(uint8_t slot, uint16_t page)
@@ -399,8 +401,9 @@ static void zbuf_writeback(uint8_t slot)
 static uint8_t zbuf_find(uint16_t page)
 {
 	uint8_t i;
-	for (i = 0; i < zbuf_num; i++) {
-		if (zbuf_page[i] == page) {
+	register uint16_t *p = zbuf_page;
+	for (i = 0; i < zbuf_num; i++, p++) {
+		if (*p == page) {
 			zbuf_pri[i] |= 0x80;
 			return i;
 		}
@@ -450,7 +453,7 @@ static void zwrite(uint16_t addr, uint8_t value)
 	if (addr < 64)
 		memory[addr] = value;
 }
-	
+
 /* Big endian */
 static uint16_t zword(uint32_t addr)
 {
@@ -500,6 +503,7 @@ void write8(uint16_t address, uint8_t value)
 }
 
 static char tmpstr[] = "/tmp/fweepXXXXXX";
+
 void paging_init(void)
 {
 	uint8_t i = 0;
@@ -510,7 +514,7 @@ void paging_init(void)
 			exit(1);
 		}
 	}
-	
+
 	membreak = static_start >> ZBUF_SHIFT;
 
 	lseek(story, 0, SEEK_SET);
@@ -539,7 +543,7 @@ void paging_restart(void)
 }
 
 #else
-		
+
 /*
  *	Memory management: Really only here for debug work
  */
@@ -716,7 +720,7 @@ boolean verify_checksum(void)
 static void sync_alphabet(void)
 {
 #if VERSION >= 5
-	uint8_t *p = alpha;
+	register uint8_t *p = alpha;
 	uint16_t r;
 	if ((r = alphabet_table) != 0) {
 		while(p != alpha + 78)
@@ -746,24 +750,24 @@ void zch_print(int z)
 	} else if (z == 0) {
 		char_print(32);
 		zch_shift = zch_shiftlock;
-#if (VERSION == 1)		
+#if (VERSION == 1)
 	} else if (z == 1 && VERSION == 1) {
 		char_print(13);
 		zch_shift = zch_shiftlock;
-#endif		
+#endif
 	} else if (z == 1) {
 		zch_shift = 5;
-#if (VERSION > 2)		
+#if (VERSION > 2)
 	} else if ((z == 4 || z == 5) && VERSION > 2
 		   && (zch_shift == 1 || zch_shift == 2)) {
 		zch_shift = zch_shiftlock = zch_shift & (z - 3);
 #endif
-#if (VERSION < 3)		
+#if (VERSION < 3)
 	} else if (z == 4 && VERSION < 3) {
 		zch_shift = zch_shiftlock = (zch_shift + 1) % 3;
 	} else if (z == 5 && VERSION < 3) {
 		zch_shift = zch_shiftlock = (zch_shift + 2) % 3;
-#endif		
+#endif
 	} else if ((z == 2 && VERSION < 3) || z == 4) {
 		zch_shift = (zch_shift + 1) % 3;
 	} else if ((z == 3 && VERSION < 3) || z == 5) {
@@ -774,11 +778,11 @@ void zch_print(int z)
 		zch_shift = 7;
 	} else if (z == 6 && zch_shift == 2) {
 		zch_shift = 3;
-#if (VERSION != 1)		
+#if (VERSION != 1)
 	} else if (z == 7 && zch_shift == 2 && VERSION != 1) {
 		char_print(13);
 		zch_shift = zch_shiftlock;
-#endif		
+#endif
 	} else {
 		if (alphabet_table)
 			char_print(read8low
@@ -810,7 +814,7 @@ uint32_t text_print(uint32_t address)
 void make_rectangle(uint32_t addr, int width, int height, int skip)
 {
 	int old_column = cur_column;
-	int w, h;
+	register int w, h;
 	for (h = 0; h < height; h++) {
 		for (w = 0; w < width; w++)
 			char_print(read8(addr++));
@@ -864,9 +868,8 @@ void storei(uint16_t value)
 void enter_routine(uint32_t address, boolean stored, int argc)
 {
 	int c = read8(address);
-	int i;
+	register int i;
 
-	fflush(stdout);
 	if (frameptr == &frames[FRAMESIZE - 1])
 		panic("out of frames.\n");
 
@@ -957,7 +960,7 @@ void insert_object(obj_t obj, uint16_t dest)
 {
 	obj_t p = parent(obj);
 //	obj_t s = sibling(obj);
-	obj_t x;
+	register obj_t x;
 	if (p) {
 		x = child(p);
 		if (x == obj) {
@@ -1033,7 +1036,7 @@ input_again:
  *	Fetch a dictionary entry of 2 or 3 zwords into the passed
  *	word array
  */
-void dictionary_get(uint16_t addr, uint16_t *p)
+void dictionary_get(uint16_t addr, register uint16_t *p)
 {
 	uint8_t c = VERSION > 3 ? 3 : 2;
 	uint16_t w;
@@ -1120,7 +1123,7 @@ uint16_t encodeword(void)
 	return w;
 }
 
-void dictionary_encode(uint8_t *text, int len, uint16_t *wp)
+void dictionary_encode(uint8_t *text, int len, register uint16_t *wp)
 {
 	sync_alphabet();
 	wordptr = text;
@@ -1141,7 +1144,7 @@ void add_to_parsebuf(uint16_t parsebuf, uint16_t dict, uint8_t * d,
 		     int k, int el, int ne, int p, uint16_t flag)
 {
 	/* Encode the word into zscii */
-	int i;
+	register int i;
 	uint16_t n = parsebuf + (read8(parsebuf + 1) << 2);
 	uint16_t vbuf[3];
 	uint16_t dbuf[3];
@@ -1179,8 +1182,6 @@ void add_to_parsebuf(uint16_t parsebuf, uint16_t dict, uint8_t * d,
  *	Process a command line input
  */
 
-/* Out of the fn in order to build nicely on SDCC and CC65 - sigh */
-static boolean ws[256];
 
 void tokenise(uint16_t text, uint16_t dict, uint16_t parsebuf, int len,
 	      uint16_t flag)
@@ -1188,6 +1189,7 @@ void tokenise(uint16_t text, uint16_t dict, uint16_t parsebuf, int len,
 	uint8_t d[10];
 	int i, el, ne, k, p, p1;
 	int l;
+	static boolean ws[256];
 
 	memset(ws, 0, 256 * sizeof(boolean));
 
@@ -1340,7 +1342,7 @@ void game_save(uint8_t storage)
 	f = xopen(filename, O_WRONLY|O_CREAT|O_TRUNC, 0600);
 	if (f == -1)
 		goto bad;
-		
+
 	if (VERSION < 4)
 		branch(1);
 	else
@@ -1350,7 +1352,7 @@ void game_save(uint8_t storage)
 	   Deal with it! */
 	frameptr->pc = program_counter;
 	frameptr[1].start = stackptr;
-	
+
 	xwrite(f, frames, frameptr - frames + 1, sizeof(StackFrame));
 	xwrite(f, stack, stackptr, 2);
 
@@ -1414,7 +1416,7 @@ void game_restore(void)
 		goto bad;
 	frameptr = frames + n - 1;
 	stackptr = xread(f, stack, STACKSIZE, 2);
-	
+
 	if (xreadb(f) != 0xAA)
 		goto bad;
 
@@ -1433,7 +1435,7 @@ void game_restore(void)
 			while (c-- > 0)
 				write8(o++, xreadb(story));
 		}
-		else 
+		else
 			write8(o++, xreadb(story) ^ d);
 	}
 	if (xclose(f) == -1)
@@ -1443,7 +1445,7 @@ void game_restore(void)
 		write8(o++, xreadb(story));
 	program_counter = frameptr->pc;
 	return;
-	
+
 bad:
 	writes("Read error\n");
 	game_restart();
@@ -1483,11 +1485,11 @@ void switch_output(int st)
 
 void execute_instruction(void)
 {
-	uint8_t in = pc();
-	uint16_t at;
-	int16_t n;
+	register uint16_t at;
+	register int16_t n;
+	register int argc;
+	register uint8_t in = pc();
 	uint16_t u;
-	int argc;
 
 	if (!predictable)
 		randv -= 0x0200;
@@ -1768,10 +1770,10 @@ void execute_instruction(void)
 		break;
 	case 0xBA:		// Quit
 		text_flush();
-#ifdef DEBUG	
+#ifdef DEBUG
 		fprintf(stderr, "stackmax %d framemax %d\n", stackmax,
 			framemax);
-#endif			
+#endif
 		exit(0);
 		break;
 	case 0xBB:		// Line break
@@ -2171,7 +2173,7 @@ void execute_instruction(void)
 		exit(1);
 #else
 		panic("illegal");
-#endif				
+#endif
 		break;
 	}
 }
@@ -2268,8 +2270,21 @@ static void usage(void)
 	panic("fweep [-t] [-p] [-q] storyfile\n");
 }
 
-int main(int argc, char **argv)
+#ifndef TEST
+static char sbuf[32] = "/usr/lib/games/";
+#else
+static char sbuf[32] = "./";
+#endif
+static char stail[] = { '.', 'z', '0' + VERSION, 0 };
+
+int main(int argc, const char *argv[])
 {
+	const char *arg0 = strrchr(*argv, '/');
+	if (arg0 == NULL)
+		arg0 = *argv;
+	else
+		arg0++;
+
 	srand(getpid() ^ time(NULL));
 
 	/* cc65 isn't smart enough to do this at compile time */
@@ -2290,7 +2305,12 @@ int main(int argc, char **argv)
 				usage();
 		}
 	}
-	story_name = *argv++;
+	if (*argv == NULL) {
+		strncat(sbuf, arg0, 8);
+		story_name = sbuf;
+		strcat(sbuf, stail);
+	} else
+		story_name = *argv++;
 	if (!story_name || *argv)
 		usage();
 	game_begin();

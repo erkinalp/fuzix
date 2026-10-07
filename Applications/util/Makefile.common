@@ -47,6 +47,8 @@ SRCS  = \
 	cal.c \
 	chmem.c \
 	cksum.c \
+	colrm.c \
+	column.c \
 	cp.c \
 	cu.c \
 	cut.c \
@@ -58,32 +60,40 @@ SRCS  = \
 	echo.c \
 	ed.c \
 	env.c \
+	expand.c \
 	factor.c \
 	fdisk.c \
 	fgrep.c \
+	fmt.c \
 	free.c \
+	from.c \
 	fsck.c \
 	fsck-fuzix.c \
+	getopt.c \
 	gpiotool.c \
 	gptparse.c \
 	grep.c \
 	id.c \
 	kbdrate.c \
 	labelfs.c \
+	leave.c \
 	ll.c \
 	ls.c \
 	mail.c \
 	man.c \
 	manscan.c \
 	mkfs.c \
+	mktemp.c \
 	mode.c \
 	more.c \
 	mount.c \
+	nohup.c \
 	nvtool.c \
 	od.c \
 	passwd.c \
 	ps.c \
 	remount.c \
+	rx.c \
 	sed.c \
 	seq.c \
 	setboot.c \
@@ -96,9 +106,11 @@ SRCS  = \
 	stty.c \
 	su.c \
 	swapon.c \
+	sx.c \
 	tar.c \
 	tail.c \
 	termcap.c \
+	tree.c \
 	umount.c \
 	uname.c \
 	uniq.c \

@@ -1,63 +1,71 @@
-ASRCS = crt0.s z180.s commonmem.s sc111.s monitor.s
+ASRCS = crt0.S z180.S commonmem.S sc111.S monitor.S ide.S
 CSRCS += devices.c main.c devtty.c
 DISCARD_CSRCS = discard.c
-DISCARD_DSRCS = ../../dev/devide_discard.c ../../dev/ds1302_discard.c
-DSRCS = ../../dev/devide.c ../../dev/mbr.c ../../dev/blkdev.c ../../dev/ds1302.c
-DASRCS = ../../dev/ds1302_rcbus.s
+DISCARD_DSRCS = ../../dev/tinydisk_discard.c ../../dev/tinyide_discard.c ../../dev/ds1302_discard.c
+DSRCS = ../../dev/tinydisk.c ../../dev/tinyide.c ../../dev/ds1302.c
+DASRCS = ../../dev/ds1302_rcbusu_z180.S
 
-AOBJS = $(ASRCS:.s=.rel)
-COBJS = $(CSRCS:.c=.rel)
-DISCARD_COBJS = $(DISCARD_CSRCS:.c=.rel)
-DISCARD_DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DISCARD_DSRCS))
-DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DSRCS))
-DAOBJS = $(patsubst ../../dev/%.s,%.rel, $(DASRCS))
+AOBJS = $(ASRCS:.S=.o)
+COBJS = $(CSRCS:.c=.o)
+DISCARD_COBJS = $(DISCARD_CSRCS:.c=.o)
+DISCARD_DOBJS = $(patsubst ../../dev/%.c,%.o, $(DISCARD_DSRCS))
+DOBJS = $(patsubst ../../dev/%.c,%.o, $(DSRCS))
+DAOBJS = $(patsubst ../../dev/%.S,%.o, $(DASRCS))
 
 OBJS  = $(AOBJS) $(COBJS) $(DOBJS) $(DISCARD_DOBJS) $(DISCARD_COBJS) $(DAOBJS)
 
 CROSS_CCOPTS += -I../../dev/
 
-JUNK = *.rel *.lst *.asm *.sym *.rst *.map *.ihx *.bin
-
 all:	$(OBJS)
 
-$(AOBJS): %.rel: %.s
+$(AOBJS): %.o: %.S
 	$(CROSS_AS) $(ASOPTS) $<
 
-$(COBJS): %.rel: %.c
+$(COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DOBJS): %.rel: ../../dev/%.c
+$(DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DAOBJS): %.rel: ../../dev/%.s
-	$(CROSS_AS) $(ASOPTS) $@ $<
+$(DAOBJS): %.o: ../../dev/%.S
+	$(CROSS_AS) $(ASOPTS) $<
 
-$(DISCARD_COBJS): %.rel: %.c
+$(DISCARD_COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(DISCARD_DOBJS): %.rel: ../../dev/%.c
+$(DISCARD_DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
 clean:
 	rm -f $(OBJS) $(JUNK)  core *~ fuzix.com makecpmloader loader.bin loader.tmp boot-romwbw.bin
 
-z180.rel: z180.s kernel.def ../../cpu-z180/z180.s
+z180.o: z180.S kernelu.def ../../cpu-z180/z180.S
 
-boot-romwbw.bin: boot-romwbw.s
-	sdasz80 -o boot-romwbw.s
-	sdldz80 -i boot-romwbw.rel
-	makebin -s 62464 boot-romwbw.ihx boot-romwbw.tmp                 # binary from physical 0
-	dd if=boot-romwbw.tmp of=boot-romwbw.bin bs=512 count=2 skip=120 # cut leading 61440 bytes
+boot-romwbw.bin: boot-romwbw.S
+	fcc -mz80 -c boot-romwbw.S
+	# This makes us a binary from physical 0
+	ldz80 -b boot-romwbw.o -o boot-romwbw.tmp
+	# Chop off the leading 61440 bytes we don't want
+	dd if=boot-romwbw.tmp of=boot-romwbw.bin bs=512 conv=sync count=2 skip=120
 
-romwbw: boot-romwbw.bin
-
-loader.bin: loader.s
-	sdasz80 -o loader.s
-	sdldz80 -i loader.rel
-	makebin -s 65536 loader.ihx loader.tmp
+loader.bin: loader.S
+	fcc -mz80 -c loader.S
+	ldz80 -b loader.o -o loader.tmp
 	dd if=loader.tmp bs=256 skip=208 of=loader.bin
 
-image: loader.bin
+image: loader.bin boot-romwbw.bin
+	$(CROSS_LD) -b -C 0x0100 -S 0xF600 -f CLDBbXSs -o ../../fuzix.bin \
+	crt0.o commonmem.o z180.o sc111.o main.o devices.o discard.o \
+	devtty.o ../../dev/tinyide.o ../../dev/tinyide_discard.o \
+	../../dev/tinydisk.o ../../dev/tinydisk_discard.o \
+	monitor.o ../../dev/ds1302.o ../../dev/ds1302_discard.o \
+	../../dev/ds1302_rcbusu_z180.o ide.o \
+	../../libfuzix.a ../../libfuzix.a /opt/fcc/lib/z80/libz80.a -m fuzix.tmpmap
+	perl -lpe '$$_=hex' fuzix.tmpmap | paste -d" " - fuzix.tmpmap  |  sort -n |  cut -d" " -f 2- >../../fuzix.map
+	../../tools/pack85 ../../fuzix.bin fuzix.bin <../../fuzix.map
+#	cat boot-romwbw.bin >fuzix.romwbw
+#	dd if=/dev/zero bs=256 count=1 >>fuzix.romwbw
+#	dd if=fuzix.bin bs=256 skip=1  >>fuzix.romwbw
 
 IMAGES = $(FUZIX_ROOT)/Images/$(TARGET)
 
@@ -85,7 +93,7 @@ IMAGES = $(FUZIX_ROOT)/Images/$(TARGET)
 # | filesystem      |
 # |                 |
 #
-diskimage: image romwbw
+diskimage: image boot-romwbw.bin loader.bin
 	rm -f $(IMAGES)/disk.img
 	dd if=$(FUZIX_ROOT)/Standalone/filesystem-src/parttab.40M of=$(IMAGES)/disk.img conv=notrunc
 	# Kernel boot string at 0x17C with signature: 0xB5 0x5E hda1
@@ -95,7 +103,7 @@ diskimage: image romwbw
 	# SCM loader at 0x2800
 	dd if=loader.bin of=$(IMAGES)/disk.img bs=512 skip=20 seek=20 count=4 conv=notrunc
 	# Kernel starting 0x3000
-	dd if=../../fuzix.bin of=$(IMAGES)/disk.img bs=512 seek=24 conv=notrunc
+	dd if=fuzix.bin of=$(IMAGES)/disk.img bs=512 seek=24 conv=notrunc
 	# Filesystem starting at 1M/0x0010:0000
 	dd if=$(IMAGES)/filesys.img of=$(IMAGES)/disk.img bs=512 seek=2048 conv=notrunc
 	# Make an emulator image of it

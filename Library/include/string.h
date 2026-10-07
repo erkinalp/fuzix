@@ -8,6 +8,7 @@
 /* Basic string functions */
 extern size_t strlen(const char *__s);
 
+extern char *stpcpy(char *__dest, const char *__src);
 extern char *strcat(char *__dest, const char *__src);
 extern char *strcpy(char *__dest, const char *__src);
 extern int strcmp(const char *__s1, const char *__s2);
@@ -30,6 +31,7 @@ extern char *strndup(const char *__s, int __n);
 
 /* Basic mem functions */
 extern void *memcpy(void *__dest, const void *__src, size_t __n);
+extern void *mempcpy(void *__dest, const void *__src, size_t __n);
 extern void *memccpy(void *__dest, const void *__src, int __c, size_t __n);
 extern void *memchr(const void *__src, int __c, size_t __n);
 extern void *memset(void *__s, int __c, size_t __n);

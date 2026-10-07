@@ -3,7 +3,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-int gettimeofday(struct timeval *tv, struct timezone *tz)
+int gettimeofday(register struct timeval *tv, register struct timezone *tz)
 {
   if (tv) {
     time(&tv->tv_sec);
@@ -18,4 +18,3 @@ int gettimeofday(struct timeval *tv, struct timezone *tz)
   return 0;
 }
 
-  

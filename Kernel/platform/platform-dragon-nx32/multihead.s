@@ -59,7 +59,7 @@ _cursor_off:
 	lda	_curtty
 	lbeq	_m6847_cursor_off
 	deca
-	lbeq	_crt9128_cursor_off
+	lbeq	_crt9128_curoff
 	jmp	_vc_cursor_off
 
 	.globl _cursor_on
@@ -67,7 +67,7 @@ _cursor_on:
 	lda	_curtty
 	lbeq	_m6847_cursor_on
 	deca
-	lbeq	_crt9128_cursor_on
+	lbeq	_crt9128_curon
 	jmp	_vc_cursor_on
 
 	.globl _cursor_disable

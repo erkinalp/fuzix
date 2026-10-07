@@ -50,10 +50,8 @@ void prop_tty_poll(uint_fast8_t minor)
 {
     /* Keyboard data pending but not busy. Busy is ok - we'll pick it up
        next poll */
-    while((in(tstatus) & (TKBD|TBUSY)) == TKBD) {
-        uint_fast8_t r = in(tdata);
-        tty_inproc(minor, r);
-    }
+    while((in(tstatus) & (TKBD|TBUSY)) == TKBD)
+        tty_inproc(minor, in(tdata));
 }
 
 void prop_tty_write(uint_fast8_t c)

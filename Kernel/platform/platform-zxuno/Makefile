@@ -3,56 +3,86 @@ CDSRCS = discard.c
 DSRCS = ../../dev/tinysd.c ../../dev/tinydisk.c
 DDSRCS = ../../dev/tinysd_discard.c ../../dev/tinydisk_discard.c
 DZSRCS = ../../dev/zx/divmmc.c ../../dev/zx/zxkeyboard.c
-DZSRCS += ../../dev/zx/devinput.c ../../dev/zx/bank128.c
+DZSRCS += ../../dev/zx/devinput.c
+AZSRCS = ../../dev/zx/divmmc-spi.S
 DDZSRCS = ../../dev/zx/zxuno.c
-ASRCS = crt0.s zx128.s zxvideo.s
-ASRCS += tricks.s commonmem.s
+ASRCS = crt0.S zx128.S zxvideo.S
+ASRCS += tricks.S commonmem.S
 
-COBJS = $(CSRCS:.c=.rel)
-CDOBJS = $(CDSRCS:.c=.rel)
-AOBJS = $(ASRCS:.s=.rel)
-DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DSRCS))
-DDOBJS = $(patsubst ../../dev/%.c,%.rel, $(DDSRCS))
-DZOBJS = $(patsubst ../../dev/zx/%.c,%.rel, $(DZSRCS))
-DDZOBJS = $(patsubst ../../dev/zx/%.c,%.rel, $(DDZSRCS))
-OBJS  = $(COBJS) $(CDOBJS) $(AOBJS) $(DOBJS) $(DDOBJS) $(DZOBJS) $(DDZOBJS)
+COBJS = $(CSRCS:.c=.o)
+CDOBJS = $(CDSRCS:.c=.o)
+AOBJS = $(ASRCS:.S=.o)
+DOBJS = $(patsubst ../../dev/%.c,%.o, $(DSRCS))
+DDOBJS = $(patsubst ../../dev/%.c,%.o, $(DDSRCS))
+AZOBJS = $(patsubst ../../dev/zx/%.S,%.o, $(AZSRCS))
+DZOBJS = $(patsubst ../../dev/zx/%.c,%.o, $(DZSRCS))
+DDZOBJS = $(patsubst ../../dev/zx/%.c,%.o, $(DDZSRCS))
+OBJS  = font8x8.o $(COBJS) $(CDOBJS) $(AOBJS) $(DOBJS) $(DDOBJS) $(DZOBJS) $(DDZOBJS) $(AZOBJS)
 
 CROSS_CCOPTS += -I../../dev/ -I../../dev/zx/
 
 all:	$(OBJS)
 
-$(COBJS): %.rel: %.c
+font8x8.o: ../../font/font8x8.c force_literal.peep
+	$(CROSS_CC) $(CROSS_CCOPTS) -c ../../font/font8x8.c -o $@ -p force_literal.peep
+
+$(COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(CDOBJS): %.rel: %.c
+$(CDOBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(DOBJS): %.rel: ../../dev/%.c
+$(DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DDOBJS): %.rel: ../../dev/%.c
+$(DDOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(DZOBJS): %.rel: ../../dev/zx/%.c
+$(AZOBJS): %.o: ../../dev/zx/%.S
+	$(CROSS_AS) $(ASOPTS) -c $<
+
+$(DZOBJS): %.o: ../../dev/zx/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DDZOBJS): %.rel: ../../dev/zx/%.c
+$(DDZOBJS): %.o: ../../dev/zx/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(AOBJS): %.rel: %.s
+$(AOBJS): %.o: %.S
 	$(CROSS_AS) $(ASOPTS) $<
 
 clean:
-	rm -f $(OBJS) *.lst *.asm *.sym *.rst *.rel core *~ 
+	rm -f $(OBJS) core *~ 
 	rm -f BOOT.BIN strap.bin load-esx.ihx load-esx.tmp
 	rm -f FUZIX.BIN FUZIX
 
 # Re-order the image and snapshop it
+# See the README crt0.S and NOTES. This platform is tricky to layout due to
+# design flaws
 image:
+	$(CROSS_LD) -b -S 0x0100 -D 0x2000 -C 0x4200 -f SLDsBCbX -o ../../fuzix.bin \
+	crt0.o commonmem.o zx128.o ../../start.o \
+	../../version.o ../../cpu-z80u/lowlevel-z80u.o \
+	../../usermem.o ../../cpu-z80u/usermem_std-z80u.o \
+	tricks.o main.o discard.o \
+	../../timer.o ../../kdata.o devices.o ../../devio.o \
+	../../filesys.o ../../blk512.o ../../process.o \
+	../../inode.o ../../syscall_exec.o ../../syscall_exec16.o \
+	../../syscall_fs.o ../../syscall_fs2.o ../../syscall_fs3.o \
+	../../syscall_proc.o ../../syscall_other.o ../../syscall_net.o \
+	../../network.o ../../tty.o ../../mm.o ../../mm/memalloc_none.o \
+	../../swap.o ../../mm/simple.o ../../devsys.o ../../vt.o \
+	../../devinput.o ../../dev/zx/devinput.o ../../dev/zx/keyscan.o \
+	devtty.o font8x8.o ../../dev/tinydisk.o \
+	../../dev/tinydisk_discard.o ../../dev/tinysd.o \
+	../../dev/tinysd_discard.o ../../dev/zx/divmmc.o \
+	../../dev/zx/divmmc-spi.o zxvideo.o ../../dev/zx/zxuno.o \
+	../../dev/zx/zxkeyboard.o ../../mm/bankfixed.o \
+	/opt/fcc/lib/z80/libz80.a -m fuzix.tmpmap
+	perl -lpe '$$_=hex' fuzix.tmpmap | paste -d" " - fuzix.tmpmap  |  sort -n |  cut -d" " -f 2- >../../fuzix.map
+	dd if=../../fuzix.bin of=fuzix.load bs=32768 count=1
 	# Build an esxdos friendly setup
-	sdasz80 -o load-esx.s
-	sdldz80 -i load-esx.rel
-	makebin -s 16384 load-esx.ihx load-esx.tmp
+	fcc -mz80 -c load-esx.S
+	ldz80 -b load-esx.o -o load-esx.tmp
 	# Generate the image file we need
 	dd if=load-esx.tmp of=FUZIX bs=8192 skip=1
 

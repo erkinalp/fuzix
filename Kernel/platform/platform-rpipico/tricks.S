@@ -7,7 +7,9 @@ udata = progbase
 
 .text
 .thumb_func
-.global plt_idle
+/* weak: the PC3 display/keyboard config overrides this with a C version
+   that pumps the USB host stack before napping (usbkbd.c) */
+.weak plt_idle
 plt_idle:
     wfi
     bx lr
@@ -79,15 +81,172 @@ isr_svcall_user:
 
 .comm svc_pc_stash, 4
 
+# ---------------------------------------------------------------------------
+# Pre-emption. The timer tick pends PendSV when the running user process is
+# due for a reschedule or has a pending signal. As with isr_svcall we cannot
+# do kernel work in handler mode, so - if and only if the interrupted PC is
+# in user space (preempt_lo..preempt_hi, set by preempt_init) - we redirect
+# the stacked PC to the preempt_user trampoline, which runs the same
+# switchout / chksigs / deliver_signals path a syscall would, then resumes
+# the interrupted code with all registers and flags intact. The user-space
+# PC check also protects every kernel window (the svc stash, the idle loop,
+# this trampoline itself) from being re-entered.
+
+.global isr_pendsv
+.text
+.thumb_func
+isr_pendsv:
+    ldr r0, =preempt_armed
+    ldrb r1, [r0]
+    cmp r1, #0
+    bne 1f
+    ldr r1, [sp, #6*4]          /* stacked PC */
+    ldr r2, =preempt_lo
+    ldr r2, [r2]
+    cmp r1, r2
+    blo 1f
+    ldr r2, =preempt_hi
+    ldr r2, [r2]
+    cmp r1, r2
+    bhs 1f
+    /* Mid load/store-multiple? The stacked xPSR then carries ICI state
+       and - unlike an ICI-less M0, which abandons the instruction
+       without base writeback - the M33 has ALREADY written back the
+       base register. Redirecting (which must clear ICI and restart the
+       instruction) would decrement sp a second time and corrupt the
+       process stack. Leave the frame alone; the tick re-pends us and
+       the next attempt lands on an ordinary instruction. */
+    ldr r2, [sp, #7*4]          /* stacked xPSR */
+    ldr r3, =0x0600FC00         /* EPSR ICI/IT bits (26:25, 15:10) */
+    and r3, r2
+    bne 1f
+    movs r2, #1                 /* arm the trampoline */
+    strb r2, [r0]
+    ldr r0, =pendsv_pc_stash
+    str r1, [r0]
+    /* forensics: record the redirected frame */
+    ldr r0, =dbg_redir_sp
+    mov r2, sp
+    str r2, [r0]
+    ldr r0, =dbg_redir_pc
+    str r1, [r0]
+    ldr r2, [sp, #7*4]
+    ldr r0, =dbg_redir_xpsr
+    str r2, [r0]
+    ldr r0, =dbg_redirs
+    ldr r2, [r0]
+    add r2, #1
+    str r2, [r0]
+    ldr r0, =preempt_user
+    movs r2, #1                 /* the .thumb_func symbol has bit 0 set, but a
+                                   stacked exception-return PC must have it
+                                   clear (INVSTATE hard fault otherwise) */
+    bic r0, r2
+    str r0, [sp, #6*4]
+1:
+    bx lr
+
+.thumb_func
+preempt_user:
+    /* Thread mode, on the process stack, at an arbitrary interrupted
+       instruction: preserve everything, including the flags. */
+    sub sp, #4                  /* reserved slot for the resume PC */
+    push {r0, r1, r2, r3}
+    mrs r0, apsr
+    mov r1, r12
+    mov r2, lr
+    push {r0, r1, r2}
+    ldr r0, =pendsv_pc_stash
+    ldr r0, [r0]
+    movs r1, #1
+    orr r0, r1                  /* thumb bit for the final pop {pc} */
+    push {r0}
+    /* Stash consumed: disarm NOW. Keeping it armed through
+       deliver_signals wedged preemption off forever if a handler
+       longjmped, and blocked other processes' preemption while this
+       one was switched out mid-trampoline. */
+    ldr r0, =preempt_armed
+    movs r1, #0
+    strb r1, [r0]
+    ldr r0, =dbg_entries        /* forensics */
+    ldr r1, [r0]
+    add r1, #1
+    str r1, [r0]
+    mov r0, sp
+    ldr r1, =(udata + UDATA_SIZE_ASM)
+    mov sp, r1                  /* kernel stack, as for a syscall */
+    push {r0}
+    bl preempt_handler
+    pop {r0}
+    mov sp, r0                  /* back onto the process stack */
+    bl deliver_signals          /* may not return if a handler longjmps */
+    pop {r3}                    /* resume PC (thumb bit set) */
+    pop {r0, r1, r2}            /* apsr, r12, lr */
+    mov r12, r1
+    mov lr, r2
+    ldr r1, =dbg_exits          /* forensics */
+    ldr r2, [r1]
+    add r2, #1
+    str r2, [r1]
+    msr apsr_nzcvq, r0
+    str r3, [sp, #16]           /* resume PC into the reserved slot */
+    pop {r0, r1, r2, r3, pc}
+
+.comm pendsv_pc_stash, 4
+.comm preempt_armed, 4
+.global dbg_redirs
+.global dbg_entries
+.global dbg_exits
+.global dbg_redir_sp
+.global dbg_redir_pc
+.global dbg_redir_xpsr
+.comm dbg_redirs, 4
+.comm dbg_entries, 4
+.comm dbg_exits, 4
+.comm dbg_redir_sp, 4
+.comm dbg_redir_pc, 4
+.comm dbg_redir_xpsr, 4
+
+# ---------------------------------------------------------------------------
+# Run the TinyUSB host pump on its own dedicated stack. tuh_task's call
+# depth on top of an arbitrary thread context (idle loop, tty pre-sleep
+# hook, the preempt trampoline) can overflow the ~1.2K kernel stack into
+# udata - the source of a family of corruption crashes. IRQs arriving
+# during the pump stack their frames here too, safely.
+
+.text
+.thumb_func
+/* weak no-op: the real pump (usbkbd.c) overrides when the USB keyboard
+   is configured in */
+.weak usb_pump_c
+usb_pump_c:
+    bx lr
+
+.global usb_pump_stacked
+.text
+.thumb_func
+usb_pump_stacked:
+    push {r4, lr}
+    mov r4, sp
+    ldr r0, =usb_stack + 2560
+    mov sp, r0
+    bl usb_pump_c
+    mov sp, r4
+    pop {r4, pc}
+
+.comm usb_stack, 2560, 8
+
 .global plt_switchout
 .global switchin
 .text
 .thumb_func
 plt_switchout:
 	/* Save the callee-saved registers onto the stack in the same order
-	 * that switchout will do it, so switchin will restore it correctly. */
+	 * that switchout will do it, so switchin will restore it correctly.
+	 * r4 included: switchin clobbers it (ptab scratch), and a preempted
+	 * context's r4 is live user state - AAPCS requires it preserved. */
 
-    push {r5, r6, r7, lr}
+    push {r4, r5, r6, r7, lr}
     mov r1, r8
     mov r2, r9
     mov r3, r10
@@ -112,6 +271,7 @@ plt_switchout:
 	/* Fall through into switchin */
 
     /* On entry, r0 is the ptab ptr of the process to run */
+.thumb_func
 switchin:
     ldr r1, =__StackTop     /* switch to swapper stack */
     mov sp, r1
@@ -135,6 +295,32 @@ switchin:
     ldr r1, =runticks
     strh r0, [r1]
 
+	/*
+	 * Resume with interrupts ENABLED.
+	 *
+	 * switchout() does di() on entry and every path out of it re-enables
+	 * before returning - except this one, which does not return at all:
+	 * it falls into plt_switchout and comes back here in the context of
+	 * whichever process is resumed.  Nothing was putting PRIMASK back,
+	 * so a process resumed through here carried on with interrupts off.
+	 *
+	 * Mostly that healed at the next syscall or preemption.  It could
+	 * not heal in tty_putc_maywait's TTY_READY_SOON branch, which yields
+	 * with a bare switchout() and then loops back to ask the driver
+	 * again: interrupts off, so the uart interrupt that would drain the
+	 * transmit ring can never run, so the ring stays full, so it asks
+	 * again, for ever.  The console dies in both directions and the
+	 * machine looks dead while sitting in that loop.
+	 *
+	 * It needed a process to be preempted mid-write with something else
+	 * runnable, which is why it took sustained output to show and why it
+	 * always stopped at about the same point - one scheduling quantum in.
+	 * Measured on the board at the moment of the hang: PRIMASK=1 with
+	 * the uart interrupt enabled AND pending AND the uart asserting
+	 * TXRIS, transmit FIFO empty and idle.
+	 */
+    cpsie i
+
     pop {r0}                /* pushed pid */
     pop {r1, r2, r3, r4, r5}
     mov r8, r1
@@ -142,7 +328,7 @@ switchin:
     mov r10, r3
     mov r11, r4
     mov r12, r5
-    pop {r5, r6, r7, pc}
+    pop {r4, r5, r6, r7, pc}
 
 .global dofork
 .text
@@ -150,9 +336,10 @@ switchin:
 # r0 = ptab of the new child process
 dofork:
 	/* Save the callee-saved registers onto the stack in the same order
-	 * that switchout will do it, so switchin will restore it correctly. */
+	 * that switchout will do it, so switchin will restore it correctly
+	 * (r4 included, see plt_switchout). */
 
-    push {r5, r6, r7, lr}
+    push {r4, r5, r6, r7, lr}
     mov r1, r8
     mov r2, r9
     mov r3, r10
@@ -202,7 +389,6 @@ dofork:
     mov r10, r3
     mov r11, r4
     mov r12, r5
-    pop {r5, r6, r7, pc}
+    pop {r4, r5, r6, r7, pc}
 
 // vim: sw=4 ts=4 et:
-

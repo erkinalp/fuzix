@@ -104,7 +104,7 @@ void tty_drain_sio(void)
 	}
 }
 
-void tty_putc(uint8_t minor, unsigned char c)
+void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 {
 	irqflags_t irqflags = di();
 
@@ -119,32 +119,32 @@ void tty_putc(uint8_t minor, unsigned char c)
 	irqrestore(irqflags);
 }
 
-void tty_sleeping(uint8_t minor)
+void tty_sleeping(uint_fast8_t minor)
 {
 	sleeping |= (1 << minor);
 }
 
-ttyready_t tty_writeready(uint8_t minor)
+ttyready_t tty_writeready(uint_fast8_t minor)
 {
 	if (sio_txl[minor] < 128)
 		return TTY_READY_NOW;
 	return TTY_READY_SOON;
 }
 
-void tty_data_consumed(uint8_t minor)
+void tty_data_consumed(uint_fast8_t minor)
 {
 	used(minor);
 }
 
 /* kernel writes to system console -- never sleep! */
 
-void kputchar(char c)
+void kputchar(uint_fast8_t c)
 {
 	/* Can't use the normal paths as we must survive interrupts off */
 	irqflags_t irq = di();
 
-	while(!(SIOA_C & 0x04));
-	SIOA_D = c;
+	while(!(in(SIOA_C) & 0x04));
+	out(SIOA_D , c);
 
 	if (c == '\n')
 		kputchar('\r');

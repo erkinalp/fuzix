@@ -88,7 +88,7 @@ int device_send( uint8_t *sbuf, int len )
 }
 
 
-/* get sbuf, max size len from the device 
+/* get sbuf, max size len from the device
    returns size of recieved packets, 0 if nothing waiting
 */
 int device_read( uint8_t *buf, int len )
@@ -124,6 +124,7 @@ int device_read( uint8_t *buf, int len )
 */
 int device_init( void )
 {
+  uint16_t id;
     /* change card's address */
     cardctl = 0x55;
     cardctl = 0xaa;
@@ -132,7 +133,7 @@ int device_init( void )
     cardctl = 0x60;
 
     /* check for card */
-    uint16_t id = getpp( 0x0000 );
+    id = getpp( 0x0000 );
     if( id != 0x630e ){
 	fprintf( stderr, "CoCoNIC card not found\n", id );
 	return -1;
@@ -161,3 +162,11 @@ int device_init( void )
 
 uint8_t has_arp = 1;
 uint16_t mtu = 1500;
+
+void arguments(int argc, const char *argv[])
+{
+  if (argc != 1) {
+    fprintf(stderr, "%s: unexpected arguments.\n");
+    exit(1);
+  }
+}

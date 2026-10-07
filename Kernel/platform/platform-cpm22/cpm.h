@@ -25,20 +25,20 @@ struct cpm_dph {
     uint16_t csv;
     uint16_t alv;
 };
-    
+
 extern uint8_t cpm_const(void);
 extern uint8_t cpm_conin(void);
-extern void cpm_conout(uint8_t c) __z88dk_fastcall;
-extern void cpm_list(uint8_t c) __z88dk_fastcall;
-extern void cpm_punch(uint8_t c) __z88dk_fastcall;
+extern void cpm_conout(uint8_t c);
+extern void cpm_list(uint8_t c);
+extern void cpm_punch(uint8_t c);
 extern uint8_t cpm_reader(void);
 extern void cpm_home(void);
-extern struct cpm_dph *cpm_seldsk(uint16_t disk) __z88dk_fastcall;
+extern struct cpm_dph *cpm_seldsk(uint16_t disk);
 #define SELDSK_WARM	0xFF00
 
-extern void cpm_settrk(uint16_t track) __z88dk_fastcall;
-extern void cpm_setsec(uint16_t sector) __z88dk_fastcall;
-extern void cpm_setdma(uint8_t *dma) __z88dk_fastcall;
+extern void cpm_settrk(uint16_t track);
+extern void cpm_setsec(uint16_t sector);
+extern void cpm_setdma(uint8_t *dma);
 extern uint8_t cpm_read(void);
 extern uint8_t cpm_write(void);
 extern uint8_t cpm_listst(void);
@@ -49,7 +49,7 @@ extern uint16_t cpm_sectran(uint16_t sector, void *xlt);
  */
 
 extern uint8_t cpm_diskread(void);
-extern uint8_t cpm_diskwrite(uint8_t hint) __z88dk_fastcall;
+extern uint8_t cpm_diskwrite(uint8_t hint);
 extern uint8_t cpm_map;
 
 /*

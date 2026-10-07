@@ -1,5 +1,9 @@
 # TRS80 Model I and III plus Clones
 
+## Conversion to fcc in progress
+TODO
+- Find scribble or whatever is causing the weird corruption/error
+
 ## Base Systems
 
 - Tandy Model I with Alpha Supermem or compatible and expansion box

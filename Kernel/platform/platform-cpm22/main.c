@@ -46,7 +46,7 @@ void init_hardware_c(void)
 	ramtop = PROGTOP;
 
 	plt_tick_present = !!(info->features & FEATURE_TICK);
-	
+
 	cpm_banks = info->nbanks;
 	copybanks = info->common >> 8;
 	procmem = info->nbanks * (info->common >> 10);
@@ -57,13 +57,13 @@ void init_hardware_c(void)
 
 	kprintf("Common at %x, banks %d\n", info->common, info->nbanks);
 }
-		
+
 /* Nothing to do for the map of init */
 void map_init(void)
 {
 }
 
-uint8_t plt_param(char *p)
+uint_fast8_t plt_param(char *p)
 {
 	used(p);
 	return 0;
@@ -78,7 +78,7 @@ void plt_idle(void)
 	irqrestore(irq);
 }
 
-uint8_t plt_rtc_secs(void)
+uint_fast8_t plt_rtc_secs(void)
 {
 	return sysmod_rtc_secs();
 }

@@ -7,3 +7,10 @@ extern void spi_select_port(uint8_t n);
 
 #define spi_send	sd_spi_transmit_byte
 #define spi_recv	sd_spi_receive_byte
+
+/* Mini-ITX 82C55 */
+#define PPI_A		0x40
+#define PPI_B		0x41
+#define PPI_C		0x42
+#define PPI_CTRL	0x43
+

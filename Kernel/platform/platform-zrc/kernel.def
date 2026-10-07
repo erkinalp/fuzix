@@ -19,25 +19,22 @@ U_DATA_STASH		    .equ 0x7E00	      ; 7E00-7FFF
 PROGBASE		    .equ 0x0000
 PROGLOAD		    .equ 0x0100
 ;
-;	CPU type
-;	0 = CMOS Z80
-;	1 = NMOS Z80 (also works with CMOS)
-;	2 = Z180
-;
-;	If either NMOS or CMOS may be present pick NMOS as the NMOS build
-;	contains extra code to work around an erratum n the NUMS Z80
-;
-Z80_TYPE		    .equ 1	      ; NMOS (IRQ bugs) Z80
-;
 ;	For special platforms that have external memory protection hardware
 ;	Just say 0.
 ;
-Z80_MMU_HOOKS		    .equ 0
+#undef Z80_MMU_HOOKS
 ;
 ;	Set this if the platform has swap enabled in config.h
 ;
-CONFIG_SWAP		    .equ 0
+#undef CONFIG_SWAP
 ;
 ;	The number of disk buffers. Must match config.h
 ;
-NBUFS			    .equ 5
+NBUFS		.equ 5
+;
+;	SPI macros - SPI uses bottom bit for MISO
+;
+
+#define ROTATE		rra
+#define LOADFIRST	in d,(c)
+#define LOADFIRST2	rlc d

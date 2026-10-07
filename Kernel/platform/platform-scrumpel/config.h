@@ -24,8 +24,15 @@
 #define KERNTOP     0xF000  /* Kernel has lower 60KB */
 #define PROC_SIZE   64      /* Memory needed per process */
 
-#define CONFIG_IDE
-#define CONFIG_PPIDE
+#define CONFIG_TD_NUM		3
+/* RC2014 style CF IDE */
+#define CONFIG_TD_IDE
+#define CONFIG_TINYIDE_8BIT
+#define CONFIG_TINYIDE_INDIRECT
+#define IDE_IS_8BIT(x)		1
+/* SD is via bitbang PIO */
+#define CONFIG_TD_SD
+#define TD_SD_NUM		1
 
 /* We need a tidier way to do this from the loader */
 #define CMDLINE	(0x0081)  /* Location of root dev name */
@@ -39,11 +46,6 @@
 #define Z180_IO_BASE       0x00
 
 #define MAX_BLKDEV 3	    /* 2 IDE drives, 1 SD drive */
-
-/* SD via bitbang */
-#define CONFIG_SD
-#define SD_DRIVE_COUNT 1
-#define SD_SPI_CALLTYPE __z88dk_fastcall
 
 #define NUM_DEV_TTY	2
 /* UART0 as the console */

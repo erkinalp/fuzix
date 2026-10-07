@@ -85,7 +85,7 @@ The binary has a 1K sysmod area that will be relocated to 0xE000 or 0xC000
 according to the image chosen. It starts with a jump table of functions.
 
 Functions are entered with a valid stack in common space and unless otherwise
-documented need not save or restore the registers AF, BC, DE, HL.
+documented need not save or restore the registers AF, DE, HL.
 
 
 The jump table entries in order are:

@@ -10,8 +10,6 @@
 
 	.export cursorpos
 
-	.export _vdpport
-
 	.export _vdp_init
 	.export _vdp_type
 	.export _vdp_load_font
@@ -29,9 +27,6 @@
 	.export _vdp_setborder
 	.export _vdp_setcolour
 
-	.export _fontdata_6x8
-	.export _vtattr_notify
-
 
 	.code
 ;
@@ -46,9 +41,9 @@ _vdp_text32:
 
 #else
 _vdp_text40:
-	.byte 0x00, 0xF0, 0x00, 0x00, 0x02, 0x00, 0x00, 0xF4
+	.byte 0x00, 0xD0, 0x00, 0x00, 0x02, 0x00, 0x00, 0xF4
 _vdp_text32:
-	.byte 0x00, 0xE2, 0x00, 0x80, 0x02, 0x76, 0x03, 0xF4
+	.byte 0x00, 0xC2, 0x00, 0x80, 0x02, 0x76, 0x03, 0xF4
 
 #endif
 
@@ -120,7 +115,7 @@ setscroll:
 
 _vdp_setup32:
 	ld	hl,_vdp_text32
-	call _vdp_setup_hl
+	call	vdp_setup_hl
 	ld	hl, scrollconf32
 	jr	setscroll
 ;
@@ -188,6 +183,9 @@ wipelow:			; below font
 	djnz	wipelow
 	call	lf256
 	call	lf256
+	call	lf256
+	pop	bc
+	ret
 lf256:	; b is 0 at this point
 	VDP_DELAY
 	ld	a,(hl)
@@ -236,6 +234,7 @@ fontnext:
 	inc	l
 	bit	6,d
 	jr	z, fontnext
+	pop	bc
 	ret
 
 _vdp_wipe_consoles:
@@ -254,9 +253,11 @@ wipe_con:
 	djnz	wipe_con
 	dec	d
 	jr	nz, wipe_con
+	pop	bc
 	ret
 
 _vdp_setcolour:
+	push	bc
 	ld	bc,(_vdpport)
 	ld	b,0
 	ld	a,0x60			; 0x2000 in the VDP, for write
@@ -269,6 +270,7 @@ set_cmap:
 	out	(c),a
 	VDP_DELAY
 	djnz	set_cmap
+	pop	bc
 	ret
 ;
 ;	Register write value E to register A
@@ -327,7 +329,7 @@ pos32:
 ;	Eww.. wonder if VT should provide a hint that its the 'next char'
 ;
 #ifdef VDP_DIRECT
-	.export _plot_char:
+	.export _plot_char
 _plot_char:
 #endif
 plot_char:
@@ -380,7 +382,7 @@ scrollbuf:
 ;	scroll_down(void)
 ;
 #ifdef VDP_DIRECT
-	.export _scroll_down:
+	.export _scroll_down
 _scroll_down:
 #endif
 scroll_down:
@@ -433,7 +435,7 @@ down_1:
 ;	scroll_up(void)
 ;
 #ifdef VDP_DIRECT
-	.export _scroll_up:
+	.export _scroll_up
 _scroll_up:
 #endif
 scroll_up:
@@ -443,8 +445,8 @@ scroll_up:
 	di
 	ld	a, (_outputtty)
 	dec	a
-	add	a		; 1K per screen
-	add	a
+	add	a,a		; 1K per screen
+	add	a,a
 	ld	h,a
 	ld	l,0
 	ld	b, 23
@@ -485,7 +487,7 @@ up_1:
 	jp popret
 
 #ifdef VDP_DIRECT
-	.export _clear_lines:
+	.export _clear_lines
 _clear_lines:
 #endif
 clear_lines:
@@ -526,7 +528,7 @@ l1:	out	(c), a		; Inner loop clears a line, outer counts
 	jp	popret
 
 #ifdef VDP_DIRECT
-	.export _clear_across:
+	.export _clear_across
 _clear_across:
 #endif
 clear_across:
@@ -563,7 +565,7 @@ l3:	out	(c), a
 ;	cursor_on()		-	cursor on save old char
 ;
 #ifdef VDP_DIRECT
-	.export _cursor_on:
+	.export _cursor_on
 _cursor_on:
 #endif
 cursor_on:
@@ -620,10 +622,14 @@ cursor_off:
 	jp	plotit
 
 #ifdef VDP_DIRECT
+	export _vtattr_notify
+	export _cursor_disable
 _vtattr_notify:
 _cursor_disable:
-	ret
 #endif
+vtattr_notify:
+cursor_disable:
+	ret
 
 _vdp_set_console:
 	push	bc
@@ -631,7 +637,7 @@ _vdp_set_console:
 	ld	bc, (_vdpport)
 	dec	a
 	out	(c), a
-	ld	a,x82
+	ld	a,0x82
 	out	(c),a
 	pop	bc
 	ret
@@ -652,9 +658,6 @@ _vdp_set_console:
 	; graphics API
 	.export _vdp_rop
 	.export _vdp_wop
-
-	.export map_proc_always
-	.export map_kernel
 
 _vdp_rop:
 	pop	de
@@ -719,7 +722,7 @@ _vdp_wop:
 	push	hl
 	pop	ix
 	ld	l, (ix +2)		; VDP offset
-	ld	a, 3ix + 3)
+	ld	a, (ix + 3)
 	or	0x40		; Write operation
 	cp	0x7C
 	ld	h, a
@@ -779,18 +782,18 @@ cursorpeek:
 	.byte	0
 
 _scrolld_base:
-	.dw	0x03C0		; Start of bottom line
+	.word	0x03C0		; Start of bottom line
 _scrolld_mov:
-	.dw	0xFFD8		; -40
+	.word	0xFFD8		; -40
 _scrolld_s1:
-	.dw	0x4028		; 4000 turns on write 40 chars
+	.word	0x4028		; 4000 turns on write 40 chars
 _scrollu_w:
-	.dw	0x0028		; width
+	.word	0x0028		; width
 _scrollu_mov:
-	.dw	0x3FD8		; up 40 bytes in low 12, add 0x4000
+	.word	0x3FD8		; up 40 bytes in low 12, add 0x4000
 					; carry 11->12
 
 scrollconf40:
-	.dw 0x03C0, 0xFFD8, 0x4028, 0x0028, 0x3FD8
+	.word 0x03C0, 0xFFD8, 0x4028, 0x0028, 0x3FD8
 scrollconf32:
-	.dw 0x02E0, 0xFFE0, 0x4020, 0x0020, 0x3FE0
+	.word 0x02E0, 0xFFE0, 0x4020, 0x0020, 0x3FE0

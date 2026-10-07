@@ -1,5 +1,7 @@
 Z80 2063
 
+*** Currently broken as being ported to fcc
+
 A fairly simple 32/32 banked 512K RAM machine with the usual top bank pinned
 high. Has an SIO and CTC and yet another variant on bitbang SD that's not
 the same as anyone else's. Slightly odd boot arrangement (it loads 16K
@@ -15,9 +17,7 @@ Memory Map
 Kernel
 0000-7FFF	Kernel code (must not contain data or const data)
 8000-..		Kernel code end, constants, data, buffers
-F000-F03F	IM2 vectors
-F040-F23F	Udata
-F240-FDFF	Common code
+FD00-FDFF	Vectors
 FE00-FFFF	SIO buffer (must be page aligned)
 
 User

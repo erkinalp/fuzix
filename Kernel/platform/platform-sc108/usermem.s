@@ -1,53 +1,94 @@
+# 1 "usermem.S"
 ;
 ;	We have a custom implementation of usermem. We really need
 ;	to optimize ldir_to/from_user.
 ;
-        .module usermem
+# 1 "kernelu.def"
+; FUZIX mnemonics for memory addresses etc
 
-	.include "kernel.def"
-        .include "../../cpu-z80/kernel-z80.def"
+U_DATA__TOTALSIZE	.equ	0x200	; 256+256 bytes @ F000
+Z80_TYPE		.equ	0	; CMOS
 
+Z80_MMU_HOOKS		.equ 0
+
+
+
+PROGBASE		.equ	0x0000
+PROGLOAD		.equ	0x0100
+
+; Mnemonics for I/O ports etc
+
+CONSOLE_RATE		.equ	115200
+
+CPU_CLOCK_KHZ		.equ	7372
+
+; Z80 CTC ports
+CTC_CH0		.equ	0x88	; CTC channel 0 and interrupt vector
+CTC_CH1		.equ	0x89	; CTC channel 1 (periodic interrupts)
+CTC_CH2		.equ	0x8A	; CTC channel 2
+CTC_CH3		.equ	0x8B	; CTC channel 3
+
+ACIA_C          .equ     0x80
+ACIA_D          .equ     0x81
+ACIA_RESET      .equ     0x03
+ACIA_RTS_HIGH_A      .equ     0xD6   ; rts high, xmit interrupt disabled
+ACIA_RTS_LOW_A       .equ     0x96   ; rts low, xmit interrupt disabled
+
+NBUFS		.equ	4
+
+;
+;	Select where to put the high code - in our case we need this
+;	in common
+;
+
+
+HIGHPAGE	.equ	0	; We only have 1 page byte and the low page
+				; isn't used
+# 1 "../../cpu-z80u/kernel-z80.def"
+ 
+# 26
+ 
+# 44
+ 
+# 8 "usermem.S"
         ; exported symbols
-        .globl __uget
-        .globl __ugetc
-        .globl __ugetw
+        .export __uget
+        .export __ugetc
+        .export __ugetw
 
-        .globl __uput
-        .globl __uputc
-        .globl __uputw
-        .globl __uzero
+        .export __uput
+        .export __uputc
+        .export __uputw
+        .export __uzero
 
-	.globl ldir_from_user
-	.globl ldir_to_user
-
-        .area _COMMONMEM
-
-
+	.common
 uputget:
         ; load DE with the byte count
-        ld c, 8(ix) ; byte count
-        ld b, 9(ix)
+        ld c, (ix + 8) ; byte count
+        ld b, (ix + 9)
 	ld a, b
 	or c
 	ret z		; no work
         ; load HL with the source address
-        ld l, 4(ix) ; src address
-        ld h, 5(ix)
+        ld l, (ix + 4) ; src address
+        ld h, (ix + 5)
         ; load DE with destination address
-        ld e, 6(ix)
-        ld d, 7(ix)
+        ld e, (ix + 6)
+        ld d, (ix + 7)
 	ret
 
 __uget:
 	push ix
 	ld ix,#0
 	add ix, sp
+	push bc
 	call uputget
 	jr z, uget_out
 	push de
 	pop ix
 	call ldir_from_user
 uget_out:
+	pop bc
 	pop ix
 	ld hl,#0
 	ret
@@ -56,6 +97,7 @@ __uput:
 	push ix
 	ld ix,#0
 	add ix,sp
+	push bc
 	call uputget
 	jr z, uget_out
 	push de
@@ -68,46 +110,66 @@ __uput:
 ;	logic
 ;
 __uzero:
-	pop de
-	pop hl
-	pop bc
 	push bc
-	push hl
-	push de
+	ld hl,4
+	add hl,sp
+	ld e,(hl)
+	inc hl
+	ld d,(hl)
+	inc hl
+	ld c,(hl)
+	inc hl
+	ld b,(hl)
 	ld a,b
 	or c
-	ret z
+	jr z,uout
+	ex de,hl
 	ld a,#0x81
 	out (0x38),a		; user bank
 	rlca
 	out (0x30),a
-	ld (hl),#0
+	ld (hl),0
 	dec bc
 	ld a,b
 	or c
-	jr z, uout
+	jr z, uoutbc
 	ld e,l
 	ld d,h
 	inc de
 	ldir
-uout:
-	ld a,#1
+uoutbc:
+	ld a,1
 	out (0x38),a
 	rlca
 	out (0x30),a
+	pop bc
 	ret
 
+
 __ugetc:
+	pop de
+	pop hl
+	push hl
+	push de
 	ld a,#0x81
 	out (0x38),a
 	rlca
 	out (0x30),a
 	ld l,(hl)
-	ld h,#0
-	jr uout
+	ld h,0
+uout:
+	ld a,1
+	out (0x38),a
+	rlca
+	out (0x30),a
+	ret
 
 __ugetw:
-	ld a,#0x81
+	pop de
+	pop hl
+	push hl
+	push de
+	ld a,0x81
 	out (0x38),a
 	rlca
 	out (0x30),a
@@ -118,13 +180,16 @@ __ugetw:
 	jr uout
 	
 __uputc:
-	pop bc
-	pop de
-	pop hl
-	push hl
-	push de
-	push bc
-	ld a,#0x81
+	ld hl,2
+	add hl,sp
+	ld e,(hl)
+	inc hl
+	inc hl
+	ld a,(hl)
+	inc hl
+	ld h,(hl)
+	ld l,a
+	ld a,0x81
 	out (0x38),a
 	rlca
 	out (0x30),a
@@ -132,13 +197,17 @@ __uputc:
 	jr uout
 
 __uputw:
-	pop bc
-	pop de
-	pop hl
-	push hl
-	push de
-	push bc
-	ld a,#0x81
+	ld hl,2
+	add hl,sp
+	ld e,(hl)
+	inc hl
+	ld d,(hl)
+	inc hl
+	ld a,(hl)
+	inc hl
+	ld h,(hl)
+	ld l,a
+	ld a,0x81
 	out (0x38),a
 	rlca
 	out (0x30),a

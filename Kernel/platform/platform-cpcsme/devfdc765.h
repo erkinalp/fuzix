@@ -8,6 +8,7 @@ int devfd_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag);
 
 extern void devfd_spindown(void);
 
+/*extern void fd765_do_init(void);*/
 extern void fd765_do_nudge_tc(void);
 extern void fd765_do_recalibrate(void);
 extern void fd765_do_seek(void);

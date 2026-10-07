@@ -2,49 +2,20 @@
 #include <kdata.h>
 #include <printf.h>
 
-/*
- *	Must live in CODE2. Use an asm helper so that we don't change bank
- *	looking for memcpy or other surprise helpers
- */
-
-static void __copy_inline(uint8_t *to, uint8_t *from, uint16_t len) __naked
-{
-__asm
-    ld hl,#9		; last byte of len argument
-    add hl,sp
-    ld b,(hl)
-    dec hl
-    ld c,(hl)
-    dec hl
-    ld d,(hl)
-    dec hl
-    ld e,(hl)
-    dec hl
-    ld a,(hl)
-    dec hl
-    ld l,(hl)
-    ld h,a
-    ld a,b
-    or c
-    ret z
-    ex de,hl
-    ldir
-    ret
-__endasm;
-}
-
+/* We put the helpers in overlay2 specifically so theya re safe to use this
+   way */
 void blktok(void *kaddr, struct blkbuf *buf, uint16_t off, uint16_t len)
 {
-    __copy_inline(kaddr, buf->__bf_data + off, len);
+    memcpy(kaddr, buf->__bf_data + off, len);
 }
 
 void blkfromk(void *kaddr, struct blkbuf *buf, uint16_t off, uint16_t len)
 {
-    __copy_inline(buf->__bf_data + off, kaddr, len);
+    memcpy(buf->__bf_data + off, kaddr, len);
 }
 
 /*
- *	This works because our uput and uget (see trs80-bank.s) switch
+ *	This works because our uput and uget (see trs80-bank.S) switch
  *	to kernel logical bank 2 when copying, as kernel bank 1 is only
  *	code so it knows that any copy must be to common or bank 2. Without
  *	that this would need a double buffer.
@@ -66,13 +37,13 @@ void *blkptr(struct blkbuf *buf, uint16_t offset, uint16_t len)
 {
     if (len > 64)
         panic("blkptr");
-    __copy_inline(scratchbuf, buf->__bf_data + offset, len);
+    memcpy(scratchbuf, buf->__bf_data + offset, len);
     return scratchbuf;
 }
 
 void blkzero(struct blkbuf *buf)
 {
-    __builtin_memset(buf->__bf_data, 0, BLKSIZE);
+    memset(buf->__bf_data, 0, BLKSIZE);
 }
 
 extern uint8_t bufdata[];

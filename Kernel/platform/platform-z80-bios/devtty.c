@@ -63,7 +63,7 @@ void kputchar(uint_fast8_t c)
  */
 uint_fast8_t tty_writeready(uint_fast8_t minor)
 {
-	if (fuzixbios_serial_txready(minor))
+	if (fuzixbios_ser_txr(minor))
 		return TTY_READY_NOW;
 	return TTY_READY_SOON;
 }
@@ -79,7 +79,7 @@ uint_fast8_t tty_writeready(uint_fast8_t minor)
  */
 void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 {
-	fuzixbios_serial_tx(minor | (c << 8));
+	fuzixbios_ser_tx(minor | (c << 8));
 }
 
 /*
@@ -94,7 +94,7 @@ void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 	tc.device = minor;
 	tc.flags = flags;
 	tc.termios = ttydata[minor].termios;
-	fuzixbios_serial_setup(&tc);
+	fuzixbios_ser_set(&tc);
 	ttydata[minor].termios = tc.termios;
 }
 
@@ -114,7 +114,7 @@ void tty_sleeping(uint_fast8_t minor)
  */
 int tty_carrier(uint_fast8_t minor)
 {
-	return fuzixbios_serial_carrier(minor);
+	return fuzixbios_ser_car(minor);
 }
 
 /*

@@ -6,6 +6,7 @@
 #include <blkdev.h>
 #include <tinyide.h>
 #include <ds1302.h>
+#include "zrc.h"
 
 extern int strcmp(const char *, const char *);
 
@@ -51,13 +52,16 @@ void map_init(void)
  *	might need to just dec/inc before using it in an I/O port or similar
  *	to avoid confusion.
  *
- *	Kernel in bank 0, user in banks 1-63
+ *	Kernel in bank 0, user in banks 1-63 (0-15 on 512MB)
  */
 void pagemap_init(void)
 {
 	uint8_t i;
-	/* 3F is the common */
-	for (i = 1; i < 0x3F; i++)
+	uint8_t common = 0x3F;
+	if (machtype == 1)
+		common = 0x0F;
+	/* 3F/0F is the common */
+	for (i = 1; i < common; i++)
 		pagemap_add(i);
 }
 
@@ -69,7 +73,13 @@ void pagemap_init(void)
 
 void device_init(void)
 {
-	ds1302_init();
+	if (!ds1302_init()) {
+		rtc_port = 0xC0;
+		ds1302_init();
+	}
 	ide_probe();
-	sock_init();
+	pio_setup();
+	sd_probe();
+	if (machtype == 0)
+		sock_init();
 }

@@ -40,13 +40,13 @@
 	extern int _setjmp(jmp_buf __env);
 	#define setjmp(x) _setjmp(x)
 
-#elif defined(__CC65__)
+#elif defined(__6502__)
 
-	typedef char jmp_buf[5];
+	typedef char jmp_buf[13];	/* SP S regs[8] (SP) */
 	extern int _setjmp(jmp_buf __env);
 	#define setjmp(x) _setjmp(x)
 
-#elif defined(__CC68__)
+#elif defined(__6303__) || defined(__6803__)
 
 	typedef char jmp_buf[4];
 	extern int _setjmp(jmp_buf __env);
@@ -64,11 +64,11 @@
 	extern int setjmp(jmp_buf __env);
 	__attribute__((__noreturn__)) void longjmp (jmp_buf __env, int __val);
 
-#elif defined(__m6809__)
+#elif defined(__6809__)
 
 	typedef uint16_t jmp_buf[4];
 	extern int setjmp(jmp_buf __env);
-	__attribute__((__noreturn__)) void longjmp (jmp_buf __env, int __val);
+	void longjmp (jmp_buf __env, int __val);
 
 #elif defined(__6800__)
 
@@ -105,7 +105,7 @@
 
 	/* Fetch the compiler's setjmp.h. */
 	#include_next <setjmp.h>
-	
+
 #elif defined(__ARM_EABI__)
 
 	typedef uint32_t jmp_buf[10];
@@ -138,9 +138,21 @@
 
 #elif defined(__8070__)
 
-	typedef unsigned jmp_buf[2];	/*  (sp) and sp */
+	typedef unsigned jmp_buf[3];	/*  p3 (sp) and sp */
 	extern int _setjmp(jmp_buf __env);
 	#define setjmp(x) _setjmp(x)
+
+#elif defined(__tms7000__)
+
+	typedef uint8_t jmp_buf[9];	/*  4 bytes reg vars, C stack, ret addr, cpu sp */
+	extern int _setjmp(jmp_buf __env);
+	#define setjmp(x) _setjmp(x)
+
+#elif defined(__Z8000__)
+
+	/* R8-R13 (6 regs), RR14/SP (2 words), return PC (2 words) = 10 words */
+	typedef uint16_t jmp_buf[10];
+	extern int setjmp(jmp_buf __env);
 
 #else
 	#error jmp_buf definition not set for this architecture

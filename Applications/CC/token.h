@@ -1,6 +1,15 @@
 /* Tokens */
 #define T_SYMBOL	0x8000	/* Upwards */
 
+/*
+ *	cc0 interns "main" as the very first user symbol, so it always
+ *	carries this id. Later passes see names as ids and not strings -
+ *	cc1 has no name table - and this is how they recognise main.
+ *	Anything else interned before it in keywords() breaks the promise;
+ *	cc0 checks.
+ */
+#define T_MAIN		T_SYMBOL
+
 /* Special control symbols */
 #define T_EOF		0x7F00
 #define T_INVALID	0x7F01
@@ -120,6 +129,13 @@
 /* End marker for strings (mostly a dummy for convenience) */
 #define T_STRING_END	0x1106
 
+/* These are followed by an EIGHT byte little endian value. 0x1105 and
+   0x1106 are the string markers above - do not reuse them, an earlier
+   attempt did and turned every string literal into a constant. */
+#define T_LONGLONGVAL	0x1107
+#define T_ULONGLONGVAL	0x1108
+#define T_DOUBLEVAL	0x1109
+
 /* Encodings that are used internally for nodes but have no actual equivalent
    token */
 #define T_CAST		0x1200		/* (int *) etc */
@@ -139,6 +155,9 @@
 #define T_CASELABEL	0x120E		/* A case label */
 #define T_ARGCOMMA	0x120F		/* Links arguments to a call */
 #define T_REG		0x1210		/* name/offset for a register */
+#define T_ARGSTRUCT	0x1211		/* struct passed by value as an
+					   argument. The child evaluates to
+					   its address, value is its length */
 
 #define T_USER		0x2000		/* Tokens for code generators */
 

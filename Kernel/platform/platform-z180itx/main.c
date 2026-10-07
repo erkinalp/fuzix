@@ -29,18 +29,11 @@ void plt_discard(void)
 	}
 }
 
-void plt_idle(void)
-{
-	__asm halt __endasm;
-}
-
 void z180_timer_interrupt(void)
 {
-	unsigned char a;
-
 	/* we have to read both of these registers in order to reset the timer */
-	a = TIME_TCR;
-	a = TIME_TMDR0L;
+	in(TIME_TCR);
+	in(TIME_TMDR0L);
 	timer_interrupt();
 	if (ps2kbd_present) {
 		int16_t n = ps2kbd_get();
@@ -54,15 +47,15 @@ void plt_interrupt(void)
 	switch (irqvector) {
 	case Z180_INT_TIMER0:
 		z180_timer_interrupt();
-#ifdef CONFIG_NET_W5X00		
+#ifdef CONFIG_NET_W5X00
 		w5x00_poll();
-#endif		
+#endif
 		return;
 	case Z180_INT_ASCI0:
-		tty_pollirq_asci0();
+		tty_pirq_asci0();
 		return;
 	case Z180_INT_ASCI1:
-		tty_pollirq_asci1();
+		tty_pirq_asci1();
 		return;
 	default:
 		return;

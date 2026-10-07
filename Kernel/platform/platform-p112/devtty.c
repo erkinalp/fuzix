@@ -105,7 +105,7 @@ escc_carriertest:
     return 1;
 }
 
-void tty_pollirq_asci0(void)
+void tty_pollirq_as0(void)
 {
     while(ASCI_STAT0 & 0x80){
         tty_inproc(3, ASCI_RDR0);
@@ -114,7 +114,7 @@ void tty_pollirq_asci0(void)
         ASCI_CNTLA0 &= ~0x08;
 }
 
-void tty_pollirq_asci1(void)
+void tty_pollirq_as1(void)
 {
     while(ASCI_STAT1 & 0x80){
         tty_inproc(4, ASCI_RDR1);

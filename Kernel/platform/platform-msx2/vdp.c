@@ -26,8 +26,8 @@ void vdpinit(void)
     v99xx_set_mode(MODE_TEXT2);
     v99xx_set_color(15, 4);
     v99xx_copy_to_vram(VT_BASE_FONT + 32*8, (uint8_t *)&fontdata_6x8, 768);
-    v99xx_set_blink_color(15, 8);
-    v99xx_set_blink_period(4, 4);
+    v99xx_blink_col(15, 8);
+    v99xx_blink_per(4, 4);
 
     /* clean vram for all vt's */
     for (i = 0; i < MAX_VT; i++) {
@@ -126,12 +126,12 @@ void set_visible_vt(uint8_t vt)
     uint8_t val;
     uint16_t offset = vt * VT_OFFSET;
 
-    val = (uint8_t)(((VT_BASE + offset & 0xF800) >> 10) | 0x03);
+    val = (uint8_t)((((VT_BASE + offset) & 0xF800) >> 10) | 0x03);
     v99xx_write_reg(V99xx_REG_PTRN_LAYOUT_BASE, val);
 
-    val = (uint8_t)(((VT_BASE_BLINK + offset & 0x3F00) >> 6) | 0x07);
+    val = (uint8_t)((((VT_BASE_BLINK + offset) & 0x3F00) >> 6) | 0x07);
     v99xx_write_reg(V99xx_REG_COLOR_BASE_H, val);
 
-    val = (uint8_t)(((VT_BASE_BLINK + offset & 0xC000) >> 14) & 0x07);
+    val = (uint8_t)((((VT_BASE_BLINK + offset) & 0xC000) >> 14) & 0x07);
     v99xx_write_reg(V99xx_REG_COLOR_BASE_L, val);
 }

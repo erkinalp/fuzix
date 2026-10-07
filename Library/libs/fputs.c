@@ -1,6 +1,6 @@
 #include "stdio-l.h"
 
-int fputs(const char *s, FILE * fp)
+int fputs(register const char *s, FILE * fp)
 {
 	register int n = 0;
 

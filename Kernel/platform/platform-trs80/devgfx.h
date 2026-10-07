@@ -3,6 +3,6 @@
 
 #include <graphics.h>
 
-extern int gfx_ioctl(uint8_t minor, uarg_t arg, char *ptr);
+extern int gfx_ioctl(uint_fast8_t minor, uarg_t arg, char *ptr);
 
 #endif

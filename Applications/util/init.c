@@ -8,7 +8,7 @@
  *	even avoid forking on a level 2 system until the tty is used (maybe
  *	even to the point of login completion ?)
  *
- *	TODO: (once we have SIGCLD)
+ *	TODO:
  *	- Give serious consideration to hiding cron/at in the daemon
  *	  to keep our background daemon count as low as we can
  *	- Ditto for syslogd
@@ -719,7 +719,7 @@ static int baudmatch(int fd, const char *p)
 	static struct termios ttmp;
 
 	if (p) {
-		for(i = 1; i < 15; i++) {
+		for(i = 1; i <= 15; i++) {
 			if (strcmp(p, *str++) == 0)
 				return i;
 		}
@@ -746,7 +746,7 @@ static pid_t getty(const char **argv, const char *id)
 	char *p, buf[50], salt[3];
 	char hn[64];
 	uint8_t console = 0;
-	uint16_t vtsize;
+	int vtsize;
 
 	gethostname(hn, sizeof(hn));
 
@@ -818,12 +818,12 @@ static pid_t getty(const char **argv, const char *id)
 			vtsize = ioctl(fdtty, VTSIZE, &winsz);
 			if (vtsize != -1) {
 				winsz.ws_col = vtsize & 0xFF;
-				winsz.ws_row = vtsize >> 8;
+				winsz.ws_row = (vtsize >> 8) & 0xFF;
 				/* Physical consoles are extended VT52 so
 				   set the terminal type if not forced by
 				   the user */
 				if (!argv[1] || !argv[2])
-					envset("TERM", "vt52");
+					envset("TERM", "fuzix");
 			}
 
 			if (argv[1]) {

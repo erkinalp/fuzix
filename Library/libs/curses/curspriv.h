@@ -31,6 +31,7 @@ typedef	struct {
   int      rawmode;
   int	   cbrkmode;
   int      echoit;
+  int      halfdelay;
 } cursv;
 
 /* External variables */

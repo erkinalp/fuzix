@@ -44,7 +44,7 @@
 
 /* Device parameters */
 #define NUM_DEV_TTY	2
-#define CONFIG_TD_NUM	4
+#define CONFIG_TD_NUM	2
 /* RC2014 style CF IDE */
 #define CONFIG_TD_IDE
 #define CONFIG_TINYIDE_SDCCPIO
@@ -54,8 +54,7 @@
 
 #define TTYDEV   BOOT_TTY /* Device used by kernel for messages, panics */
 #define NBUFS    5       /* Number of block buffers */
-#define NMOUNTS	 2	  /* Number of mounts at a time */
-#define MAX_BLKDEV 2	    /* 2 IDE drives */
+#define NMOUNTS	 3	  /* Number of mounts at a time */
 
 #define SWAPBASE 0x0000
 #define SWAPTOP  0xC000

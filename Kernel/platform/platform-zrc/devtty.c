@@ -8,8 +8,8 @@
 #include <tty.h>
 #include <devtty.h>
 
-#define acia_c 	0x80
-#define acia_d	0x81
+#define ACIA_C 	0x80
+#define ACIA_D	0x81
 
 /*
  *	One buffer for each tty
@@ -73,7 +73,7 @@ void kputchar(uint_fast8_t c)
  */
 ttyready_t tty_writeready(uint_fast8_t minor)
 {
-	return in(acia_c) & 0x02 ? TTY_READY_NOW : TTY_READY_SOON;
+	return in(ACIA_C) & 0x02 ? TTY_READY_NOW : TTY_READY_SOON;
 }
 
 /*
@@ -87,7 +87,7 @@ ttyready_t tty_writeready(uint_fast8_t minor)
  */
 void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 {
-	out(acia_d, c);
+	out(ACIA_D, c);
 }
 
 /*
@@ -137,6 +137,6 @@ void tty_data_consumed(uint_fast8_t minor)
  */
 void tty_poll(void)
 {
-	if (in(acia_c) & 1)
-		tty_inproc(1, in(acia_d));
+	if (in(ACIA_C) & 1)
+		tty_inproc(1, in(ACIA_D));
 }

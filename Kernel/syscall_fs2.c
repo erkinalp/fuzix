@@ -30,7 +30,7 @@ arg_t _chdir(void)
 {
 	inoptr newcwd;
 
-	if (!(newcwd = n_open(dir, NULLINOPTR)))
+	if (!(newcwd = n_open_argn()))
 		return (-1);
 	return chdiroot_op(newcwd, &udata.u_cwd);
 }
@@ -67,7 +67,7 @@ arg_t _chroot(void)
 
 	if (esuper())
 		return (-1);
-	if (!(newroot = n_open(dir, NULLINOPTR)))
+	if (!(newroot = n_open_argn()))
 		return (-1);
 	return chdiroot_op(newroot, &udata.u_root);
 }
@@ -116,7 +116,7 @@ arg_t _mknod(void)
 	setftime(ino, A_TIME | M_TIME | C_TIME);
 	wr_inode(ino);
 
-	i_unlock_deref(ino);
+	i_deref(ino);
 	return (0);
 
       nogood:
@@ -156,7 +156,7 @@ arg_t _access(void)
 	udata.u_euid = udata.u_ptab->p_uid;
 	udata.u_egid = udata.u_gid;
 
-	if (!(ino = n_open(path, NULLINOPTR))) {
+	if (!(ino = n_open_argn())) {
 		retval = -1;
 		goto nogood;
 	}
@@ -209,10 +209,10 @@ arg_t _chmod(void)
 	inoptr ino;
 	int ret;
 
-	if (!(ino = n_open_lock(path, NULLINOPTR)))
+	if (!(ino = n_open_argn()))
 		return (-1);
 	ret = chmod_op(ino);
-	i_unlock_deref(ino);
+	i_deref(ino);
 	return ret;
 }
 
@@ -230,11 +230,10 @@ arg_t _fchmod(void)
 	inoptr ino;
 	int ret;
 
-	if ((ino = getinode_lock(fd)) == NULLINODE)
+	if ((ino = getinode(fd)) == NULLINODE)
 		return (-1);
 
 	ret = chmod_op(ino);
-	i_unlock(ino);
 	return ret;
 }
 
@@ -243,7 +242,7 @@ arg_t _fchmod(void)
 #define owner (int16_t)udata.u_argn1
 #define group (int16_t)udata.u_argn2
 
-static int chown_op(inoptr ino)
+static int chown_op(register inoptr ino)
 {
 	if (ino->c_flags & CRDONLY) {
 		udata.u_error = EROFS;
@@ -286,10 +285,10 @@ arg_t _chown(void)
 	inoptr ino;
 	int ret;
 
-	if (!(ino = n_open_lock(path, NULLINOPTR)))
+	if (!(ino = n_open_argn()))
 		return (-1);
 	ret = chown_op(ino);
-	i_unlock_deref(ino);
+	i_deref(ino);
 	return ret;
 }
 
@@ -308,11 +307,9 @@ arg_t _fchown(void)
 	inoptr ino;
 	int ret;
 
-	if ((ino = getinode_lock(fd)) == NULLINODE)
+	if ((ino = getinode(fd)) == NULLINODE)
 		return (-1);
-	ret = chown_op(ino);
-	i_unlock(ino);
-	return ret;
+	return chown_op(ino);
 }
 
 #undef fd
@@ -328,10 +325,10 @@ arg_t _fchown(void)
 
 arg_t _utime(void)
 {
-	regptr inoptr ino;
+	register inoptr ino;
 	time_t t[2];
 
-	if (!(ino = n_open_lock(file, NULLINOPTR)))
+	if (!(ino = n_open_argn()))
 		return (-1);
 	if (ino->c_flags & CRDONLY) {
 		udata.u_error = EROFS;
@@ -355,12 +352,12 @@ arg_t _utime(void)
 	ino->c_node.i_atime = t[0].low;
 	ino->c_node.i_mtime = t[1].low;
 	setftime(ino, C_TIME);
-	i_unlock_deref(ino);
+	i_deref(ino);
 	return (0);
 out:
 	udata.u_error = EPERM;
 out2:
-	i_unlock_deref(ino);
+	i_deref(ino);
 	return -1;
 }
 
@@ -370,7 +367,7 @@ out2:
 /*******************************************
   acct(fd)	                 Function 61
   int16_t fd;
-  
+
   Process accounting. Differs from SYS5 in
   that we pass an fd and hide the opening
   in the C library code.
@@ -403,7 +400,7 @@ arg_t _acct(void)
 #else
         udata.u_error = EINVAL;
         return -1;
-#endif        
+#endif
 }
 
 #undef fd
@@ -423,7 +420,7 @@ arg_t _statfs(void)
 	inoptr ino;
 	struct mount *m;
 
-	if (!(ino  = n_open(path, NULLINOPTR)))
+	if (!(ino  = n_open_argn()))
 		return -1;
         m = fs_tab_get(ino->c_dev);
         i_deref(ino);

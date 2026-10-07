@@ -9,12 +9,10 @@ Supported hardware:
 Memory Map
 ==========
 0000-00FF	Interrupt stack (borrowed as swap stack)
-0100-01FF	Vectors and then a few helpers
+0100-01FF	Vectors and should shove some bits here
 0200-03FF	Display
-0400-7FFF	Code/Data for kernel (take care to keep this below 8000 and
-		shuffle stuff if needed to make it fit)
-8000-EFFF	User space (28K)
-F000-FCFF	More kernel bits
+0400-9CFF	Kernel
+9900-FCFF	User space (25K)
 FD00-FEFF	udata
 FF00-FFFF	I/O etc
 
@@ -31,7 +29,8 @@ a useful port.
 
 TODO
 ====
-- We need to fix a tiny bit of user space for this size on 6809. Notably unfortunately 'ls'
+- With the additional size from the new compiler this isn't really useful until
+  we improve the compiler code density further.
 
 Emulation
 =========

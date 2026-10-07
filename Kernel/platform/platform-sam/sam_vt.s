@@ -88,6 +88,8 @@ _plot_char:
 	call base_addr
 	ld h,#0
 	ld l,c
+plot_patch:
+	res 7,l			; patched by VTATTR changes
 	add hl,hl		; char * 16 (expanded 8 x 8)
 	add hl,hl
 	add hl,hl
@@ -265,6 +267,14 @@ xorhl:
 	ret
 
 _vtattr_notify:
+	ld	a,(_vtattr)
+	and	#64	; VTA_ALTCHAR
+	ld	a, #0xBC
+	jr	z, lochar
+	ld	a,#0xFC
+lochar:
+	; Patch in either res or set 7,l
+	ld	(plot_patch + 1),a
 	ret
 
 colours:

@@ -5,7 +5,9 @@ export PICO_SDK_FETCH_FROM_GIT = yes
 # Set 'SUBTARGET' to one of pico-sdk compatible boards
 # valid values: pico or pico2
 ifndef SUBTARGET
-SUBTARGET=pico # set default subtarget
+# set default subtarget (keep on its own line - a trailing comment
+# leaves whitespace in the value and breaks the ifeq checks below)
+SUBTARGET=pico
 endif
 
 ifeq ($(SUBTARGET),pico)
@@ -14,13 +16,30 @@ endif
 ifeq ($(SUBTARGET),pico_w)
 TOTALMEM=160
 endif
+# 312, not 320: the kernel has taken two 4K bites out of the pool. The
+# first was to stop progbase floating; the second pays for the C
+# library's allocator, which is now the PSRAM heap (arena.c overrides
+# _sbrk) - malloc/free/realloc cost 2432 bytes of SRAM here because the
+# kernel is PICO_COPY_TO_RAM and library code is RAM-resident.
+# The first bite was cheap when PROGSIZE capped a process at 256K and the
+# top of the pool was unreachable slack.  It no longer does - a process
+# may use all of user memory - so both bites now come out of what a big
+# program could have had.
+# linker_overrides/memory_ram.incl must agree - it carves the same
+# split, and nothing checks that the two match.
 ifeq ($(SUBTARGET),pico2)
-TOTALMEM=320
+TOTALMEM=336
 endif
 ifeq ($(SUBTARGET),pico2_w)
-TOTALMEM=320
+TOTALMEM=336
 endif
 
+# CYW43 Wi-Fi is ALWAYS built in - there is one kernel, and it is the
+# one in build/.  It used to be "make PC3_NET=1" into a second build
+# directory, which produced two kernels indistinguishable on the
+# console; the first thing that cost was a Pico Computer 2 test flashed
+# with the wrong one.  See CMakeLists.txt.
+#
 PICOTOOLFLAGS= --family rp2040
 ifeq (${SUBTARGET}, pico2)
 PICOTOOLFLAGS= --family data
@@ -34,8 +53,10 @@ endif
 
 include ../../../version.mk
 
-build/fuzix.elf: ../../version.c build/Makefile
+build/fuzix.elf: ../../version.c build/Makefile FORCE
 	$(MAKE) -C build
+
+FORCE:
 
 ../../version.c:
 	$(MAKE) -C ../.. TARGET=rpipico version.c
@@ -44,10 +65,12 @@ build/Makefile: CMakeLists.txt $(wildcard ../../*.[chS]) $(wildcard ../../*/*.[c
 	mkdir -p build
 	(cd build && cmake -DPICO_BOARD=${SUBTARGET} -DTOTALMEM=${TOTALMEM} ..)
 
+# "world" builds the kernel and the userland.  It used to also build a
+# filesystem image into the flash above the kernel, with mkftl and a
+# uf2 offset that had to agree with FLASH_OFFSET; that device is gone
+# (config.h), and update-flash.sh survives only because mksdimage.sh
+# builds the SD root with it.
 image:: world
-	./update-flash.sh
-	../../../Standalone/mkftl -s 1952 -e 0x1000 -g 10 filesystem.img -o filesystem.ftl
-	${PICOTOOL} uf2 convert filesystem.ftl -t bin filesystem.uf2 -o 0x10018000 ${PICOTOOLFLAGS}
 
 diskimage:
 
@@ -62,6 +85,7 @@ clean:
 	$(MAKE) -C ../../../Applications/levee -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/cave -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/cursesgames -f Makefile.armm0 clean
+	$(MAKE) -C ../../../Applications/bbcbasic -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Standalone clean
 	$(MAKE) -C utils clean
 
@@ -74,5 +98,6 @@ world: build/fuzix.elf
 	$(MAKE) -C ../../../Applications/levee -f Makefile.armm0
 	$(MAKE) -C ../../../Applications/cave -f Makefile.armm0
 	$(MAKE) -C ../../../Applications/cursesgames -f Makefile.armm0
+	$(MAKE) -C ../../../Applications/bbcbasic -f Makefile.armm0
 	$(MAKE) -C ../../../Standalone
 	$(MAKE) -C utils

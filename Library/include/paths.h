@@ -24,4 +24,6 @@
 
 #define _PATH_HOSTNAME	"/etc/hostname"
 
+#define _PATH_MAILDIR	"/var/mail"
+
 #endif /* __PATHS_H */

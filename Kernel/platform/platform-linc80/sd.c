@@ -19,24 +19,24 @@
  */
 
 /* PIO port B */
-__sfr __at 0x19	piob_d;
-__sfr __at 0x1b piob_c;
+#define PIOB_D	0x19
+#define PIOB_C	0x1B
 
 void pio_setup(void)
 {
     spi_piostate = 0xE0;
-    spi_port = 0x19;
+    spi_port = PIOB_D;
 
-    piob_c = 0xCF;		/* Mode 3 */
-    piob_c = 0xE1;		/* MISO input, unused as input (so high Z) */
+    out(PIOB_C, 0xCF);		/* Mode 3 */
+    out(PIOB_C, 0xE1);		/* MISO input, unused as input (so high Z) */
     /* No vector loading for now - might need if we want to support an SPI
        device with interrupts (eg ethernet) */
-    piob_c = 0x07;		/* No interrupt, no mask */
+    out(PIOB_C, 0x07);		/* No interrupt, no mask */
 }
 
 void sd_spi_raise_cs(void)
 {
-    piob_d = spi_piostate |= 0x18;
+    out(PIOB_D, spi_piostate |= 0x18);
 }
 
 void sd_spi_lower_cs(void)
@@ -45,7 +45,7 @@ void sd_spi_lower_cs(void)
         spi_piostate &= ~0x08;
     else
         spi_piostate &= ~0x10;
-    piob_d = spi_piostate;
+    out(PIOB_D, spi_piostate);
 }
 
 void sd_spi_fast(void)
@@ -56,6 +56,7 @@ void sd_spi_slow(void)
 {
 }
 
+#if 0
 COMMON_MEMORY
 
 bool sd_spi_rx_sector(uint8_t *data) __naked __z88dk_fastcall
@@ -105,3 +106,4 @@ dowrite:
   __endasm;
 }
 
+#endif

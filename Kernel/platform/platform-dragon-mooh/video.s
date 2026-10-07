@@ -86,6 +86,8 @@ _m6847_plot_char:
 	lda 4,s
 	bsr vidaddr		; preserves X (holding the char)
 	tfr x,d
+plot_patch:
+	andb #0x7f		; mask char - patched on vtattr change
 	lslb			; multiply by 8
 	rola
 	lslb
@@ -350,8 +352,17 @@ _m6847_cursor_off:
 	com 96,x
 	jsr _unmap_video
 nocursor:
-_m6847_cursor_disable:
 _m6847_vtattr_notify:
+	lda _vtattr
+	anda #0x40		; VTA_ALTCHAR
+	beq lowchar
+        ldd #0xCA80
+	bra setmode
+lowchar:
+        ldd #0xC47F
+setmode
+	std plot_patch+1
+_m6847_cursor_disable:
 	rts
 ;
 ;	These routines work in both 256x192x2 and 128x192x4 modes

@@ -519,9 +519,13 @@ static void extract(char *argv[])
 			exit(1);
 		}
 
-		/* remove trailing '/' */
-		while (h.name[strlen(h.name) - 1] == '/')
-			h.name[strlen(h.name) - 1] = 0;
+		/* remove trailing '/' (guard against an empty or "/" name,
+		   which would otherwise index name[-1]) */
+		{
+			size_t n = strlen(h.name);
+			while (n > 0 && h.name[n - 1] == '/')
+				h.name[--n] = 0;
+		}
 
 		/* does entry match any cmd line args? */
 		if (argv[optind]) {
@@ -662,8 +666,11 @@ static void create(char *argv[])
 	while (argv[optind]) {
 		char *s = argv[optind++];
 		/* remove any trailing / */
-		if (s[strlen(s) - 1] == '/')
-			s[strlen(s) - 1] = 0;
+		{
+			size_t n = strlen(s);
+			while (n > 0 && s[n - 1] == '/')
+				s[--n] = 0;
+		}
 		/* remove any leading / */
 		if (s[0] == '/')
 			s = s + 1;

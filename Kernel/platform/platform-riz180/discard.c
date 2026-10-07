@@ -31,9 +31,8 @@ void map_init(void)
 {
 }
 
-uint8_t plt_param(char *p)
+uint_fast8_t plt_param(char *p)
 {
-	used(p);
 	return 0;
 }
 
@@ -42,8 +41,5 @@ void device_init(void)
 	ide_probe();
 #ifdef CONFIG_TD_SD
 	sd_probe();
-#endif
-#ifdef CONFIG_NET
-	netdev_init();
 #endif
 }

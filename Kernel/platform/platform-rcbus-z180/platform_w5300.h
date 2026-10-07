@@ -1,7 +1,7 @@
 
-__sfr __at 0x28 idm_mr0;
-__sfr __at 0x29 idm_mr1;
-__sfr __at 0x2A	idm_arh;
-__sfr __at 0x2B idm_arl;
-__sfr __at 0x2C idm_drh;
-__sfr __at 0x2D idm_drl;
+#define IDM_MR0		0x28
+#define IDM_MR1		0x29
+#define IDM_ARH		0x2A
+#define IDM_ARL		0x2B
+#define IDM_DRH		0x2C
+#define IDM_DRL		0x2D

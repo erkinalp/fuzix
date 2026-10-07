@@ -19,7 +19,7 @@
 #define PROGBASE    0x0000  /* also data base */
 #define PROGLOAD    0x0100  /* also data base */
 #define PROGTOP     0x7E00  /* Top of program */
-#define KERNEL_TOP  0xF000  /* Expand buffers up to here */
+#define KERNEL_TOP  0xFD00  /* Expand buffers up to here */
 
 #define PROC_SIZE   32	  /* Memory needed per process */
 
@@ -34,7 +34,6 @@
 /* SD card support */
 #define CONFIG_TD_NUM	1
 #define CONFIG_TD_SD
-#define SD_SPI_CALLTYPE	__z88dk_fastcall
 
 /* Device parameters */
 #define NUM_DEV_TTY 2

@@ -5,7 +5,7 @@
 #include <devtty.h>
 #include <blkdev.h>
 
-uint8_t plt_param(char *p)
+uint_fast8_t plt_param(char *p)
 {
 	return 0;
 }

@@ -82,6 +82,7 @@ static int make_socket(uint16_t sock)
 	ino->c_node.i_mode = F_SOCK | 0777;
 	ino->c_readers = 1;
 	ino->c_writers = 1;
+	IN2SOCK(ino) = sock;
 
 	/* Do we need a reverse lookup ? */
 	udata.u_net.sock = sock;

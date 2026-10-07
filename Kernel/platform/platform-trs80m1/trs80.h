@@ -37,7 +37,8 @@ extern uint8_t video_lower;	/* Lowercase available */
  *			Lower case !!
  *
  *	Note that the Colour Genie is a very different beast.
- *	
+ *
  */
 
 extern void bufsetup(void);
+extern void halt(void);

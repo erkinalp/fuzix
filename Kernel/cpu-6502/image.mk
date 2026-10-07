@@ -1,5 +1,8 @@
-tools/visualize6502: tools/visualize6502.c
+tools/visualizefcc: tools/visualizefcc.c
 
-fuzix.bin: target $(OBJS) tools/visualize6502
+tools/hogfather: tools/hogfather.c
+
+fuzix.bin: target $(OBJS) tools/visualizefcc tools/hogfather
 	+make -C platform/platform-$(TARGET) image
-	tools/visualize6502 <fuzix.map
+	(cd platform/platform-$(TARGET); ../../tools/visualizefcc <../../fuzix.map)
+	tools/hogfather fuzix.map | sort -nr >fuzix.hogs

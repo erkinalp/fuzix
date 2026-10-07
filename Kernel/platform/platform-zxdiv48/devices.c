@@ -29,7 +29,7 @@ struct devsw dev_tab[] =  /* The device driver switch table */
   /* 7: unused */
   {  no_open,      no_close,     no_rdwr,       no_rdwr,       no_ioctl  },
   /* 8: DivIDE plus RAM swap */
-  {  rd_open,      no_close,     rd_read,       rd_write,      no_ioctl  },
+// TODO  {  rd_open,      no_close,     rd_read,       rd_write,      no_ioctl  },
 };
 
 bool validdev(uint16_t dev)

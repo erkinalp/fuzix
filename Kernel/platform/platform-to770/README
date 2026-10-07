@@ -1,0 +1,163 @@
+TO7/70 Experiment
+=================
+
+0000-3FFF	4 x 16K cartridge (Fuix overlays)
+4000-5FFF	Video RAM (fixed)
+6000-60FF	Monitor RAM
+6100-9FFF	Fixed (bank 1)
+A000-DFFF	6 x 16K plus optionally another 4 with an odder encoding
+E000-E7AF	ROM
+E7B0-E7FF	I/O
+E800-FFFF	ROMs
+
+
+Memory Map:
+
+0000-3FFF	Banked ROM 	0-3	Cartridge ROM (in our case it'll need to be a Fuzix cart)
+4000-5FFF	2 x 8K bank	Bank 0 in 2 8K chunks (some modes need 1 some 2 some use 2 banks)
+				(Video is always in this bank)
+6000-9FFF	Banked RAM
+6000-60FF	Reserved for firmware
+6100-9FFF	Fixed RAM	1
+A000-DFFF	Banked RAM	6 banks for the rest of the 128K) another 4 differently encoded
+				  if the RAM expansion is present
+E000-E7AF	ROM (disc usually)
+E7B0-E7FF	Devices
+E800-FFFF	ROM		0-1
+
+Bootstrap we would fill kernel A000-DFFF from the cartridge then run from
+cartridge mostly.
+
+Memory mapping:
+
+Cartridge	:	0000-3FFF	Kernel (4 overlays)
+4000-5FFF	:	Video
+(unlike the TO9 I don't think we can steal any of this back)
+6000-9FFF	:	Monitor + User (might need some kernel common)
+A000-DFFF	:	Kernel data/user space/user copy banks
+E000-FFFF	:	All owned by the firmware
+
+We have to run in a kind of banked thunked model as we have so little
+common space we can use wihtout stealing from our 32K user space.
+
+TODO:
+- would it be faster to lbra the helper not jsr/nop ?
+- adapt asm code to banked call conventions
+- review video versus the TO7/70 video modes
+- add stubs area
+- add bank switchers
+- memory exchange for low block
+- custom version of the SD driver
+- rework fd driver. May need bounce buffers ?
+- mm changes
+- sort out udata save area (9E00-9FFF ?)
+
+When user space is running we have kernel bank 0 in the low 16K, this contains
+all the usual interesting stuff we need to handle transitions plus a load of
+code. On kernel entry we use a mini stack at 6100-61FF(?) to transfer control
+at which point we switch in the normal common into A000-DFFF before entering
+the kernel proper and we switch back on the return path.
+
+Task switching requires we copy 16K in and out of 6000-9FFF.
+
+Drivers:
+
+Keyboard	-	via ROM (real interface is complicated)
+Light pen	-	via ROM
+Mouse		-	via ROM
+Video		-	vt (but lie a bit to the ROM early on to get the mouse in 640 pixel wide mode ?)
+Floppy Disk	-	has to be via ROM. boot block is encrypted and weird. Skip drives of type 'S'
+			as they are SDDrive
+Hard disk	-	via SDDrive and friends - slow but will have to do - tinysd plus bitbangers
+Timer int	-	via ROM hook. Push a fake RTI frame and run the full monitor interrupt first
+Joystick	- 	see https://github.com/wide-dot/thomson-to8-game-engine/tree/main/engine
+			or via ROM
+
+Memory control
+Low 16K		write to low memory low 2 bits select bank for cartridge
+
+Upper banks	E7C9 write
+	F0 = kernel
+	E8 = user1
+	18 = user2
+	98 = user1copy
+	58 = user2copy
+	D8 = ?? (would need an exchange model to make this usable for 3 task)
+	(can add more with extension module)
+	(? more banks with 192K extension option ?)
+
+Addresses
+6019	bit 0x20 informs monitor of irq status
+6027 to steal int ?
+6025/6 to steasl NMI
+602F/30 to steal SWI1
+6049	drive
+604A	track
+604B	track lsb
+604C	sector
+604E	address
+6074 bit 6 = 1 periphal connected to kbd
+bit 7 = 1 mouse, not light pen
+60CF/D0 point to ROM font in use
+
+ROM calls:
+E004	floppy driver (or E82A for vector via monitor ?)
+E806	get char in B C=1  if no char
+	F8-FF info like capslock
+E809	C =1 char is pressed
+E818	light pen returns X 0-319 Y 0-199 cc clear if got a good measurement
+E81B	light pen button CC
+	set 6019 |= 2 then call with B = F8-FF for functions
+E827	read joystick $00 centre $01 N $02 NE $03 E etc, C is set if button pressed
+EC00	set palette entry 
+EC08	C left button Z right mouse
+EC06	X/Y for mouse X matches mode (so need to ROM switch mode ? to convince it to report full res ?) mouse
+
+Mode setting is via putc
+1B 48 etc
+
+Position
+1F Y X 	(Y X being |0x40)
+14 hide cursor
+11	show cursor
+1B 4x	set colour x fg
+1B 5x	ditto bg ? (fond)
+1B 6x	for tour ?
+1B 70-7, 78-F,80-87 do same for upper 8 colours
+
+1B 48	page 1
+1B 49	page 2
+1B 4A 	superpos pg 2
+1B 4B	superpos pg 1
+1B 59	bitmap 4
+1B 5A	40 col
+1B 5B	80 col
+1B 5E	16 col bitmap
+1B 88-8B superposition pages 0-3
+
+interrupts
+
+FIR light pen
+IRQ 6846 - timept, irqpt
+
+E7E8-E7EB 6551 on RS232 card
+
+
+Make cartridge visible
+
+LDA $E7C3
+ANDA FB
+STA $E7C3
+LDA $E7E6
+ANDA DF
+STA $E7E6
+
+Cartridge header
+
+23 x ascii
+0x0D
+0x0000
+0xNN		(checksum of previous bytes to equal $55)
+0x00
+warm-entry.w
+cold-entry.w

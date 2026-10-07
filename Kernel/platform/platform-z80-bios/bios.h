@@ -81,10 +81,10 @@ struct fuzixbios_ttyconfig {
 };
 
 /* TODO: get the config word mask, VT properties etc */
-extern uint8_t fuzixbios_serial_txready(uint8_t minor) __z88dk_fastcall;
-extern void fuzixbios_serial_tx(uint16_t info) __z88dk_fastcall;
-extern void fuzixbios_serial_setup(struct fuzixbios_ttyconfig *t) __z88dk_fastcall;
-extern uint8_t fuzixbios_serial_carrier(uint8_t minor) __z88dk_fastcall;
+extern uint8_t fuzixbios_ser_txr(uint8_t minor) __z88dk_fastcall;
+extern void fuzixbios_ser_tx(uint16_t info) __z88dk_fastcall;
+extern void fuzixbios_ser_set(struct fuzixbios_ttyconfig *t) __z88dk_fastcall;
+extern uint8_t fuzixbios_ser_car(uint8_t minor) __z88dk_fastcall;
 extern struct fuzixbios_ttyparam *fuzixbios_serial_param(uint8_t minor) __z88dk_fastcall;
 /* TODO: vt graphics hooks, keyboard input events and masks */
 

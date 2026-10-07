@@ -1,82 +1,84 @@
+# 1 "plus3.S"
 ;
 ;    Spectrum +3 support
 
-        .module plus3
-
         ; exported symbols
-        .globl init_early
-        .globl init_hardware
-        .globl _program_vectors
-        .globl plt_interrupt_all
-	.globl interrupt_handler
-	.globl unix_syscall_entry
-	.globl null_handler
-	.globl nmi_handler
+        .export init_early
+        .export init_hardware
+        .export _program_vectors
+        .export plt_interrupt_all
+	.export _plt_idle
 
-        .globl map_kernel
-        .globl map_proc_always
-        .globl map_proc
-        .globl map_kernel_di
-        .globl map_proc_always_di
-        .globl map_save_kernel
-        .globl map_restore
-	.globl map_kernel_restore
-	.globl map_for_swap
-	.globl map_video
-	.globl current_map
+        .export map_kernel
+        .export map_buffers
+        .export map_proc_always
+        .export map_proc
+        .export map_kernel_di
+        .export map_proc_always_di
+        .export map_save_kernel
+        .export map_restore
+	.export map_kernel_restore
+	.export map_for_swap
+	.export map_video
+	.export current_map
 
-        .globl _need_resched
-	.globl _int_disabled
-	.globl _vtborder
-	.globl diskmotor
+        .export _need_resched
+	.export _int_disabled
+	.export _vtborder
+	.export diskmotor
 
         ; exported debugging tools
-        .globl _plt_monitor
-	.globl _plt_reboot
-        .globl outchar
+        .export _plt_monitor
+	.export _plt_reboot
+        .export outchar
+# 1 "kernelu.def"
+; UZI mnemonics for memory addresses etc
 
-        ; imported symbols
-        .globl _ramsize
-        .globl _procmem
+; We stick it straight after the tag
+U_DATA__TOTALSIZE           .equ 0x200        ; 256+256@F000
 
-	.globl _vtoutput
-	.globl _vtinit
+Z80_TYPE		    .equ 1
 
-        .globl outcharhex
-        .globl outhl, outde, outbc
-        .globl outnewline
-        .globl outstring
-        .globl outstringhex
+PROGBASE		    .equ 0x0000
+PROGLOAD		    .equ 0x0100
 
-	.globl ___sdcc_enter_ix
+NBUFS			    .equ 5
 
-        .include "kernel.def"
-        .include "../../cpu-z80/kernel-z80.def"
+Z80_MMU_HOOKS		    .equ 0
+# 1 "../../cpu-z80u/kernel-z80.def"
+ 
+# 26
+ 
+# 44
+ 
+# 38 "plus3.S"
+	.code
 
-; -----------------------------------------------------------------------------
-; COMMON MEMORY BANK (above 0xF000)
-; -----------------------------------------------------------------------------
-        .area _COMMONMEM
+_plt_idle:
+	halt
+	ret
+
+	.common
 
 _plt_monitor:
 	;
 	;	Not so much a monitor as wait for space
 	;
-	ld bc,#0x1ffd
-	ld a,#0x01
+	ld bc,0x1ffd
+	ld a,0x01
 	out (c),a		; keep us mapped, turn off motors
-	ld a, #0x7F
+	ld a, 0x7F
 	in a, (0xFE)
 	rra
 	jr c, _plt_monitor
 
 _plt_reboot:
 	di
-	ld bc,#0x7ffd
-	ld a,#0x03
+	ld bc,0x7ffd
+	ld a,0x03
 	out (c),a	; set 128K paging to put page 3 at the top (ie us)
 			; and ROM in
-	ld bc,#0x1ffd
+	ld bc,0x1ffd
 	xor a		; flip to normal paging 128K ROM motor off
 	out (c),a
         rst 0		; back into our booter
@@ -84,19 +86,15 @@ _plt_reboot:
 plt_interrupt_all:
         ret
 
-	.area _COMMONMEM
+	.common
 
 _int_disabled:
-	.db 1
+	.byte 1
 
 _vtborder:		; needs to be common
-	.db 0
+	.byte 0
 
-
-; -----------------------------------------------------------------------------
-; KERNEL CODE BANK (below 0xC000)
-; -----------------------------------------------------------------------------
-        .area _CODE
+	.code
 
 init_early:
 	call _program_early_vectors
@@ -104,19 +102,13 @@ init_early:
 
 init_hardware:
         ; set system RAM size
-        ld hl, #128
+        ld hl, 128
         ld (_ramsize), hl
-        ld hl, #64	      ; 64K for kernel/screen/etc (FIXME)
+        ld hl, 64	      ; 64K for kernel/screen/etc (FIXME)
         ld (_procmem), hl
 
-	; Install rst shorteners
-	ld hl,#rstblock
-	ld de,#8
-	ld bc,#32
-	ldir
-
-	ld bc,#0x7ffd
-	ld a,#0x0B		; bank 3 (common) in high in either mapping
+	ld bc,0x7ffd
+	ld a,0x0B		; bank 3 (common) in high in either mapping
 				; video bank 7
 	out (c),a		; and we should have special mapping
 				; already by now	
@@ -127,10 +119,7 @@ init_hardware:
 
         ret
 
-;------------------------------------------------------------------------------
-; COMMON MEMORY PROCEDURES FOLLOW
-
-        .area _COMMONMEM
+	.common
 
 _program_early_vectors:
 	call map_proc_always
@@ -138,29 +127,29 @@ _program_early_vectors:
 	call map_kernel
 set_vectors:
         ; write zeroes across all vectors
-        ld hl, #0
-        ld de, #1
-        ld bc, #0x007f ; program first 0x80 bytes only
-        ld (hl), #0x00
+        ld hl, 0
+        ld de, 1
+        ld bc, 0x007f ; program first 0x80 bytes only
+        ld (hl), 0x00
         ldir
 
         ; now install the interrupt vector at 0x0038
-        ld a, #0xC3 ; JP instruction
+        ld a, 0xC3 ; JP instruction
         ld (0x0038), a
-        ld hl, #interrupt_handler
+        ld hl, interrupt_handler
         ld (0x0039), hl
 
         ; set restart vector for FUZIX system calls
         ld (0x0030), a   ;  (rst 30h is unix function call vector)
-        ld hl, #unix_syscall_entry
+        ld hl, unix_syscall_entry
         ld (0x0031), hl
 
         ld (0x0000), a   
-        ld hl, #null_handler   ;   to Our Trap Handler
+        ld hl, null_handler   ;   to Our Trap Handler
         ld (0x0001), hl
 
         ld (0x0066), a  ; Set vector for NMI
-        ld hl, #nmi_handler
+        ld hl, nmi_handler
         ld (0x0067), hl
 
 _program_vectors:
@@ -177,7 +166,7 @@ map_for_swap:
 map_proc_always:
 map_proc_always_di:
 	push af
-	ld a,#0x1			; 0 1 2 3
+	ld a,0x1			; 0 1 2 3
 	jr map_a_pop
 ;
 ;	Save and switch to kernel
@@ -189,15 +178,16 @@ map_save_kernel:
 	pop af
 map_kernel_di:
 map_kernel:
+map_buffers:
 map_kernel_restore:
 	push af
-	ld a,#0x05			; 4 5 6 3
+	ld a,0x05			; 4 5 6 3
 map_a_pop:
 	push bc
 	ld (current_map),a
 	ld bc,(diskmotor)
 	or c
-	ld bc,#0x1ffd
+	ld bc,0x1ffd
 	out (c),a
 	pop bc
 	pop af
@@ -205,7 +195,7 @@ map_a_pop:
 
 map_video:
 	push af
-	ld a,#0x07			; 4 7 6 3
+	ld a,0x07			; 4 7 6 3
 	jr map_a_pop
 
 map_restore:
@@ -223,9 +213,9 @@ outchar:
 	push de
 	push hl
 	push ix
-	ld hl, #1
+	ld hl, 1
 	push hl
-	ld hl, #_tmpout
+	ld hl, _tmpout
 	push hl
 	call _vtoutput
 	pop af
@@ -236,51 +226,19 @@ outchar:
 	pop bc
         ret
 
-	.area _COMMONMEM
+	.common
+
 _tmpout:
-	.db 1
+	.byte 1
 
 current_map:                ; place to store current page number. Is needed
-        .db 0               ; because we have no ability to read 0xF4 port
+        .byte 0               ; because we have no ability to read 0xF4 port
                             ; to detect what page is mapped currently 
 map_store:
-        .db 0
+        .byte 0
 
 _need_resched:
-        .db 0
+        .byte 0
 
 diskmotor:
-	.db 0
-
-;
-;	Stub helpers for code compactness. Note that
-;	sdcc_enter_ix is in the standard compiler support already
-;
-	.area _DISCARD
-
-;
-;	The first two use an rst as a jump. In the reload sp case we don't
-;	have to care. In the pop ix case for the function end we need to
-;	drop the spare frame first, but we know that af contents don't
-;	matter
-;
-
-rstblock:
-	jp	___sdcc_enter_ix
-	.ds	5
-___spixret:
-	ld	sp,ix
-	pop	ix
-	ret
-	.ds	3
-___ixret:
-	pop	af
-	pop	ix
-	ret
-	.ds	4
-___ldhlhl:
-	ld	a,(hl)
-	inc	hl
-	ld	h,(hl)
-	ld	l,a
-	ret
+	.byte 0

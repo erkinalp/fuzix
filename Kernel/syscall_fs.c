@@ -30,8 +30,8 @@ arg_t _lseek(void)
 	struct oft *o;
 	off_t p;
 	off_t n;
-	off_t *pt;
-	
+	register off_t *pt;
+
 	if (uget(offset, &n, sizeof(n)))
 	        return -1;
 
@@ -104,7 +104,7 @@ arg_t _stat(void)
 {
 	register inoptr ino;
 	register int err;
-	if (!(ino = n_open(path, NULLINOPTR)))
+	if (!(ino = n_open_argn()))
 		return (-1);
 	err = stcpy(ino, buf);
 	i_deref(ino);
@@ -138,7 +138,7 @@ arg_t _fstat(void)
 
 
 /* Utility for stat and fstat */
-int stcpy(inoptr ino, uint8_t *buf)
+int stcpy(register inoptr ino, uint8_t *buf)
 {
 	static struct _uzistat st;
 
@@ -299,9 +299,9 @@ int fildes[];
 arg_t _pipe(void)
 {
 	int_fast8_t u1, u2, oft1, oft2;
-	regptr inoptr ino;
+	register inoptr ino;
+	register struct oft *oftp;
 
-/* bug fix SN */
 	if ((u1 = uf_alloc()) == -1)
 		goto nogood;
 	if ((oft1 = oft_alloc()) == -1)
@@ -325,17 +325,25 @@ arg_t _pipe(void)
 
 	udata.u_files[u2] = oft2;
 
-	of_tab[oft1].o_ptr = 0;
-	of_tab[oft1].o_inode = ino;
-	of_tab[oft1].o_access = O_RDONLY;
+	oftp = of_tab + oft1;
+	oftp->o_ptr = 0;
+	oftp->o_inode = ino;
+	oftp->o_access = O_RDONLY;
 
-	of_tab[oft2].o_ptr = 0;
-	of_tab[oft2].o_inode = ino;
-	of_tab[oft2].o_access = O_WRONLY;
+	oftp = of_tab + oft2;
+	oftp->o_ptr = 0;
+	oftp->o_inode = ino;
+	oftp->o_access = O_WRONLY;
 
 	++ino->c_refs;
 	ino->c_node.i_mode = F_PIPE | 0777;	/* No permissions necessary on pipes */
 	ino->c_node.i_nlink = 0;	/* a pipe is not in any directory */
+	/* The disk copy still says this inode is free, and nothing here
+	   changes that. Say so, as V7's pipe() does with IACC|IUPD|ICHG,
+	   so a sync writes it out; i_alloc's scan no longer depends on
+	   that having happened, but leaving the two silently disagreeing
+	   is what made this inode look allocatable. */
+	ino->c_flags |= CDIRTY;
 	ino->c_readers++;
 	ino->c_writers++;
 
@@ -378,9 +386,8 @@ arg_t _unlink(void)
 			udata.u_error = ENOENT;
 		return (-1);
 	}
-	i_lock(pino);
 	r = unlinki(ino, pino, lastname);
-	i_unlock_deref(pino);
+	i_deref(pino);
 	i_deref(ino);
 	return r;
 }
@@ -422,7 +429,6 @@ static arg_t readwrite(uint_fast8_t reading)
 
 	(reading ? readi : writei)(ino, flag);
 	updoff();
-	i_unlock(ino);
 
 	return udata.u_done;
 }

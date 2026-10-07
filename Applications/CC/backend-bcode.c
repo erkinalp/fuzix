@@ -1,0 +1,1593 @@
+/*
+ *	cc2 backend emitting the PC3 bytecode (see BYTECODE.md).
+ *
+ *	Unlike the other backends this writes a binary object rather than
+ *	assembler text: there is no assembler and no linker for this
+ *	target. Code and data are built in memory, jumps are backpatched
+ *	when the module ends, and everything is written out by gen_end().
+ *
+ *	Anything the emitter has no opcode for falls back to a named
+ *	runtime helper via BC_LIBCALL, which is the same escape hatch the
+ *	other backends use with their helper calls.
+ */
+
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include "compiler.h"
+#include "backend.h"
+#include "bytecode.h"
+
+#define T_NREF		(T_USER)		/* Load of C global/static */
+#define T_CALLNAME	(T_USER+1)		/* Function call by name */
+#define T_NSTORE	(T_USER+2)		/* Store to a C global/static */
+#define T_LREF		(T_USER+3)		/* Ditto for local */
+#define T_LSTORE	(T_USER+4)
+#define T_LBREF		(T_USER+5)		/* Labelled strings/local static */
+#define T_LBSTORE	(T_USER+6)
+
+/*
+ *	Output buffers. A program that will not fit in memory here will
+ *	not fit in a 255K process anyway.
+ */
+/*
+ *	The host build gets tables big enough for anything (the mmb2c
+ *	runtime plus a large translated program is ~90K of code).  On the
+ *	board cc2 is a 256K Fuzix process and the previous sizes are what
+ *	fits; an on-board compile that overflows them says so cleanly.
+ */
+#ifdef BIG_TABLES
+/* Mixed mode keeps a committed function's dead bytecode alongside its
+   native span (~2.7x the bytecode), so a big program roughly triples;
+   the eclipse with every function native is ~250K of code segment. */
+#define CODEMAX		393216
+#define DATAMAX		65536
+#elif defined(ARENA_TABLES)
+/* The board: storage comes from the PSRAM arena (PC3-PSRAM-ARENA.md),
+   so the limits are sized to real programs rather than to the 256K
+   process - the whole set is ~900K against a 1 MiB pool.  With
+   THUMB_RECLAIM=1 the code buffer's peak is the bytecode so far plus
+   one native span, which is why 192K compiles the eclipse. */
+#define CODEMAX		196608
+#define DATAMAX		65536
+#else
+#define CODEMAX		32768
+#define DATAMAX		16384
+#endif
+/* 512 was inherited from the 8-bit targets, where the table really is
+   scarce. Here cc2 runs in a 256K process, so the cost of 2048 is a few
+   tens of K against a program that would otherwise simply not compile
+   ("too many symbols" on c-testsuite 00200). */
+/* 4096 was not enough either: picofrog, a 1200-line BASIC game, has
+   3546 string literals in its DATA statements and each one is a symbol
+   here, so it stopped at "too many symbols" with cc1 already raised.
+   A symbol costs 17 bytes across the three tables (bc_sym, the name
+   pointer and sym_in_lit), so 8192 is ~70K more - carved from the
+   PSRAM arena on the board, where bc_arena_carve_all measures before
+   it places, and nothing on the host. */
+/* And 8192 fixups was not enough for PicoMan, a 1200-line BASIC game
+   whose DATA is a 5103-entry maze: every reference from code or data to
+   a symbol is a fixup, and a program that size simply has more of them
+   than picofrog did.  MAXFIX sizes FOUR tables - fixtab 8 bytes,
+   fix_in_lit 1, patchtab 8, libreftab 8 - so it is 25 bytes a unit,
+   and doubling it is ~200K more out of the PSRAM arena.  That is
+   affordable where the 256K process it used to live in was not: the
+   arena is the whole point (PC3-PSRAM-ARENA.md).
+
+   MAXLAB went 3072 -> 8192 in the same pass and for the same program:
+   a label is 24 bytes, so that is ~120K.  Raise these together with the
+   DATA-column work in mmb2c - a table that emits only the columns it
+   can prove live took PicoMan's DATA from 81,648 bytes to 40,824, and
+   without that the data segment overflows before any of these do. */
+#if defined(BIG_TABLES) || defined(ARENA_TABLES)
+#define MAXSYM		8192
+#define MAXFIX		16384
+#define MAXLAB		8192
+#else
+#define MAXSYM		2048
+#define MAXFIX		4096
+#define MAXLAB		2048
+#endif
+
+/*
+ *	Under ARENA_TABLES every large table is a pointer carved from
+ *	one PSRAM arena allocation by bc_arena_init() - the static form
+ *	stopped fitting a 256K process when the Thumb translator's
+ *	buffers joined the set.  ATAB declares whichever form applies.
+ */
+#ifdef ARENA_TABLES
+#define ATAB(decl_array, decl_ptr)	decl_ptr
+#else
+#define ATAB(decl_array, decl_ptr)	decl_array
+#endif
+
+ATAB(static unsigned char codebuf[CODEMAX],
+     static unsigned char *codebuf);
+static unsigned long codelen;
+ATAB(static unsigned char databuf[DATAMAX],
+     static unsigned char *databuf);
+static unsigned long datalen;
+static unsigned long bsslen;
+
+/*
+ *	Literals are a separate segment, appended to data when the module
+ *	is written out. They cannot share datalen: the frontend declares
+ *	a data label, switches to the literal segment, emits the string,
+ *	then switches back and emits the initialiser. With one counter the
+ *	label records an offset the object never occupies and the two
+ *	overlap -- "char *msg = \"...\"" put both msg and the string at 0.
+ */
+ATAB(static unsigned char litbuf[DATAMAX],
+     static unsigned char *litbuf);
+static unsigned long litlen;
+ATAB(static unsigned char sym_in_lit[MAXSYM],
+     static unsigned char *sym_in_lit);
+ATAB(static unsigned char fix_in_lit[MAXFIX],
+     static unsigned char *fix_in_lit);
+
+#ifdef ARENA_TABLES
+#define STRMAX		65536
+#else
+#define STRMAX		32768
+#endif
+ATAB(static char strtab[STRMAX],
+     static char *strtab);
+static unsigned long strtablen;
+
+ATAB(static struct bc_sym symtab[MAXSYM],
+     static struct bc_sym *symtab);
+ATAB(static char *bc_symname[MAXSYM],
+     static char **bc_symname);
+static unsigned nsym;
+
+ATAB(static struct bc_fixup fixtab[MAXFIX],
+     static struct bc_fixup *fixtab);
+static unsigned nfix;
+
+/* Labels are (tail, number) pairs scoped to the module. */
+/*
+ *	A label is a tag number plus a short name: "_b" and "_c" for the
+ *	break and continue of a loop, "_g<n>" for a user goto label.
+ *
+ *	The tail used to be four bytes and was compared over three, which
+ *	is fine for the compiler's own two character names and silently
+ *	wrong for goto: "_g32769", "_g32770" and "_g32771" are all "_g3",
+ *	so every goto label in a function was the same label and the last
+ *	one defined won. Two labels in one function was enough to generate
+ *	a jump to itself. Frontend symbol numbers reach five digits, so
+ *	"_g" plus five plus the NUL.
+ */
+#define LABTAIL	12
+
+struct label {
+	unsigned num;
+	char tail[LABTAIL];
+	unsigned long addr;
+	unsigned defined;
+};
+ATAB(static struct label labtab[MAXLAB],
+     static struct label *labtab);
+static unsigned nlab;
+
+/* Jump sites waiting for their label. */
+struct patch {
+	unsigned long at;	/* code offset of the 16bit displacement */
+	unsigned lab;		/* index into labtab */
+};
+ATAB(static struct patch patchtab[MAXFIX],
+     static struct patch *patchtab);
+static unsigned npatch;
+
+static unsigned frame_len;
+static unsigned sp;
+static unsigned long entry;
+
+/* Mixed mode: the Thumb translator (backend-thumb.c, included at the
+   end of this file) shadows every function and commits native code
+   when the whole span is covered. */
+static int have_native;
+static void thumb_fn_begin(const char *name);
+static void thumb_commit(void);
+
+/* ------------------------------------------------------------------ */
+
+/*
+ *	A table overflow names the limit that was hit and the value it
+ *	has, so the fix is not a guessing game across three build
+ *	configurations.  One static buffer: the caller is on its way to
+ *	exit and nothing re-enters.
+ */
+static void table_full(const char *what, unsigned long lim)
+{
+	static char buf[64];
+	sprintf(buf, "%s full (limit %lu)", what, lim);
+	error(buf);
+}
+
+static void cbyte(unsigned v)
+{
+	if (codelen >= CODEMAX) {
+		table_full("code segment", CODEMAX);
+		return;
+	}
+	codebuf[codelen++] = v;
+}
+
+static void cword(unsigned v)
+{
+	cbyte(v & 0xFF);
+	cbyte((v >> 8) & 0xFF);
+}
+
+static void clong(unsigned long v)
+{
+	cbyte(v & 0xFF);
+	cbyte((v >> 8) & 0xFF);
+	cbyte((v >> 16) & 0xFF);
+	cbyte((v >> 24) & 0xFF);
+}
+
+static unsigned in_literal(void);
+
+
+static void dbyte(unsigned v)
+{
+	if (in_literal()) {
+		if (litlen >= DATAMAX) {
+			table_full("literal segment", DATAMAX);
+			return;
+		}
+		litbuf[litlen++] = v;
+		return;
+	}
+	if (datalen >= DATAMAX) {
+		table_full("data segment", DATAMAX);
+		return;
+	}
+	databuf[datalen++] = v;
+}
+
+/* Offset within whichever of the two segments is being filled. */
+static unsigned long dhere(void)
+{
+	return in_literal() ? litlen : datalen;
+}
+
+static void dword(unsigned v)
+{
+	dbyte(v & 0xFF);
+	dbyte((v >> 8) & 0xFF);
+}
+
+static void dlong(unsigned long v)
+{
+	dbyte(v & 0xFF);
+	dbyte((v >> 8) & 0xFF);
+	dbyte((v >> 16) & 0xFF);
+	dbyte((v >> 24) & 0xFF);
+}
+
+/* ------------------------------------------------------------------ */
+
+/*
+ *	Symbols. A name that is never defined in this module is a runtime
+ *	library entry point: there is no linker to resolve it against, and
+ *	the interpreter provides the library.
+ */
+static unsigned symref(const char *name)
+{
+	unsigned i;
+	for (i = 0; i < nsym; i++) {
+		if (strcmp(bc_symname[i], name) == 0)
+			return i;
+	}
+	if (nsym >= MAXSYM) {
+		table_full("symbol table", MAXSYM);
+		return 0;
+	}
+	bc_symname[nsym] = strdup(name);
+	symtab[nsym].s_type = BC_SYM_LIB;
+	symtab[nsym].s_value = 0;
+	symtab[nsym].s_name = strtablen;
+	if (strtablen + strlen(name) + 1 < STRMAX) {
+		strcpy(strtab + strtablen, name);
+		strtablen += strlen(name) + 1;
+	} else
+		error("string table full");
+	return nsym++;
+}
+
+static void symdef(const char *name, unsigned type, unsigned long value)
+{
+	unsigned s = symref(name);
+	symtab[s].s_type = type;
+	symtab[s].s_value = value;
+	if (type == BC_SYM_DATA)
+		sym_in_lit[s] = in_literal();
+}
+
+/* Labels get symbols too, so a switch table or a string can name one. */
+static unsigned labsym(const char *tail, unsigned n)
+{
+	char buf[24];
+	sprintf(buf, "L%u%s", n, tail);
+	return symref(buf);
+}
+
+static void fixup(unsigned seg, unsigned long off, unsigned sym)
+{
+	if (nfix >= MAXFIX) {
+		table_full("fixup table", MAXFIX);
+		return;
+	}
+	fixtab[nfix].f_offset = off;
+	fixtab[nfix].f_sym = sym;
+	fixtab[nfix].f_seg = seg;
+	fixtab[nfix].f_pad = 0;
+	/* Always written, never inherited: a fixup slot is reused after
+	   a reclaimed function's fixups are dropped, and a code fixup
+	   landing on a slot left set by some earlier literal fixup was
+	   shifted by datalen at gen_end - four bytes in Dhrystone, which
+	   aimed the loader's movw/movt patch at the next two
+	   instructions and rewrote them into nonsense. */
+	fix_in_lit[nfix] = (seg == BC_SEG_DATA) ? in_literal() : 0;
+	nfix++;
+}
+
+/* ------------------------------------------------------------------ */
+
+static unsigned labref(const char *tail, unsigned n)
+{
+	unsigned i;
+	for (i = 0; i < nlab; i++) {
+		if (labtab[i].num == n && strcmp(labtab[i].tail, tail) == 0)
+			return i;
+	}
+	if (nlab >= MAXLAB) {
+		table_full("label table", MAXLAB);
+		return 0;
+	}
+	if (strlen(tail) >= LABTAIL)
+		error("label name too long");
+	labtab[nlab].num = n;
+	strncpy(labtab[nlab].tail, tail, LABTAIL - 1);
+	labtab[nlab].tail[LABTAIL - 1] = 0;
+	labtab[nlab].addr = 0;
+	labtab[nlab].defined = 0;
+	return nlab++;
+}
+
+/* Emit a jump-class opcode with a placeholder displacement. */
+static void jumpto(unsigned op, const char *tail, unsigned n)
+{
+	unsigned l = labref(tail, n);
+	cbyte(op);
+	if (npatch >= MAXFIX) {
+		table_full("jump table", MAXFIX);
+		return;
+	}
+	patchtab[npatch].at = codelen;
+	patchtab[npatch].lab = l;
+	npatch++;
+	cword(0);
+}
+
+static void resolve_jumps(void)
+{
+	unsigned i;
+	for (i = 0; i < npatch; i++) {
+		struct label *l = &labtab[patchtab[i].lab];
+		long disp;
+		unsigned long at = patchtab[i].at;
+		if (!l->defined) {
+			error("undefined label");
+			continue;
+		}
+		/* Relative to the end of the instruction */
+		disp = (long)l->addr - (long)(at + 2);
+		if (disp < -32768 || disp > 32767) {
+			error("jump out of range");
+			continue;
+		}
+		codebuf[at] = disp & 0xFF;
+		codebuf[at + 1] = (disp >> 8) & 0xFF;
+	}
+}
+
+/* ------------------------------------------------------------------ */
+
+static unsigned typesize(unsigned t)
+{
+	if (PTR(t))
+		return 4;
+	if (t == CCHAR || t == UCHAR)
+		return 1;
+	if (t == CSHORT || t == USHORT)
+		return 2;
+	if (t == CLONG || t == ULONG || t == FLOAT)
+		return 4;
+	if (t == CLONGLONG || t == ULONGLONG || t == DOUBLE)
+		return 8;
+	if (t == VOID)
+		return 0;
+	return 4;
+}
+
+/* Stack slots are whole words */
+static unsigned stack_size(unsigned t)
+{
+	unsigned s = typesize(t);
+	return (s < 4) ? 4 : ((s + 3) & ~3);
+}
+
+static void emit_load(unsigned t)
+{
+	if (PTR(t)) {
+		cbyte(BC_LOAD32);
+		return;
+	}
+	if (typesize(t) == 8) {
+		cbyte(BC_LOAD64);
+		return;
+	}
+	switch (typesize(t)) {
+	case 1:
+		cbyte((t & UNSIGNED) ? BC_LOAD8U : BC_LOAD8S);
+		break;
+	case 2:
+		cbyte((t & UNSIGNED) ? BC_LOAD16U : BC_LOAD16S);
+		break;
+	default:
+		cbyte(BC_LOAD32);
+		break;
+	}
+}
+
+static void emit_store(unsigned t)
+{
+	if (PTR(t)) {
+		cbyte(BC_STORE32);
+		return;
+	}
+	if (typesize(t) == 8) {
+		cbyte(BC_STORE64);
+		return;
+	}
+	switch (typesize(t)) {
+	case 1:
+		cbyte(BC_STORE8);
+		break;
+	case 2:
+		cbyte(BC_STORE16);
+		break;
+	default:
+		cbyte(BC_STORE32);
+		break;
+	}
+}
+
+static void emit_const(cval_t v, unsigned t)
+{
+	long s = (long)v;
+
+	/*
+	 * A 64-bit constant has to arrive as one: the short forms all sign
+	 * extend into a 32-bit value, so "5000000000LL" would lose its top
+	 * half before anything could use it.
+	 */
+	if (typesize(t) == 8) {
+		cbyte(BC_CONST64);
+		clong(v & 0xFFFFFFFFUL);
+		clong((unsigned long)(((unsigned long long)v) >> 32));
+		return;
+	}
+	if (s >= -128 && s < 128) {
+		cbyte(BC_CONST8);
+		cbyte(v & 0xFF);
+	} else if (s >= -32768 && s < 32768) {
+		cbyte(BC_CONST16);
+		cword(v & 0xFFFF);
+	} else {
+		cbyte(BC_CONST32);
+		clong(v);
+	}
+}
+
+static void emit_local(unsigned off)
+{
+	if (off < 256) {
+		cbyte(BC_LOCAL8);
+		cbyte(off);
+	} else {
+		cbyte(BC_LOCAL16);
+		cword(off);
+	}
+}
+
+/* Address of a symbol plus an offset, left in A. */
+static void emit_addr(unsigned sym, unsigned long off)
+{
+	cbyte(BC_ADDR);
+	fixup(BC_SEG_CODE, codelen, sym);
+	clong(off);
+}
+
+/*
+ *	Symbol indices baked into code rather than carried by a fixup:
+ *	BC_LIBCALL's operand, and the native libcall sites the Thumb
+ *	translator emits.  compact_syms() must rewrite these when the
+ *	table is renumbered, so every one is recorded as it is emitted.
+ *	Forms: 0 = 16-bit LE bytecode operand, 1 = movs r0,#imm8,
+ *	2 = movw r0,#imm16.
+ */
+struct libref {
+	unsigned long at;
+	unsigned short sym;
+	unsigned char form;
+};
+ATAB(static struct libref libreftab[MAXFIX],
+     static struct libref *libreftab);
+static unsigned nlibref;
+
+static void librec(unsigned long at, unsigned sym, unsigned form)
+{
+	if (nlibref >= MAXFIX) {
+		table_full("libcall table", MAXFIX);
+		return;
+	}
+	libreftab[nlibref].at = at;
+	libreftab[nlibref].sym = sym;
+	libreftab[nlibref].form = form;
+	nlibref++;
+}
+
+/* Fall back to a named runtime helper. */
+static void libcall(const char *name)
+{
+	unsigned s = symref(name);
+	cbyte(BC_LIBCALL);
+	librec(codelen, s, 0);
+	cword(s);
+}
+
+/* ------------------------------------------------------------------ */
+
+struct node *gen_rewrite_node(struct node *n)
+{
+	struct node *r = n->right;
+	unsigned op = n->op;
+
+	/* Turn a call of a name into a direct call */
+	if (op == T_FUNCCALL && r && r->op == T_NAME && PTR(r->type) == 1) {
+		n->op = T_CALLNAME;
+		n->snum = r->snum;
+		n->value = r->value;
+		free_node(r);
+		n->right = NULL;
+	}
+	return n;
+}
+
+void gen_export(const char *name)
+{
+}
+
+/*
+ *	Which segment subsequent labels and space belong to. Without this
+ *	an uninitialised global gets a data symbol while its storage is
+ *	counted in bss, and the loader resolves it to the wrong place.
+ */
+static unsigned curseg = A_CODE;
+
+static unsigned in_literal(void)
+{
+	return curseg == A_LITERAL;
+}
+
+/*
+ *	Set while the body of a switch table is being emitted. The case
+ *	values otherwise go out at the switch expression's own width, so
+ *	"switch (c)" on a char produced one-byte values and a five-byte
+ *	stride, which the interpreter - reasonably assuming a word - read
+ *	as garbage and jumped into hyperspace. C promotes the switch
+ *	expression to at least int, so widening the values to a word
+ *	loses nothing and keeps the table uniform.
+ */
+static unsigned in_switchtab;
+
+void gen_segment(unsigned s)
+{
+	/* The table ends when its area is popped. */
+	in_switchtab = 0;
+	curseg = s;
+}
+
+static int entry_sym = -1;	/* main's symbol: h_entry follows it */
+
+void gen_prologue(const char *name)
+{
+	symdef(name, BC_SYM_CODE, codelen);
+	if (strcmp(name, "main") == 0) {
+		entry = codelen;
+		entry_sym = symref(name);
+	}
+	thumb_fn_begin(name);
+}
+
+/*
+ *	Frame layout. BC_ENTER n moves the stack pointer down by n, so
+ *	the locals occupy [sp, sp+n) and the return address and arguments
+ *	are above them:
+ *
+ *	    sp -> [ locals            ]  n bytes
+ *	          [ return address    ]  <- sp on entry
+ *	          [ argument 0        ]
+ *	          [ argument 1        ]  ...
+ *
+ *	"sp" below counts only what expression evaluation has pushed, not
+ *	the frame, because a local at frame offset v lives at sp + v +
+ *	pushes. Adding the frame size here as the other backends do puts
+ *	every local above the return address and in the caller's frame,
+ *	which loops forever rather than failing cleanly.
+ *
+ *	An argument at offset v lives at sp + v + frame_len + pushes,
+ *	which is what T_ARGUMENT emits.
+ */
+void gen_frame(unsigned size, unsigned aframe)
+{
+	/*
+	 *	The stack is 4-byte slots and every address handed down
+	 *	from here - by-ref arguments included - is computed off
+	 *	sp.  A frame size that is not a multiple of 4 therefore
+	 *	skews sp for the entire call subtree below this function,
+	 *	and the first 64-bit store through such an address is an
+	 *	unaligned fault on the board (picofrog 2026-08-15:
+	 *	f_move_player's 261-byte frame, and the machine died
+	 *	inside mm_font_cur with no dump to show for it).  The
+	 *	front end hands us the raw sum of the locals; round it up
+	 *	here.  The pad sits between the top local and the return
+	 *	address, and the thumb backend translates the operand we
+	 *	emit, so native frames get the same rounding for free.
+	 *	gen_epilogue must round identically or LEAVE unbalances
+	 *	the stack.
+	 */
+	size = (size + 3) & ~3u;
+	frame_len = size + 4;		/* locals plus the return address */
+	cbyte(BC_ENTER);
+	cword(size);
+}
+
+void gen_epilogue(unsigned size, unsigned argsize)
+{
+	size = (size + 3) & ~3u;	/* exactly as gen_frame rounded */
+	if (sp)
+		error("sp");
+	cbyte(BC_LEAVE);
+	cword(size);
+	cbyte(BC_RET);
+	thumb_commit();
+}
+
+void gen_label(const char *tail, unsigned n)
+{
+	unsigned l = labref(tail, n);
+	unsigned s;
+	labtab[l].addr = codelen;
+	labtab[l].defined = 1;
+	/* Also give it a symbol, so a switch table can name it */
+	s = labsym(tail, n);
+	symtab[s].s_type = BC_SYM_CODE;
+	symtab[s].s_value = codelen;
+}
+
+unsigned gen_exit(const char *tail, unsigned n)
+{
+	jumpto(BC_JUMP, tail, n);
+	return 0;
+}
+
+void gen_jump(const char *tail, unsigned n)
+{
+	jumpto(BC_JUMP, tail, n);
+}
+
+void gen_jfalse(const char *tail, unsigned n)
+{
+	jumpto(BC_JFALSE, tail, n);
+}
+
+void gen_jtrue(const char *tail, unsigned n)
+{
+	jumpto(BC_JTRUE, tail, n);
+}
+
+void gen_switch(unsigned n, unsigned type)
+{
+	char buf[24];
+	sprintf(buf, "Sw%u", n);
+	cbyte(BC_SWITCH);
+	fixup(BC_SEG_CODE, codelen, symref(buf));
+	clong(0);
+}
+
+void gen_switchdata(unsigned n, unsigned size)
+{
+	char buf[24];
+	sprintf(buf, "Sw%u", n);
+	symdef(buf, BC_SYM_DATA, dhere());
+	dlong(size);
+	in_switchtab = 1;
+}
+
+void gen_case(unsigned tag, unsigned entry)
+{
+	char buf[24];
+	sprintf(buf, "Sw%u_%u", tag, entry);
+	symdef(buf, BC_SYM_CODE, codelen);
+}
+
+void gen_case_label(unsigned tag, unsigned entry)
+{
+	gen_case(tag, entry);
+}
+
+void gen_case_data(unsigned tag, unsigned entry)
+{
+	char buf[24];
+	sprintf(buf, "Sw%u_%u", tag, entry);
+	fixup(BC_SEG_DATA, dhere(), symref(buf));
+	dlong(0);
+}
+
+void gen_helpcall(struct node *n)
+{
+}
+
+void gen_helpclean(struct node *n)
+{
+}
+
+void gen_data_label(const char *name, unsigned align)
+{
+	/*
+	 *	The interpreter reads memory a byte at a time and never
+	 *	cared about alignment, but the native mm runtime (and the
+	 *	Thumb backend to come) reach VM data through real pointers,
+	 *	and on ARM an int64/double load needs the front end's
+	 *	alignment honoured.  The literal segment is only strings
+	 *	and is rebased when the module is written out, so it stays
+	 *	byte packed.
+	 */
+	if (align > 1 && curseg != A_LITERAL) {
+		if (curseg == A_BSS)
+			bsslen = (bsslen + align - 1) & ~(unsigned long)(align - 1);
+		else
+			while (dhere() & (align - 1))
+				dbyte(0);
+	}
+	if (curseg == A_BSS)
+		symdef(name, BC_SYM_BSS, bsslen);
+	else
+		symdef(name, BC_SYM_DATA, dhere());
+}
+
+void gen_space(unsigned value)
+{
+	if (curseg == A_BSS)
+		bsslen += value;
+	else {
+		/* Reserved space inside initialised data still occupies
+		   the file, so it has to be written out as zeroes. */
+		while (value--)
+			dbyte(0);
+	}
+}
+
+void gen_text_data(unsigned n)
+{
+	char buf[24];
+	sprintf(buf, "T%u", n);
+	fixup(BC_SEG_DATA, dhere(), symref(buf));
+	dlong(0);
+}
+
+void gen_literal(unsigned n)
+{
+	char buf[24];
+	if (n) {
+		sprintf(buf, "T%u", n);
+		/*
+		 * Respect the segment, exactly as gen_data_label does.
+		 * This always said DATA, so a numbered label emitted into
+		 * bss - which is how a static local is written out - got a
+		 * data address instead of a bss one. A "static int d[4]"
+		 * inside a function then aliased the string literal area:
+		 * assigning to d[3] rewrote the fourth word of the
+		 * literals, and a printf format string turned into
+		 * whatever had just been stored.
+		 */
+		if (curseg == A_BSS)
+			symdef(buf, BC_SYM_BSS, bsslen);
+		else
+			symdef(buf, BC_SYM_DATA, dhere());
+	}
+}
+
+void gen_name(struct node *n)
+{
+	fixup(BC_SEG_DATA, dhere(), symref(namestr(n->snum)));
+	dlong(n->value);
+}
+
+void gen_value(unsigned type, cval_t value)
+{
+	/* Case values are always a word: see in_switchtab. */
+	if (in_switchtab || PTR(type)) {
+		dlong(value);
+		return;
+	}
+	switch (typesize(type)) {
+	case 1:
+		dbyte(value & 0xFF);
+		break;
+	case 2:
+		dword(value & 0xFFFF);
+		break;
+	case 8:
+		/* An initialised long long or double in the data segment.
+		   Writing one word here left the object four bytes short of
+		   what the symbol claimed, so everything after it moved. */
+		dlong(value & 0xFFFFFFFFUL);
+		dlong((unsigned long)(((unsigned long long)value) >> 32));
+		break;
+	default:
+		dlong(value);
+		break;
+	}
+}
+
+void gen_start(void)
+{
+}
+
+static void thumb_resolve_calls(void);
+
+/*
+ *	Drop generated label symbols ("L<n>...", "Sw<n>_<n>") that no
+ *	fixup references - jump labels resolve at compile time and a
+ *	reclaimed function's switch entries lose their table fixups, so
+ *	most of them are dead weight by now: 19 bytes of load footprint
+ *	each (symbol row, name, bind slots).  Real names stay whether
+ *	referenced or not, for natlist and its kind.  Symbol indices are
+ *	only ever stored in fixups, which are remapped here; the loader's
+ *	CALL-to-LIBCALL rewrite bakes the remapped index.
+ */
+static void compact_syms(void)
+{
+	static unsigned short remap[MAXSYM];
+	static unsigned char keep[MAXSYM];
+	unsigned short *perm;
+	unsigned i, o2, onsym;
+
+	memset(keep, 0, nsym);
+	for (i = 0; i < nfix; i++)
+		keep[fixtab[i].f_sym] = 1;
+	for (i = 0; i < nlibref; i++)
+		keep[libreftab[i].sym] = 1;
+	for (i = 0; i < nsym; i++) {
+		const char *n = bc_symname[i];
+		if (!(n[0] == 'L' && n[1] >= '0' && n[1] <= '9') &&
+		    !(n[0] == 'S' && n[1] == 'w' && n[2] >= '0' && n[2] <= '9'))
+			keep[i] = 1;
+	}
+	strtablen = 0;
+	for (i = o2 = 0; i < nsym; i++) {
+		if (!keep[i])
+			continue;
+		remap[i] = o2;
+		symtab[o2] = symtab[i];
+		symtab[o2].s_name = strtablen;
+		sym_in_lit[o2] = sym_in_lit[i];
+		bc_symname[o2] = bc_symname[i];
+		strcpy(strtab + strtablen, bc_symname[i]);
+		strtablen += strlen(bc_symname[i]) + 1;
+		o2++;
+	}
+	onsym = nsym;
+	nsym = o2;
+
+	/*
+	 *	Library symbols to the front.
+	 *
+	 *	The loader keeps three tables indexed by symbol number to
+	 *	dispatch a library call, and only library symbols are ever
+	 *	looked up in them - so what sizes those tables is the HIGHEST
+	 *	library index, not how many there are.  Scattered through the
+	 *	table, that is every symbol in the program: on picofrog, 14K
+	 *	of loader memory to serve 82 entries, and 14K is the kind of
+	 *	number that decides whether a program loads at all.
+	 *
+	 *	Numbered from zero they cost 574 bytes.  Nothing about the
+	 *	format changes - these are still ordinary symbol indices, and
+	 *	the loader sizes the tables from the file in front of it - so
+	 *	an object built before this still loads, with the tables it
+	 *	would always have had.
+	 *
+	 *	perm[] is the final position of each surviving symbol; the
+	 *	swap loop applies it in place, one cycle at a time.  Copying
+	 *	straight into a second pass would not do: a destination can
+	 *	be past its source here, which overwrites entries the second
+	 *	pass has not read yet.  If the allocation fails the old
+	 *	numbering stands - it costs loader memory, nothing else.
+	 */
+	perm = malloc(nsym ? nsym * sizeof(unsigned short) : 1);
+	if (perm) {
+		unsigned nlib = 0, klib, kother;
+
+		for (i = 0; i < nsym; i++)
+			if (symtab[i].s_type == BC_SYM_LIB)
+				nlib++;
+		for (i = 0, klib = 0, kother = nlib; i < nsym; i++)
+			perm[i] = (symtab[i].s_type == BC_SYM_LIB)
+				  ? klib++ : kother++;
+		/* Compose, before the swaps below consume perm. */
+		for (i = 0; i < onsym; i++)
+			if (keep[i])
+				remap[i] = perm[remap[i]];
+		for (i = 0; i < nsym; i++) {
+			while (perm[i] != i) {
+				unsigned d = perm[i];
+				struct bc_sym ts = symtab[i];
+				unsigned char tl = sym_in_lit[i];
+				char *tn = bc_symname[i];
+
+				symtab[i] = symtab[d];
+				symtab[d] = ts;
+				sym_in_lit[i] = sym_in_lit[d];
+				sym_in_lit[d] = tl;
+				bc_symname[i] = bc_symname[d];
+				bc_symname[d] = tn;
+				perm[i] = perm[d];
+				perm[d] = d;
+			}
+		}
+		free(perm);
+	}
+
+	for (i = 0; i < nfix; i++)
+		fixtab[i].f_sym = remap[fixtab[i].f_sym];
+
+	/* Rewrite the baked indices - the bytecode LIBCALL operands and
+	   the native movs/movw immediates.  Every recorded site is a
+	   library symbol, and those are exactly the ones the partition
+	   above moves to the front, so an index can only shrink and the
+	   instruction form always still fits.  Checked, not assumed: a
+	   silent truncation here would call the wrong function. */
+	for (i = 0; i < nlibref; i++) {
+		unsigned long at = libreftab[i].at;
+		unsigned s = remap[libreftab[i].sym];
+		switch (libreftab[i].form) {
+		case 0:			/* 16-bit LE operand */
+			codebuf[at] = s & 0xFF;
+			codebuf[at + 1] = (s >> 8) & 0xFF;
+			break;
+		case 1:			/* movs r0, #imm8 */
+			if (s > 255)
+				error("libcall index too large");
+			codebuf[at] = s & 0xFF;
+			break;
+		default: {		/* movw r0, #imm16 */
+			unsigned hw1 = 0xF240 | (((s >> 11) & 1) << 10) |
+			    ((s >> 12) & 0xF);
+			unsigned hw2 = (((s >> 8) & 7) << 12) | (s & 0xFF);
+			codebuf[at] = hw1 & 0xFF;
+			codebuf[at + 1] = hw1 >> 8;
+			codebuf[at + 2] = hw2 & 0xFF;
+			codebuf[at + 3] = hw2 >> 8;
+			break;
+		}
+		}
+	}
+}
+
+void gen_end(void)
+{
+	struct bc_header h;
+	unsigned i;
+
+	resolve_jumps();
+	thumb_resolve_calls();
+	compact_syms();
+
+	/* Literals sit after data in the emitted image, so everything
+	   recorded against the literal buffer moves up by datalen. */
+	for (i = 0; i < nsym; i++)
+		if (sym_in_lit[i])
+			symtab[i].s_value += datalen;
+	for (i = 0; i < nfix; i++)
+		if (fix_in_lit[i])
+			fixtab[i].f_offset += datalen;
+
+	memcpy(h.h_magic, BC_MAGIC, 4);
+	/* Every translated function now carries the stack guard, which
+	   reads helper slots 21-22, so native code implies version 5 -
+	   there is no longer a native object that an older bcrun could
+	   safely run.  A pure-bytecode object is still version 1 and
+	   runs anywhere. */
+	h.h_version = have_native ? BC_VERSION_NATIVE5 : BC_VERSION;
+	h.h_pad = 0;
+	h.h_nsym = nsym;
+	h.h_code = codelen;
+	h.h_data = datalen + litlen;
+	h.h_bss = bsslen;
+	/* If main was translated its symbol moved to the BC_NATIVE
+	   marker: point h_entry there too, so the loader can enter the
+	   main line native.  A BASIC program lives in its main line -
+	   entering through the bytecode left the whole program
+	   interpreted while every gate that exercised CALLED functions
+	   stayed green.  If main bailed, the symbol still holds the
+	   plain bytecode offset and nothing changes.  Re-resolved by
+	   name: compact_syms renumbers indices. */
+	if (entry_sym >= 0)
+		entry = symtab[symref("main")].s_value;
+	h.h_entry = entry;
+	h.h_nfixup = nfix;
+	h.h_strsize = strtablen;
+
+	fwrite(&h, sizeof(h), 1, stdout);
+	fwrite(codebuf, 1, codelen, stdout);
+	fwrite(databuf, 1, datalen, stdout);
+	fwrite(litbuf, 1, litlen, stdout);
+	for (i = 0; i < nfix; i++)
+		fwrite(&fixtab[i], sizeof(struct bc_fixup), 1, stdout);
+	for (i = 0; i < nsym; i++)
+		fwrite(&symtab[i], sizeof(struct bc_sym), 1, stdout);
+	fwrite(strtab, 1, strtablen, stdout);
+	fflush(stdout);
+}
+
+void gen_tree(struct node *n)
+{
+	codegen_lr(n);
+}
+
+/* ------------------------------------------------------------------ */
+
+unsigned gen_push(struct node *n)
+{
+	unsigned t = n->type;
+
+	/*
+	 * A struct or union argument is copied onto the stack whole. The
+	 * accumulator holds its address, and the length came from the
+	 * front end in the node's value because this pass cannot size an
+	 * aggregate. The rounding here has to match target_argsize(),
+	 * which is what T_CLEANUP eventually takes back off.
+	 */
+	if (IS_STRUCT(t) && !PTR(t)) {
+		unsigned len = n->value;
+		if (len == 0 || len > 0xFFFF)
+			error("struct size");
+		cbyte(BC_PUSHN);
+		cword(len);
+		sp += (len < 4) ? 4 : ((len + 3) & ~3);
+		return 1;
+	}
+	sp += stack_size(t);
+	/* A 64-bit value takes two slots and needs the wide push. */
+	cbyte(typesize(t) == 8 ? BC_PUSH64 : BC_PUSH);
+	return 1;
+}
+
+unsigned gen_direct(struct node *n)
+{
+	cval_t v;
+	switch (n->op) {
+	/*
+	 * Cleanup must be handled here, not in gen_node. It carries the
+	 * function's return type, so the byte count to discard is in
+	 * n->right->value and not derivable from the node's own type.
+	 * Missing this leaves the pushed arguments in the stack-depth
+	 * accounting and the epilogue check fails with "sp".
+	 */
+	case T_CLEANUP:
+		v = n->right->value;
+		if (v) {
+			cbyte(BC_ARGS);
+			cbyte(v & 0xFF);
+		}
+		sp -= v;
+		return 1;
+	}
+	return 0;
+}
+
+unsigned gen_uni_direct(struct node *n)
+{
+	return 0;
+}
+
+unsigned gen_shortcut(struct node *n)
+{
+	/*
+	 * The comma operator. Nothing generated it before, so it reached
+	 * the fallback and came out as a call to "__op2c" that does not
+	 * exist - "(void)f(), g();" and "for (i = 0, j = 0; ...)" simply
+	 * did not work.
+	 *
+	 * Handled here rather than in gen_node because the generic walk
+	 * would push the left operand's value first, and the whole point
+	 * of a comma is that the left value is thrown away. Marking it
+	 * NORETURN also lets a left side with no side effects disappear
+	 * completely.
+	 */
+	if (n->op == T_COMMA) {
+		n->left->flags |= NORETURN;
+		codegen_lr(n->left);
+		codegen_lr(n->right);
+		return 1;
+	}
+	return 0;
+}
+
+/*
+ *	Floating point.
+ *
+ *	A double is carried in the accumulator as its bit pattern and a
+ *	float in the low 32 bits, so loads, stores, pushes and constants
+ *	are the existing 64 and 32 bit ones and only the operations that
+ *	interpret the bits are floating point specific.
+ *
+ *	The trap this exists to avoid is silence rather than failure:
+ *	typesize(DOUBLE) is 8, so without a branch of its own "a + b" on
+ *	two doubles falls into the 64-bit *integer* cases and adds the bit
+ *	patterns, printing a wrong answer instead of stopping.
+ */
+static unsigned isdouble(unsigned t)
+{
+	return BASE_TYPE(t) == DOUBLE;
+}
+
+/* Operators whose result in A is already an integer 0 or 1, whatever
+   the operand types were. */
+static unsigned is_boolish(unsigned op)
+{
+	switch (op) {
+	case T_EQEQ:
+	case T_BANGEQ:
+	case T_LT:
+	case T_GT:
+	case T_LTEQ:
+	case T_GTEQ:
+	case T_BOOL:
+	case T_BANG:
+	case T_ANDAND:
+	case T_OROR:
+		return 1;
+	}
+	return 0;
+}
+
+static unsigned isfp(unsigned t)
+{
+	return !PTR(t) && !IS_INTARITH(t) && IS_ARITH(t);
+}
+
+/* Anything floating that is still not generated inline */
+static unsigned fpcall(const char *base, unsigned t)
+{
+	char buf[16];
+
+	sprintf(buf, "%s%c", base, isdouble(t) ? 'd' : 'f');
+	libcall(buf);
+	return 1;
+}
+
+/*
+ *	Binary operators. Signedness is decided by the left operand's
+ *	type, as the tree has already applied the usual conversions.
+ */
+static unsigned binop(struct node *n)
+{
+	unsigned t = n->left ? n->left->type : n->type;
+	unsigned u = (PTR(t) || (t & UNSIGNED));
+	/* Operand width decides which family of opcodes to use. The 64-bit
+	   forms do not truncate; the 32-bit ones do. */
+	unsigned w = typesize(t);
+
+	/* Floating point has its own set: see the note above binop's
+	   helpers. %  & | ^ << >> are not valid on it, so they fall
+	   through to the runtime call and are reported. */
+	if (isfp(t)) {
+		unsigned d = isdouble(t);
+
+#define FP(od, of)	do { cbyte(d ? (od) : (of)); return 1; } while (0)
+
+		switch (n->op) {
+		case T_PLUS:	FP(BC_ADDD, BC_ADDF);
+		case T_MINUS:	FP(BC_SUBD, BC_SUBF);
+		case T_STAR:	FP(BC_MULD, BC_MULF);
+		case T_SLASH:	FP(BC_DIVD, BC_DIVF);
+		case T_EQEQ:	FP(BC_EQD, BC_EQF);
+		case T_BANGEQ:	FP(BC_NED, BC_NEF);
+		case T_LT:	FP(BC_LTD, BC_LTF);
+		case T_GT:	FP(BC_GTD, BC_GTF);
+		case T_LTEQ:	FP(BC_LED, BC_LEF);
+		case T_GTEQ:	FP(BC_GED, BC_GEF);
+		}
+#undef FP
+		return 0;
+	}
+
+#define OP(o32, o64)	do { cbyte(w == 8 ? (o64) : (o32)); return 1; } while (0)
+
+	switch (n->op) {
+	case T_PLUS:
+		OP(BC_ADD, BC_ADD64);
+	case T_MINUS:
+		OP(BC_SUB, BC_SUB64);
+	case T_STAR:
+		OP(BC_MUL, BC_MUL64);
+	case T_SLASH:
+		if (u)
+			OP(BC_DIVU, BC_DIVU64);
+		OP(BC_DIVS, BC_DIVS64);
+	case T_PERCENT:
+		if (u)
+			OP(BC_REMU, BC_REMU64);
+		OP(BC_REMS, BC_REMS64);
+	case T_AND:
+		OP(BC_AND, BC_AND64);
+	case T_OR:
+		OP(BC_OR, BC_OR64);
+	case T_HAT:
+		OP(BC_XOR, BC_XOR64);
+	case T_LTLT:
+		OP(BC_SHL, BC_SHL64);
+	case T_GTGT:
+		if (u)
+			OP(BC_SHRU, BC_SHRU64);
+		OP(BC_SHRS, BC_SHRS64);
+	case T_EQEQ:
+		OP(BC_EQ, BC_EQ64);
+	case T_BANGEQ:
+		OP(BC_NE, BC_NE64);
+	case T_LT:
+		if (u)
+			OP(BC_LTU, BC_LTU64);
+		OP(BC_LTS, BC_LTS64);
+	case T_GT:
+		if (u)
+			OP(BC_GTU, BC_GTU64);
+		OP(BC_GTS, BC_GTS64);
+	case T_LTEQ:
+		if (u)
+			OP(BC_LEU, BC_LEU64);
+		OP(BC_LES, BC_LES64);
+	case T_GTEQ:
+		if (u)
+			OP(BC_GEU, BC_GEU64);
+		OP(BC_GES, BC_GES64);
+	}
+#undef OP
+	return 0;
+}
+
+/*
+ *	gen_node must never return 0. The shared make_node() falls back to
+ *	helper(), which printf()s the helper name -- fine for a backend
+ *	emitting assembler text, fatal for one writing a binary object,
+ *	because the name lands in the middle of the code stream.
+ *
+ *	So anything not generated inline becomes a runtime call, using
+ *	FCC's own helper names so the interpreter and the other backends
+ *	agree on what each one means.
+ */
+static unsigned fallback(struct node *n)
+{
+	const char *name = NULL;
+	char buf[16];
+
+	switch (n->op) {
+	case T_NULL:
+		return 1;
+	case T_ARGCOMMA:
+		/* Structural: the arguments have already been pushed by the
+		   tree walk and there is nothing to emit. Without this it
+		   became a bogus runtime call between the last argument and
+		   the call itself. */
+		return 1;
+	case T_PLUSEQ:		name = "pluseq";	break;
+	case T_MINUSEQ:		name = "minuseq";	break;
+	case T_STAREQ:		name = "muleq";		break;
+	case T_SLASHEQ:		name = "diveq";		break;
+	case T_PERCENTEQ:	name = "remeq";		break;
+	case T_ANDEQ:		name = "andeq";		break;
+	case T_OREQ:		name = "oreq";		break;
+	case T_HATEQ:		name = "xoreq";		break;
+	case T_SHLEQ:		name = "shleq";		break;
+	case T_SHREQ:		name = "shreq";		break;
+	case T_PLUSPLUS:	name = "postinc";	break;
+	case T_MINUSMINUS:	name = "postdec";	break;
+	default:
+		/* Unknown, but still must not fall through to text. */
+		sprintf(buf, "__op%x", n->op);
+		libcall(buf);
+		return 1;
+	}
+
+	/* Floating point has no width and signedness, and no runtime
+	   function either yet, so name it as such rather than emitting
+	   "pluseq8s" and having it run as an integer */
+	if (!IS_INTARITH(n->type) && !PTR(n->type))
+		return fpcall(name, n->type);
+
+	/*
+	 * Append the operand width and signedness.
+	 *
+	 * Without it the runtime cannot know whether it is updating a
+	 * char, a short or an int, and did a 32bit read-modify-write in
+	 * every case. That silently works until a carry leaves the object:
+	 * "char a = 255, b = 2; a += 1;" wrapped a correctly but also
+	 * incremented b. Signedness matters too, for /= %= and >>=.
+	 */
+	sprintf(buf, "%s%u%c", name, typesize(n->type),
+		(PTR(n->type) || (n->type & UNSIGNED)) ? 'u' : 's');
+	libcall(buf);
+	return 1;
+}
+
+unsigned gen_node(struct node *n)
+{
+	cval_t v = n->value;
+	unsigned nr = n->flags & NORETURN;
+
+	/* Arguments are removed by the call, reported via T_CLEANUP */
+	if (n->left && n->op != T_ARGCOMMA && n->op != T_FUNCCALL &&
+	    n->op != T_CALLNAME)
+		sp -= stack_size(n->left->type);
+
+	switch (n->op) {
+	case T_CONSTANT:
+		emit_const(v, n->type);
+		return 1;
+	case T_NAME:
+		emit_addr(symref(namestr(n->snum)), v);
+		return 1;
+	case T_LABEL:
+		{
+			char buf[24];
+			sprintf(buf, "T%u", (unsigned)n->val2);
+			emit_addr(symref(buf), v);
+			return 1;
+		}
+	case T_NREF:
+		emit_addr(symref(namestr(n->snum)), v);
+		emit_load(n->type);
+		return 1;
+	case T_LBREF:
+		{
+			char buf[24];
+			sprintf(buf, "T%u", (unsigned)n->val2);
+			emit_addr(symref(buf), v);
+			emit_load(n->type);
+			return 1;
+		}
+	case T_LREF:
+		if (nr)
+			return 1;
+		emit_local(v + sp);
+		emit_load(n->type);
+		return 1;
+	case T_NSTORE:
+		emit_addr(symref(namestr(n->snum)), v);
+		cbyte(BC_PUSH);
+		cbyte(BC_SWAP);
+		emit_store(n->type);
+		return 1;
+	case T_LSTORE:
+		if (nr)
+			return 1;
+		emit_local(v + sp);
+		cbyte(BC_PUSH);
+		cbyte(BC_SWAP);
+		emit_store(n->type);
+		return 1;
+	case T_LOCAL:
+		emit_local(v + sp);
+		return 1;
+	case T_ARGUMENT:
+		emit_local(v + frame_len + sp);
+		return 1;
+	case T_DEREF:
+		emit_load(n->type);
+		return 1;
+	case T_ARGSTRUCT:
+		/* Structural only: the child left the struct's address in
+		   the accumulator, which is what gen_push wants. It exists
+		   to carry the length, which is read there. */
+		return 1;
+	case T_EQ:
+		/* A whole struct or union: both sides are addresses and the
+		   size came from the front end, which is the only pass that
+		   can work it out */
+		if (IS_STRUCT(n->type) && !PTR(n->type)) {
+			cbyte(BC_COPY);
+			cword(v & 0xFFFF);
+			return 1;
+		}
+		emit_store(n->type);
+		return 1;
+	case T_CALLNAME:
+		cbyte(BC_CALL);
+		fixup(BC_SEG_CODE, codelen, symref(namestr(n->snum)));
+		clong(v);
+		return 1;
+	case T_FUNCCALL:
+		cbyte(BC_CALLA);
+		return 1;
+	case T_CLEANUP:
+		if (v) {
+			cbyte(BC_ARGS);
+			cbyte(v & 0xFF);
+		}
+		return 1;
+	/* Each of these keys off the operand width, and a double is eight
+	   bytes wide, so each needs saving from the 64-bit integer form */
+	case T_NEGATE:
+		if (isfp(n->type)) {
+			cbyte(isdouble(n->type) ? BC_NEGD : BC_NEGF);
+			return 1;
+		}
+		cbyte(typesize(n->type) == 8 ? BC_NEG64 : BC_NEG);
+		return 1;
+	case T_TILDE:
+		/* Not valid on a float, so no case for one */
+		cbyte(typesize(n->type) == 8 ? BC_NOT64 : BC_NOT);
+		return 1;
+	/*
+	 * These two produce an int from whatever they are given, so the
+	 * node's own type is int and says nothing about the operand. Key
+	 * off the operand instead: "!x" on a double was emitting the
+	 * 64-bit integer form, which gets the right answer for 0.0 and the
+	 * wrong one for -0.0.
+	 */
+	case T_BANG:
+		{
+			unsigned ot = n->right ? n->right->type : n->type;
+			/*
+			 * A relational or logical operand already left an
+			 * integer 0/1 in A whatever its declared type says,
+			 * so the value must be tested as an integer.  The
+			 * floating forms reinterpreted the bit pattern: int
+			 * 1 read as a double is 5e-324, a denormal - "true"
+			 * under exact soft-float by accident, zero on the
+			 * RP2350's flush-to-zero DCP, where every compared
+			 * condition went false.
+			 */
+			if (n->right && is_boolish(n->right->op))
+				ot = CINT;
+			if (isfp(ot)) {
+				cbyte(isdouble(ot) ? BC_LNOTD : BC_LNOTF);
+				return 1;
+			}
+			cbyte(typesize(ot) == 8 ? BC_LNOT64 : BC_LNOT);
+			return 1;
+		}
+	case T_BOOL:
+		{
+			unsigned ot = n->right ? n->right->type : n->type;
+			/* see T_BANG */
+			if (n->right && is_boolish(n->right->op))
+				ot = CINT;
+			if (isfp(ot)) {
+				cbyte(isdouble(ot) ? BC_BOOLD : BC_BOOLF);
+				return 1;
+			}
+			cbyte(typesize(ot) == 8 ? BC_BOOL64 : BC_BOOL);
+			return 1;
+		}
+	case T_CAST:
+		{
+			unsigned lt = n->type;
+			unsigned rt = n->right ? n->right->type : lt;
+			unsigned ls, rs;
+			/* A cast to void discards the value. The operand has
+			   already been generated for its side effects and
+			   there is nothing to convert it to. */
+			if (lt == VOID)
+				return 1;
+			if (PTR(lt) || PTR(rt))
+				return 1;
+			/*
+			 * A conversion with floating point on one side or
+			 * both. The integer side is always the full 64-bit
+			 * accumulator, so widen to 64 before converting and
+			 * truncate after, which is one conversion per pair
+			 * instead of one per width.
+			 */
+			if (isfp(lt) || isfp(rt)) {
+				if (isfp(lt) && isfp(rt)) {
+					if (isdouble(lt) && !isdouble(rt))
+						cbyte(BC_F2D);
+					else if (!isdouble(lt) && isdouble(rt))
+						cbyte(BC_D2F);
+					return 1;
+				}
+				if (isfp(lt)) {		/* integer -> float */
+					unsigned u = (rt & UNSIGNED) || PTR(rt);
+					rs = typesize(rt);
+					if (rs == 1)
+						cbyte(u ? BC_ZEXT8 : BC_SEXT8);
+					else if (rs == 2)
+						cbyte(u ? BC_ZEXT16 : BC_SEXT16);
+					if (rs < 8)
+						cbyte(u ? BC_ZEXT32 : BC_SEXT32);
+					if (isdouble(lt))
+						cbyte(u ? BC_U2D : BC_I2D);
+					else
+						cbyte(u ? BC_U2F : BC_I2F);
+					return 1;
+				}
+				/* float -> integer */
+				{
+					unsigned u = (lt & UNSIGNED);
+					if (isdouble(rt))
+						cbyte(u ? BC_D2U : BC_D2I);
+					else
+						cbyte(u ? BC_F2U : BC_F2I);
+					ls = typesize(lt);
+					if (ls < 8)
+						cbyte(BC_TRUNC64);
+					/* And down to the target's own width, for
+					   the reason the integer path below gives */
+					if (ls == 1)
+						cbyte(u ? BC_ZEXT8 : BC_SEXT8);
+					else if (ls == 2)
+						cbyte(u ? BC_ZEXT16 : BC_SEXT16);
+					return 1;
+				}
+			}
+			ls = typesize(lt);
+			rs = typesize(rt);
+			/* Widening to or narrowing from 64 bits. */
+			if (ls == 8 && rs < 8) {
+				/* bring the value up to 32 first if it came
+				   from a narrower object */
+				if (rs == 1)
+					cbyte((rt & UNSIGNED) ? BC_ZEXT8 : BC_SEXT8);
+				else if (rs == 2)
+					cbyte((rt & UNSIGNED) ? BC_ZEXT16 : BC_SEXT16);
+				cbyte((rt & UNSIGNED) || PTR(rt) ? BC_ZEXT32
+								 : BC_SEXT32);
+				return 1;
+			}
+			if (ls < 8 && rs == 8)
+				cbyte(BC_TRUNC64);
+
+			if (ls >= 4 && ls < 8 && rs == 1)
+				cbyte((rt & UNSIGNED) ? BC_ZEXT8 : BC_SEXT8);
+			else if (ls >= 4 && ls < 8 && rs == 2)
+				cbyte((rt & UNSIGNED) ? BC_ZEXT16 : BC_SEXT16);
+			/*
+			 * Narrowing is not free. It is tempting to leave it to
+			 * the store, which does truncate - but a narrowed value
+			 * can be used directly, and then nothing reduces it:
+			 * "(int)(signed char)200" gave 200 instead of -56.
+			 * Force the value into the target's width and
+			 * signedness here.
+			 */
+			else if (ls == 1)
+				cbyte((lt & UNSIGNED) ? BC_ZEXT8 : BC_SEXT8);
+			else if (ls == 2)
+				cbyte((lt & UNSIGNED) ? BC_ZEXT16 : BC_SEXT16);
+			return 1;
+		}
+	}
+	if (binop(n))
+		return 1;
+	return fallback(n);
+}
+
+#include "backend-thumb.c"

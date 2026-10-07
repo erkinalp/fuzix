@@ -42,6 +42,7 @@ f 0755 /bin/reboot      reboot
 l /bin/reboot /bin/halt
 l /bin/reboot /bin/shutdown
 f 0755 /bin/remount     remount
+f 0755 /bin/rx          rx
 f 0755 /bin/rm          rm
 f 0755 /bin/rmdir       rmdir
 f 0755 /bin/setdate     setdate
@@ -69,6 +70,8 @@ f 0755 /bin/chgrp       chgrp
 f 0755 /bin/chmem       chmem
 f 0755 /bin/chown       chown
 f 0755 /bin/cksum       cksum
+f 0755 /usr/bin/colrm	colrm
+f 0755 /usr/bin/column	column
 f 0755 /bin/cut         cut
 f 0755 /bin/decomp16    decomp16
 f 0755 /bin/dirname     dirname
@@ -77,10 +80,13 @@ l /bin/dosread /bin/dosdir
 l /bin/dosread /bin/doswrite
 l /bin/dosread /bin/dosdel
 f 0755 /bin/env         env
+f 0755 /usr/bin/expand	expand
 f 0755 /bin/factor      factor
 f 0755 /bin/false       false
 f 0755 /bin/fdisk       fdisk
 f 0755 /bin/free        free
+f 0755 /usr/bin/from	from
+f 0755 /usr/bin/getopt	getopt
 f 0755 /usr/bin/gpiotool gpiotool
 f 0755 /bin/gptparse    gptparse
 f 0755 /bin/grep        grep
@@ -88,12 +94,14 @@ f 0755 /bin/groups      groups
 f 0755 /bin/head        head
 f 0755 /bin/id          id
 f 0755 /bin/kbdrate     kbdrate
+f 0755 /usr/bin/leave	leave
 f 0755 /bin/less        less
 f 0755 /bin/ll          ll
 f 0755 /bin/logname     logname
 f 0755 /bin/mail	mail
 f 0755 /bin/man         man
 f 0755 /bin/mkfifo      mkfifo
+f 0755 /usr/bin/mktemp	mktemp
 f 0755 /bin/mode        mode
 f 0755 /bin/more        more
 f 0755 /bin/nvtool	nvtool
@@ -102,14 +110,17 @@ l /bin/od /bin/hd
 f 0755 /bin/pagesize    pagesize
 f 0755 /bin/passwd      passwd
 f 0755 /bin/printenv    printenv
+f 0755 /bin/rx          rx
 f 0755 /bin/sed         sed
 f 0755 /bin/setboot     setboot
 f 0755 /bin/seq         seq
+f 0755 /bin/size        size
 f 0755 /bin/sleep       sleep
 f 0755 /bin/sort        sort
 f 0755 /bin/sum         sum
-f 0755 /bin/su          su
+f 4755 /bin/su          su
 f 0755 /bin/swapon	swapon
+f 0755 /bin/sx          sx
 f 0755 /bin/tail        tail
 f 0755 /bin/tar         tar
 f 0755 /usr/lib/tchelp  tchelp
@@ -117,6 +128,7 @@ f 0755 /bin/tee         tee
 f 0755 /bin/telinit     telinit
 f 0755 /bin/termcap     termcap
 f 0755 /bin/tget        tget
+f 0755 /usr/bin/tree	tree
 f 0755 /bin/true        true
 f 0755 /bin/uname       uname
 f 0755 /bin/uniq        uniq

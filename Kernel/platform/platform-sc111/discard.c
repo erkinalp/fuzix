@@ -20,8 +20,8 @@ void pagemap_init(void)
 {
     int i;
 
-    /* RC2014 has RAM in the top 512K of physical memory. 
-     * First 64K is used by the kernel. 
+    /* RC2014 has RAM in the top 512K of physical memory.
+     * First 64K is used by the kernel.
      * Each process gets the full 64K for now.
      * Page size is 4KB. */
     for(i = 0x90; i < (1024 >> 2); i += 0x10)
@@ -46,22 +46,21 @@ static void turbo_on(void)
     kputs("Hold onto your hat...");
     /* Most boards use 55ns SRAM: that needs 2 wait states. 45ns would need
        1 but is rarer. Use max wait states for I/O for the moment */
-    Z180_DCNTL |= 0xF0;		/* Force slow as possible, then mod back */
-    Z180_DCNTL &= 0xBF;		/* 2 wait memory, 4 on I/O */
-    Z180_RCR &= 0x7F;		/* No DRAM, kill refresh */
-    Z180_CMR &= 0x7F;		/* Clock doubler off */
-    if (Z180_CMR & 0x80)
+    out(Z180_DCNTL, in(Z180_DCNTL) | 0xF0); /* Force slow as possible, then mod back */
+    out(Z180_DCNTL, in(Z180_DCNTL) & 0xBF);
+    out(Z180_RCR, in(Z180_RCR) & 0x7F);	/* No DRAM, kill refresh */
+    out(Z180_CMR, in(Z180_CMR) & 0x7F);	/* Clock doubler off */
+    if (in(Z180_CMR) & 0x80)
         kputs("no clock doubler, 18.4MHz.\n");
     else {
+        turbo = 1;
         tty_setup(BOOT_TTY, 1);
         kputs("turbo engaged, 36.8MHz.\n");
-        Z180_CMR |= 0x80;		/* Clock doubler on */
-        Z180_CCR |= 0x80;		/* Clock divider off */
-        turbo = 1;
+        out(Z180_CMR, in(Z180_CMR) | 0x80);	/* Clock doubler on */
+        out(Z180_CCR, in(Z180_CCR) | 0x80);	/* Clock divider off */
     }
 }
-
-uint8_t plt_param(char *p)
+uint_fast8_t plt_param(char *p)
 {
     if (strcmp(p, "turbo") == 0) {
         turbo_on();

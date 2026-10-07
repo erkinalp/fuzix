@@ -5,67 +5,72 @@ CSRCS = devtty.c devices.c devrtc.c main.c
 
 DISCSRCS = discard.c
 
-ASRCS = smallz80.s crt0.s
-ASRCS += tricks.s commonmem.s
+ASRCS = smallz80.S crt0.S ide.S tricks.S commonmem.S
 
-DISCARD_DSRCS = ../../dev/devide_discard.c
-DSRCS = ../../dev/blkdev.c ../../dev/devide.c ../../dev/mbr.c
+DISCARD_DSRCS = ../../dev/tinyide_discard.c ../../dev/tinydisk_discard.c
+DSRCS = ../../dev/tinydisk.c ../../dev/tinyide.c
 NSRCS =
 
 DASRCS = 
 
-COBJS = $(CSRCS:.c=.rel)
-AOBJS = $(ASRCS:.s=.rel)
-NOBJS = $(patsubst ../../dev/net/%.c,%.rel, $(NSRCS))
-DISCOBJS = $(DISCSRCS:.c=.rel)
-DISCARD_DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DISCARD_DSRCS))
-DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DSRCS))
-DAOBJS = $(patsubst ../../dev/%.s,%.rel, $(DASRCS))
+COBJS = $(CSRCS:.c=.o)
+AOBJS = $(ASRCS:.S=.o)
+NOBJS = $(patsubst ../../dev/net/%.c,%.o, $(NSRCS))
+DISCOBJS = $(DISCSRCS:.c=.o)
+DISCARD_DOBJS = $(patsubst ../../dev/%.c,%.o, $(DISCARD_DSRCS))
+DOBJS = $(patsubst ../../dev/%.c,%.o, $(DSRCS))
+DAOBJS = $(patsubst ../../dev/%.S,%.o, $(DASRCS))
 
 OBJS  = $(COBJS) $(AOBJS) $(NOBJS) $(DISCOBJS) $(DOBJS) $(DISCARD_DOBJS) $(DAOBJS)
 
-JUNK =  *.lst *.asm *.sym *.rst *.lst *.rel *.tmp *.ihx
-
 all:	$(OBJS)
 
-$(COBJS): %.rel: %.c
+$(COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DISCOBJS): %.rel: %.c
+$(DISCOBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(DOBJS): %.rel: ../../dev/%.c
+$(DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DISCARD_DOBJS): %.rel: ../../dev/%.c
+$(DISCARD_DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(NOBJS): %.rel: ../../dev/net/%.c
+$(NOBJS): %.o: ../../dev/net/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(AOBJS): %.rel: %.s
+$(AOBJS): %.o: %.S
 	$(CROSS_AS) $(ASOPTS) $<
 
-$(DAOBJS): %.rel: ../../dev/%.s
+$(DAOBJS): %.o: ../../dev/%.S
 	$(CROSS_AS) $(ASOPTS) $@ $<
 
 clean:
-	rm -f $(OBJS) $(JUNK)  core *~ loader.bin *.tmp fuzix
+	rm -f $(OBJS) core *~ loader.bin *.tmp fuzix
 
-loader.bin: loader.s
-	sdasz80 -o loader.s
-	sdldz80 -i loader.rel
-	makebin -s 65536 loader.ihx loader.tmp
+loader.bin: loader.S
+	fcc -mz80 -c loader.S
+	ldz80 -b loader.o -o loader.tmp
 	dd if=loader.tmp bs=256 skip=250 of=loader2.tmp
 	dd if=loader2.tmp bs=1536 conv=sync of=loader.bin count=1
 
 image: loader.bin
-	# Kernel below E800
-	dd if=../../fuzix.bin of=base.tmp bs=59392 count=1
-	# Kernel above F600
-	dd if=../../fuzix.bin of=top.tmp bs=62976 skip=1 count=1
-	# Pack the pieces together
-	cat base.tmp top.tmp >fuzix
+	$(CROSS_LD) -b -S 0x0100 -f SsBDCLbX -o ../../fuzix.bin \
+	crt0.o commonmem.o smallz80.o ../../start.o \
+	../../version.o ../../cpu-z80u/lowlevel-z80u.o \
+	../../usermem.o tricks.o main.o discard.o devrtc.o \
+	../../timer.o ../../kdata.o devices.o ../../devio.o \
+	../../filesys.o ../../blk512.o ../../process.o \
+	../../inode.o ../../syscall_exec.o ../../syscall_exec16.o \
+	../../syscall_fs.o ../../syscall_fs2.o ../../syscall_fs3.o \
+	../../syscall_proc.o ../../syscall_other.o ../../syscall_net.o \
+	../../network.o ../../tty.o ../../mm.o ../../mm/memalloc_none.o \
+	../../swap.o ../../mm/bankfixed.o ../../devsys.o \
+	devtty.o ../../dev/tinydisk.o ../../dev/tinydisk_discard.o \
+	../../dev/tinyide.o ../../dev/tinyide_discard.o ide.o \
+	/opt/fcc/lib/z80/libz80.a -m fuzix.tmpmap
+	perl -lpe '$$_=hex' fuzix.tmpmap | paste -d" " - fuzix.tmpmap  |  sort -n |  cut -d" " -f 2- >../../fuzix.map
 
 IMAGES = $(FUZIX_ROOT)/Images/$(TARGET)
 
@@ -75,7 +80,7 @@ diskimage:
 	# Add the file system
 	dd if=$(IMAGES)/filesys8.img of=$(IMAGES)/disk.img bs=512 seek=2048 conv=notrunc
 	# Add the kernel
-	dd if=fuzix of=$(IMAGES)/disk.img bs=512 seek=3 conv=notrunc
+	dd if=../../fuzix.bin of=$(IMAGES)/disk.img bs=512 seek=3 conv=notrunc
 	# Add the bootstrap
 	dd if=loader.bin of=$(IMAGES)/disk.img conv=notrunc
 	# Put the partition bits in

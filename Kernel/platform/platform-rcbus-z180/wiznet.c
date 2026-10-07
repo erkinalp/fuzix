@@ -3,6 +3,8 @@
 #include <tinysd.h>
 /*
  *	Drive a WizNet 5200 or 5500 over SPI
+ *
+ *	We really ought to do more of this in asm for speed
  */
 
 #ifdef CONFIG_NET_WIZNET
@@ -16,7 +18,7 @@
 #define W_WRITE	0x80
 
 /* We can optimize this lot later when it works nicely */
-static void spi_transaction(uint16_t off,
+static void spi_trans(uint16_t off,
 	uint8_t *out, uint16_t outlen, uint8_t *in, uint16_t inlen)
 {
 	irqflags_t irq = di();
@@ -31,7 +33,7 @@ static void spi_transaction(uint16_t off,
 	} else {
 		spi_send(inlen >> 8);
 		spi_send(inlen);
-		
+
 		while(inlen--)
 			*in++ = spi_recv();
 	}
@@ -39,7 +41,7 @@ static void spi_transaction(uint16_t off,
 	irqrestore(irq);
 }
 
-static void spi_transaction_u(uint16_t off,
+static void spi_trans_u(uint16_t off,
 	uint8_t *out, uint16_t outlen, uint8_t *in, uint16_t inlen)
 {
 	irqflags_t irq = di();
@@ -54,7 +56,7 @@ static void spi_transaction_u(uint16_t off,
 	} else {
 		spi_send(inlen >> 8);
 		spi_send(inlen);
-		
+
 		while(inlen--)
 			_uputc(spi_recv(), in++);
 	}
@@ -65,71 +67,71 @@ static void spi_transaction_u(uint16_t off,
 uint8_t w5x00_readcb(uint16_t off)
 {
 	uint8_t r;
-	spi_transaction(off, NULL, 0, &r, 1);
+	spi_trans(off, NULL, 0, &r, 1);
 	return r;
 }
 
 uint8_t w5x00_readsb(uint8_t s, uint16_t off)
 {
 	uint8_t r;
-	spi_transaction((s << 8) + off, NULL, 0, &r, 1);
+	spi_trans((s << 8) + off, NULL, 0, &r, 1);
 	return r;
 }
 
 uint16_t w5x00_readcw(uint16_t off)
 {
 	uint16_t r;
-	spi_transaction(off, NULL, 0, &r, 2);
+	spi_trans(off, NULL, 0, (uint8_t *)&r, 2);
 	return ntohs(r);
 }
 
 uint16_t w5x00_readsw(uint8_t s, uint16_t off)
 {
 	uint16_t r;
-	spi_transaction((s << 8) + off, NULL, 0, &r, 2);
+	spi_trans((s << 8) + off, NULL, 0, (uint8_t *)&r, 2);
 	return ntohs(r);
 }
 
 void w5x00_bread(uint16_t bank, uint16_t off, void *pv, uint16_t n)
 {
-	spi_transaction(bank + off, NULL, 0, pv, n);
+	spi_trans(bank + off, NULL, 0, pv, n);
 }
 
 void w5x00_breadu(uint16_t bank, uint16_t off, void *pv, uint16_t n)
 {
-	spi_transaction_u(bank + off, NULL, 0, pv, n);
+	spi_trans_u(bank + off, NULL, 0, pv, n);
 }
 
 void w5x00_writecb(uint16_t off, uint8_t n)
 {
-	spi_transaction(off, &n, 1, NULL, 0); 
+	spi_trans(off, &n, 1, NULL, 0);
 }
 
 void w5x00_writesb(uint8_t sock, uint16_t off, uint8_t n)
 {
-	spi_transaction((sock << 8) + off, &n, 1, NULL, 0);
+	spi_trans((sock << 8) + off, &n, 1, NULL, 0);
 }
 
 void w5x00_writecw(uint16_t off, uint16_t n)
 {
 	n = ntohs(n);
-	spi_transaction(off, &n, 2, NULL, 0); 
+	spi_trans(off, &n, 2, NULL, 0);
 }
 
 void w5x00_writesw(uint8_t sock, uint16_t off, uint16_t n)
 {
 	n = ntohs(n);
-	spi_transaction((sock << 8) + off, &n, 2, NULL, 0); 
+	spi_trans((sock << 8) + off, &n, 2, NULL, 0);
 }
 
 void w5x00_bwrite(uint16_t bank, uint16_t off, void *pv, uint16_t n)
 {
-	spi_transaction(bank + off, pv, n, NULL, 0);
+	spi_trans(bank + off, pv, n, NULL, 0);
 }
 
 void w5x00_bwriteu(uint16_t bank, uint16_t off, void *pv, uint16_t n)
 {
-	spi_transaction_u(bank + off, pv, n, NULL, 0);
+	spi_trans_u(bank + off, pv, n, NULL, 0);
 }
 
 void w5x00_setup(void)
@@ -177,7 +179,7 @@ static void spi_recv_wrap(uint8_t *buf) {
 	*buf = spi_recv();
 }
 
-static void spi_transaction(uint8_t ctrl, uint16_t off, uint8_t *out,
+static void spi_trans(uint8_t ctrl, uint16_t off, uint8_t *out,
 	uint16_t outlen, uint8_t *in, uint16_t inlen)
 {
 	irqflags_t irq = di();
@@ -190,7 +192,7 @@ static void spi_transaction(uint8_t ctrl, uint16_t off, uint8_t *out,
 	irqrestore(irq);
 }
 
-static void spi_transaction_u(uint8_t ctrl, uint16_t off, uint8_t *out,
+static void spi_trans_u(uint8_t ctrl, uint16_t off, uint8_t *out,
 	uint16_t outlen, uint8_t *in, uint16_t inlen)
 {
 	irqflags_t irq = di();
@@ -205,7 +207,7 @@ static void spi_transaction_u(uint8_t ctrl, uint16_t off, uint8_t *out,
 
 #else
 /* We can optimize this lot later when it works nicely */
-static void spi_transaction(uint8_t ctrl, uint16_t off,
+static void spi_trans(uint8_t ctrl, uint16_t off,
 	uint8_t *out, uint16_t outlen, uint8_t *in, uint16_t inlen)
 {
 	irqflags_t irq = di();
@@ -221,7 +223,7 @@ static void spi_transaction(uint8_t ctrl, uint16_t off,
 	irqrestore(irq);
 }
 
-static void spi_transaction_u(uint8_t ctrl, uint16_t off,
+static void spi_trans_u(uint8_t ctrl, uint16_t off,
 	uint8_t *out, uint16_t outlen, uint8_t *in, uint16_t inlen)
 {
 	irqflags_t irq = di();
@@ -241,71 +243,71 @@ static void spi_transaction_u(uint8_t ctrl, uint16_t off,
 uint8_t w5x00_readcb(uint16_t off)
 {
 	uint8_t r;
-	spi_transaction(1, off, NULL, 0, &r, 1);
+	spi_trans(1, off, NULL, 0, &r, 1);
 	return r;
 }
 
 uint8_t w5x00_readsb(uint8_t s, uint16_t off)
 {
 	uint8_t r;
-	spi_transaction(SOCK2BANK_C(s)| 1, off, NULL, 0, &r, 1);
+	spi_trans(SOCK2BANK_C(s)| 1, off, NULL, 0, &r, 1);
 	return r;
 }
 
 uint16_t w5x00_readcw(uint16_t off)
 {
 	uint16_t r;
-	spi_transaction(2, off, NULL, 0, &r, 2);
+	spi_trans(2, off, NULL, 0, (uint8_t *)&r, 2);
 	return ntohs(r);
 }
 
 uint16_t w5x00_readsw(uint8_t s, uint16_t off)
 {
 	uint16_t r;
-	spi_transaction(SOCK2BANK_C(s)| 2, off, NULL, 0, &r, 2);
+	spi_trans(SOCK2BANK_C(s)| 2, off, NULL, 0, (uint8_t *)&r, 2);
 	return ntohs(r);
 }
 
 void w5x00_bread(uint16_t bank, uint16_t off, void *pv, uint16_t n)
 {
-	spi_transaction(bank, off, NULL, 0, pv, n);
+	spi_trans(bank, off, NULL, 0, pv, n);
 }
 
 void w5x00_breadu(uint16_t bank, uint16_t off, void *pv, uint16_t n)
 {
-	spi_transaction_u(bank, off, NULL, 0, pv, n);
+	spi_trans_u(bank, off, NULL, 0, pv, n);
 }
 
 void w5x00_writecb(uint16_t off, uint8_t n)
 {
-	spi_transaction(1 | W_WRITE, off, &n, 1, NULL, 0); 
+	spi_trans(1 | W_WRITE, off, &n, 1, NULL, 0);
 }
 
 void w5x00_writesb(uint8_t sock, uint16_t off, uint8_t n)
 {
-	spi_transaction(SOCK2BANK_C(sock) | 1 | W_WRITE, off, &n, 1, NULL, 0);
+	spi_trans(SOCK2BANK_C(sock) | 1 | W_WRITE, off, &n, 1, NULL, 0);
 }
 
 void w5x00_writecw(uint16_t off, uint16_t n)
 {
 	n = ntohs(n);
-	spi_transaction(2 | W_WRITE, off, &n, 2, NULL, 0); 
+	spi_trans(2 | W_WRITE, off, (uint8_t *)&n, 2, NULL, 0);
 }
 
 void w5x00_writesw(uint8_t sock, uint16_t off, uint16_t n)
 {
 	n = ntohs(n);
-	spi_transaction(SOCK2BANK_C(sock) | 2 | W_WRITE, off, &n, 2, NULL, 0); 
+	spi_trans(SOCK2BANK_C(sock) | 2 | W_WRITE, off, (uint8_t *) &n, 2, NULL, 0);
 }
 
 void w5x00_bwrite(uint16_t bank, uint16_t off, void *pv, uint16_t n)
 {
-	spi_transaction(bank|W_WRITE, off, pv, n, NULL, 0);
+	spi_trans(bank|W_WRITE, off, pv, n, NULL, 0);
 }
 
 void w5x00_bwriteu(uint16_t bank, uint16_t off, void *pv, uint16_t n)
 {
-	spi_transaction_u(bank|W_WRITE, off, pv, n, NULL, 0);
+	spi_trans_u(bank|W_WRITE, off, pv, n, NULL, 0);
 }
 
 void w5x00_setup(void)

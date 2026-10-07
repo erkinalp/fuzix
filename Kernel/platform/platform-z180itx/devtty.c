@@ -96,13 +96,13 @@ void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 
 	/* ASCI serial set up */
 	if (minor == 1) {
-		ASCI_CNTLA0 = cntla;
-		ASCI_CNTLB0 = cntlb;
-		ASCI_ASEXT0 &= ~0x20;
-		ASCI_ASEXT1 |= ecr;
+		out(ASCI_CNTLA0, cntla);
+		out(ASCI_CNTLB0, cntlb);
+		out(ASCI_ASEXT0, in(ASCI_ASEXT0 & ~0x20));
+		out(ASCI_ASEXT1, in(ASCI_ASEXT1) | ecr);
 	} else if (minor == 2) {
-		ASCI_CNTLA1 = cntla;
-		ASCI_CNTLB1 = cntlb;
+		out(ASCI_CNTLA1, cntla);
+		out(ASCI_CNTLB1, cntlb);
 	}
 }
 
@@ -113,20 +113,20 @@ int tty_carrier(uint_fast8_t minor)
 	return 1;
 }
 
-void tty_pollirq_asci0(void)
+void tty_pirq_asci0(void)
 {
-	while (ASCI_STAT0 & 0x80)
-		tty_inproc(1, ASCI_RDR0);
-	if (ASCI_STAT0 & 0x70)
-		ASCI_CNTLA0 &= ~0x08;
+	while (in(ASCI_STAT0) & 0x80)
+		tty_inproc(1, in(ASCI_RDR0));
+	if (in(ASCI_STAT0) & 0x70)
+		out(ASCI_CNTLA0, in(ASCI_CNTLA0) & ~0x08);
 }
 
-void tty_pollirq_asci1(void)
+void tty_pirq_asci1(void)
 {
-	while (ASCI_STAT1 & 0x80)
-		tty_inproc(2, ASCI_RDR1);
-	if (ASCI_STAT1 & 0x70)
-        	ASCI_CNTLA1 &= ~0x08;
+	while (in(ASCI_STAT1) & 0x80)
+		tty_inproc(2, in(ASCI_RDR1));
+	if (in(ASCI_STAT1) & 0x70)
+        	out(ASCI_CNTLA1, in(ASCI_CNTLA1) & ~0x08);
 }
 
 /* FIXME: we should have a proper tty buffer output queue really */
@@ -134,10 +134,10 @@ void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 {
 	switch (minor) {
 	case 1:
-		ASCI_TDR0 = c;
+		out(ASCI_TDR0, c);
 		break;
 	case 2:
-		ASCI_TDR1 = c;
+		out(ASCI_TDR1, c);
 		break;
 	}
 }
@@ -154,13 +154,13 @@ void tty_data_consumed(uint_fast8_t minor)
 
 ttyready_t tty_writeready(uint_fast8_t minor)
 {
-	uint8_t r;
+	uint8_t r = 0;
 	switch (minor) {
 	case 1:
-		r = ASCI_STAT0;
+		r = in(ASCI_STAT0);
 		break;
 	case 2:
-		r = ASCI_STAT1;
+		r = in(ASCI_STAT1);
 		break;
 	}
 	if (r & 0x02)

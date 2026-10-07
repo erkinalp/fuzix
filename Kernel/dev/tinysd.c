@@ -23,7 +23,7 @@ uint8_t tinysd_unit;
 
 static uint_fast8_t sd_spi_wait(bool want_ff)
 {
-	register unsigned int timer = set_timer_ms(500);
+	register unsigned int timer = set_timer_ms(2000);
 	register uint_fast8_t b;
 
 	do {
@@ -61,7 +61,7 @@ static int sd_send_command(uint_fast8_t cmd, uint32_t arg)
 	sd_spi_tx_byte(arg);
 #endif
 	sd_spi_tx_byte(0x01);
-#ifndef CONFIG_TD_SD_EMUBUG        
+#ifndef CONFIG_TD_SD_EMUBUG
 	sd_spi_rx_byte();
 #endif
 	n = 20;
@@ -80,6 +80,7 @@ int sd_xfer(uint_fast8_t dev, bool is_read, uint32_t lba, uint8_t * dptr)
 
 	if (sd_send_command(is_read ? CMD17 : CMD24, block))
 		goto error;
+
 	if (is_read) {
 		if (sd_spi_wait(false) != 0xFE)
 			goto error;
@@ -100,6 +101,9 @@ int sd_xfer(uint_fast8_t dev, bool is_read, uint32_t lba, uint8_t * dptr)
 	tinysd_busy = 0;
 	return 1;
 error:
+	/* Ensure the device is no longer selected */
+	sd_spi_raise_cs();
+	sd_spi_rx_byte();
 	tinysd_busy = 0;
 	return 0;
 }

@@ -2,8 +2,22 @@ CC = arm-none-eabi-gcc
 AR = arm-none-eabi-ar
 PLATFORM = armm0
 export PLATFORM
-CC_OPT = -mcpu=Cortex-M0plus -ffunction-sections -fdata-sections -fno-strict-aliasing -fomit-frame-pointer -fno-builtin -Wall -g -Os -c -I../include 
-ASM_OPT = -g
+CC_OPT = -std=c99 -mcpu=cortex-m33 -ffunction-sections -fdata-sections -fno-strict-aliasing -fomit-frame-pointer -fno-builtin -Wall -g -Os -c -I../include
+# printf understands %lld and %llX here.  It is not free - a 64-bit
+# divide is a libgcc call - but this is a 32-bit machine whose BASIC
+# integers are 64-bit, and the alternative is what happened before: a
+# second 'l' set the same flag as the first, so "%llX" did a va_arg for
+# a long against a value the caller had aligned as a long long, read the
+# padding word, and printed 0.  Silently.  That put a zero where every
+# &H constant should have been in any program translated ON the board.
+# A target that never prints a 64-bit value leaves this undefined and
+# pays nothing for it - see vfprintf.c and ltostr.c.
+CC_OPT += -DCONFIG_PRINTF_LONGLONG
+# The %e/%f/%g conversions, in printf (via fnum.c) and in scanf.  The
+# PC3 has a double-precision BASIC, an MP3 decoder and now awk; a libc
+# on it that cannot print a fraction is not worth the bytes it saves.
+CC_OPT += -DBUILD_LIBM
+ASM_OPT = -g -mcpu=cortex-m33
 # copied in from kernel tree
 KRN_HEADERS = userstructs.h
 KRN_HEADERS_SRC = $(addprefix ../../Kernel/include/,$(KRN_HEADERS))
@@ -12,6 +26,10 @@ SRC_CRT0 = crt0_$(PLATFORM).S crt0nostdio_$(PLATFORM).S
 OBJ_CRT0 = $(SRC_CRT0:.S=.o)
 SRC_ASM = setjmp_armm0.S longjmp_armm0.S helpers_armm0.S
 OBJ_ASM = $(SRC_ASM:.S=.o)
+# Double precision on the RP2350's DCP coprocessor; overrides libgcc's
+# soft-float __aeabi_d* by link order.  Regenerate from pico-sdk with
+# dcp-sync.sh.
+OBJ_DCP = dcp_double.o dcp_conv_m33.o
 SRC_C =  __argv.c abort.c accept.c aes256.c asctime.c asctime_r.c assert.c atexit.c
 SRC_C += basename.c bcmp.c bcopy.c bind.c bsearch.c bzero.c
 SRC_C += calloc.c cfree.c clock.c closedir.c
@@ -32,22 +50,40 @@ SRC_C += inet_addr.c inet_aton.c inet_network.c inet_ntoa.c inet_ntop.c inet_pto
 SRC_C += index.c initgroups.c isatty.c killpg.c
 SRC_C += libintl.c
 SRC_C += listen.c localtim.c localtim_r.c lseek.c lsearch.c lstat.c ltoa.c ltostr.c
-SRC_C += malloc.c mkfifo.c mkstemps.c mntent.c nanosleep.c
+SRC_C += malloc.c mkdtemps.c mkfifo.c mkstemps.c mktime.c mntent.c nanosleep.c nftw.c
 SRC_C += opendir.c opendir_r.c pause.c perror.c
 SRC_C += popen.c printf.c putenv.c putchar.c putpwent.c putw.c pwent.c qsort.c
-SRC_C += raise.c rand.c readdir.c readlink.c realloc.c recvfrom.c regerror.c
+SRC_C += raise.c rand.c readdir.c readlink.c realloc.c recv.c recvfrom.c regerror.c
+# The drand48 family: stdlib.h has declared all seven of these for as
+# long as it has existed and neither file was ever compiled, so any
+# caller got an undefined reference at link time.  lrand48.c carries
+# srand48/lrand48/nrand48/mrand48/jrand48/seed48/lcong48.
+#
+# Worth having rather than pointing callers at rand(): RAND_MAX here is
+# 32767, so rand() gives 32768 distinct values, where lrand48() gives
+# the full [0, 2^31-1].  awk's rand() divides by 2^31 and would have
+# been visibly coarse.
+SRC_C += drand48.c lrand48.c
+# fnum.c is new: vfprintf.c has called _fnum since it was written and
+# nothing ever defined it, so the %e/%f/%g cases sat behind
+# BUILD_LIBM, which no armm0 build defined - and a %f on this machine
+# printed the letter f.  With both, printf and scanf handle floats.
+SRC_C += fnum.c
 SRC_C += regsub.c remount.c remove.c rewind.c rewinddir.c rindex.c rootmntent.c
-SRC_C += seekdir.c sendto.c  setbuffer.c setenv.c
+SRC_C += seekdir.c send.c sendto.c  setbuffer.c setenv.c
 SRC_C += setlocale.c setvbuf.c settimeofday.c sgetl.c sigdisp.c
 SRC_C += sleep.c socket.c sprintf.c
 SRC_C += sputl.c stat.c statvfs.c stdio0.c stime.c
-SRC_C += strcasecmp.c strcasestr.c strdup.c stricmp.c strlcpy.c strncasecmp.c
-SRC_C += strnlen.c strnicmp.c strsep.c strxfrm.c strcoll.c strsignal.c
+# strcasecmp and friends stay ours: newlib's want _ctype_, strdup wants
+# _impure_ptr and _malloc_r, and dragging newlib's reentrancy machinery
+# in for them would cost far more than the routines are worth.
+SRC_C += strcasecmp.c strcasestr.c strdup.c stricmp.c strncasecmp.c
+SRC_C += strnicmp.c strsep.c strcoll.c strsignal.c
 SRC_C += strtod.c strtol.c swab.c swapon.c system.c
 SRC_C += telldir.c time.c tmpfile.c tmpnam.c ttyname.c
 SRC_C += tzset.c umount.c ungetc.c usleep.c utent.c utimes.c utsname.c
 SRC_C += vfork.c vfprintf.c vprintf.c wait.c xitoa.c pathconf.c
-SRC_C += gethostname.c sysconf.c confstr.c memccpy.c getpass.c
+SRC_C += gethostname.c sysconf.c confstr.c getpass.c
 # ctype
 SRC_C += isalnum.c isalpha.c isascii.c isblank.c iscntrl.c isdigit.c
 SRC_C += isgraph.c islower.c isprint.c ispunct.c isspace.c isupper.c
@@ -59,11 +95,13 @@ SRC_C += cfmakeraw.c cfspeed.c revoke.c
 SRC_C += fscanf.c scanf.c sscanf.c vfscanf.c vscanf.c vsscanf.c
 # Seems to give the compiler a hard time
 SRC_C += regexp.c
-# Pieces we inherit in other cases from the compiler library instead
-SRC_C += strcpy.c strlen.c abs.c atof.c atoi.c atol.c labs.c
-SRC_C += strcat.c strchr.c strcmp.c strcspn.c strncat.c strncmp.c
-SRC_C += strncpy.c strpbrk.c strrchr.c strspn.c strstr.c strtok.c strtok_r.c
-SRC_C += memchr.c memcmp.c memcpy.c memset.c memmove.c
+# Pieces we inherit in other cases from the compiler library instead.
+# The block and string routines come from newlib instead - OBJ_NEWLIB
+# below - so what is left here is the ones newlib cannot give us: strstr
+# (1488 bytes of it, against a few dozen here, for a function nothing
+# hot calls) and the strtok pair, whose newlib form wants _impure_ptr.
+SRC_C += abs.c atof.c atoi.c atol.c labs.c
+SRC_C += strstr.c strtok.c strtok_r.c
 
 SRC_CT += termcap.c tgetent.c
 
@@ -80,8 +118,10 @@ SRC_LM += ldexpf.c lgammaf.c lgammaf_r.c logf.c log2f.c log10f.c logbf.c
 SRC_LM += lrintf.c lroundf.c
 SRC_LM += modff.c nearbyintf.c nextafterf.c powf.c
 SRC_LM += remainderf.c remquof.c rintf.c roundf.c
+SRC_LM += trunc.c truncf.c
+SRC_LM += cos.c tan.c __rem_pio2.c __rem_pio2_large.c
 SRC_LM += scalbnf.c scalbln.c
-SRC_LM += sinf.c sincosf.c sinhf.c
+SRC_LM += sinf.c sincosf.c sinhf.c coshf.c tanhf.c
 SRC_LM += sqrtf.c tgammaf.c
 SRC_LM += __expo2f.c __float_bits.c __fpclassifyf.c __log1pf.c __signgam.c
 SRC_LM += mathhelper.c remainder.c
@@ -94,7 +134,7 @@ SRC_LM += lrint.c lround.c
 SRC_LM += modf.c nearbyint.c pow.c
 SRC_LM += remquo.c rint.c round.c
 SRC_LM += scalbn.c
-SRC_LM += sin.c sincos.c sinh.c
+SRC_LM += sin.c sincos.c sinh.c cosh.c tanh.c
 SRC_LM += sqrt.c tgamma.c
 SRC_LM += __expo2.c __double_bits.c __fpclassify.c __log1p.c
 SRC_LM += __sin.c __cos.c __tan.c __sindf.c __cosdf.c __tandf.c
@@ -105,12 +145,58 @@ OBJ_CT = $(SRC_CT:.c=.o)
 OBJ_RL = $(SRC_RL:.c=.o)
 OBJ_LM = $(SRC_LM:.c=.o)
 OBJ_HARD = $(SRC_HARD:.c=.o)
-OBJ_ALL = $(OBJ_ASM) $(OBJ_C) $(OBJ_LM) $(OBJ_HARD) $(OBJ_RL)
+# The block routines come from the toolchain's own newlib: tuned ARM
+# assembly, and on this chip that is worth having.  Measured on the PC3
+# with a SUB that has two LOCAL strings, 20,000 calls: the generic byte
+# loops in this directory cost 13.25us a call, word-wise C 3.77us, and
+# these 3.34us.  Each object defines exactly one symbol and has no
+# undefined references, so taking them is a substitution and nothing
+# more.
+#
+# Extracted at build time rather than committed, so they always match
+# the multilib gcc chooses for this target.  If the toolchain has no
+# libc.a the extraction fails and the link says "undefined memcpy",
+# which is the right kind of loud.
+NEWLIB_LIBC := $(shell $(CC) -mcpu=cortex-m33 -print-file-name=libc.a)
+
+# Everything newlib can give us without dragging its innards along.
+# The test applied to each: does the object define the routine, and does
+# it reference nothing outside this list?  That rules out strcasecmp and
+# strverscmp (_ctype_), strdup (_impure_ptr, _malloc_r), strerror and
+# the strto* family (__errno, reentrancy), and strsep (__strtok_r).
+#
+# memchr and strlen live in the "-stub" objects; the plainly named
+# libc_a-memchr.o and libc_a-strlen.o are empty, which is worth knowing
+# before wondering why the link still finds the byte loop.
+#
+# strcat needs strcpy and strrchr needs strchr - both are in the list.
+OBJ_NEWLIB = libc_a-memcpy.o libc_a-memset.o libc_a-memmove.o \
+	     libc_a-memcmp.o libc_a-memccpy.o libc_a-memchr-stub.o \
+	     libc_a-strlen-stub.o libc_a-strcmp.o libc_a-strcpy.o \
+	     libc_a-strcat.o libc_a-strchr.o libc_a-strrchr.o \
+	     libc_a-strncmp.o libc_a-strncpy.o libc_a-strncat.o \
+	     libc_a-strcspn.o libc_a-strpbrk.o libc_a-strspn.o \
+	     libc_a-strnlen.o libc_a-strlcpy.o libc_a-strlcat.o \
+	     libc_a-strxfrm.o
+#
+# strlcat is in that list because strlcpy.c defined BOTH of them, so
+# dropping the file from SRC_C to take newlib's strlcpy took strlcat
+# with it and the userland relink stopped on an undefined reference.
+# Removing a source file removes every symbol in it, not only the one
+# being replaced - check with nm before assuming otherwise.
+
+OBJ_ALL = $(OBJ_ASM) $(OBJ_DCP) $(OBJ_C) $(OBJ_LM) $(OBJ_HARD) $(OBJ_RL) \
+	  $(OBJ_NEWLIB)
 
 all: syslib$(PLATFORM).lib liberror.txt $(OBJ_CRT0) curses$(PLATFORM).lib \
      readline$(PLATFORM).lib termcap$(PLATFORM).lib m$(PLATFORM).lib
 
-$(OBJ_ALL): $(KRN_HEADERS_COPY)
+# Below "all", deliberately: a rule placed above it becomes make's
+# default target, and "make" then extracts one object and stops.
+$(OBJ_NEWLIB):
+	$(AR) x $(NEWLIB_LIBC) $@
+
+$(OBJ_C) $(OBJ_ASM): $(KRN_HEADERS_COPY)
 
 $(KRN_HEADERS_COPY): $(KRN_HEADERS_SRC)
 	cp ../../Kernel/include/$(notdir $@) $@
@@ -125,6 +211,12 @@ syscall.l: fuzix$(PLATFORM)/syslib.l
 
 syslib$(PLATFORM).lib: syscall.l libc.l
 	cat libc.l syscall.l >syslib.l
+#	Built from scratch: "ar rc" replaces the members it is given and
+#	leaves every other one alone, so a routine that moves to a
+#	different object file stays in the archive under its old name and
+#	wins the link.  Swapping memcpy.c for a newlib object hit exactly
+#	that, and the stale byte loop kept being linked.
+	rm -f syslib$(PLATFORM).lib
 	$(AR) rc syslib$(PLATFORM).lib $$(cat syslib.l)
 	ln -sf syslib$(PLATFORM).lib libc$(PLATFORM).a
 
@@ -162,6 +254,12 @@ $(OBJ_ASM):%.o: %.s
 
 $(OBJ_CRT0):%.o: %.S
 	$(CC) $(ASM_OPT) -c -o $@ $(@:.o=.S)
+
+dcp_double.o: dcp_double.S dcp_prelude.inc.S dcp_instr.inc.S dcp_canned.inc.S
+	$(CC) $(ASM_OPT) -c -o $@ dcp_double.S
+
+dcp_conv_m33.o: dcp_conv_m33.S dcp_prelude.inc.S dcp_instr.inc.S dcp_canned.inc.S
+	$(CC) $(ASM_OPT) -c -o $@ dcp_conv_m33.S
 
 $(OBJ_C):%.o: %.c
 	$(CC) $(CC_OPT) $(@:.o=.c)

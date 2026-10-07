@@ -53,7 +53,10 @@ extern void sdc_write_data(uint8_t *p);
 */
 typedef void (*sdc_transfer_function_t)( unsigned char *addr);
 
-
+/* At least a 16uS delay.. the call return will handle this */
+static void delay16us(void)
+{
+}
 
 static int sdc_xfer(uint8_t drive, bool is_read, uint32_t lba, uint8_t *dptr)
 {
@@ -84,8 +87,7 @@ static int sdc_xfer(uint8_t drive, bool is_read, uint32_t lba, uint8_t *dptr)
 		sdc_reg_param2 = ptr[1];
 		sdc_reg_param3 = ptr[2];
 		sdc_reg_cmd= cmd;
-		asm("\texg x,x\n");     /* delay 16us minimum */
-		asm("\texg x,x\n");
+		delay16us();
 		/* wait till SDC is ready */
 		do {
 			t=sdc_reg_stat;
@@ -110,7 +112,8 @@ static int sdc_xfer(uint8_t drive, bool is_read, uint32_t lba, uint8_t *dptr)
 	return 0;
 }
 
-__attribute__((section(".discard")))
+/* FIXME:needs its own file -- below this point */
+
 /* Returns true if SDC hardware seems to exist */
 
 bool devsdc_exist(void)
@@ -124,15 +127,14 @@ bool devsdc_exist(void)
 	else return 0;
 }
 
-__attribute__((section(".discard")))
 /* Call this to initialize SDC/blkdev interface */
 void devsdc_init(void)
 {
 	if (devsdc_exist()) {
 		kputs("SDC: ");
 	    	/* turn on uber-secret SDC LBA mode*/
-		sdc_reg_ctl = 0x43; 
-		if ((td_register(0, sdc_xfer, td_ioctl_none, 1) & 
+		sdc_reg_ctl = 0x43;
+		if ((td_register(0, sdc_xfer, td_ioctl_none, 1) &
 			td_register(1, sdc_xfer, td_ioctl_none, 1)) == 0xFF)
 			kputs("Not found.\n");
 		else

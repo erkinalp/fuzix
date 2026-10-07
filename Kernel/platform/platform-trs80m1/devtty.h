@@ -4,8 +4,8 @@
 extern void tty_interrupt(void);
 extern void tty_poll(void);
 extern void kbd_interrupt(void);
-extern int trstty_open(uint8_t minor, uint16_t flags);
-extern int trstty_close(uint8_t minor);
+extern int trstty_open(uint_fast8_t minor, uint16_t flags);
+extern int trstty_close(uint_fast8_t minor);
 extern void trstty_probe(void);
 extern void vtbuf_init(void);
 

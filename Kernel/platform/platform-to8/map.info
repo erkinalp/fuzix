@@ -1,2 +1,4 @@
-reserve E000-FFFF
-reserve 6000-60FF
+# Fixed ROM space
+R E000-FFFF
+# Monitor variable space
+M 6000-60FF

@@ -533,3 +533,114 @@ is_z80:
 	ld l, 1		; 8080 family
 	ld (_sys_cpu),hl	; Write cpu and cpu feat
 	ret
+
+
+#ifdef BANKED_Z80
+	.overlay1
+#else
+	.code
+#endif
+
+;
+;	Private bank correct helpers
+;
+;
+		.export _memcpy
+		.code
+_memcpy:
+		push	bc
+#ifdef BANKED_Z80
+		ld	hl,11
+#else
+		ld	hl,9
+#endif
+		add	hl,sp
+		ld	b,(hl)	; Count
+		dec	hl
+		ld	c,(hl)
+		dec	hl
+		ld	d,(hl)	; Source
+		dec	hl
+		ld	e,(hl)
+		dec	hl
+		ld	a,(hl)	; Destination
+		dec	hl
+		ld	l,(hl)
+		ld	h,a
+
+		ld	a,b
+		or	c
+		jr	z,done
+
+		push	hl
+		ex	de,hl
+		ldir
+		pop	hl
+done:
+		pop	bc
+		ret
+
+;
+;	Memset
+;
+;	TODO: rewrite into Z80 style with a set and copy
+;
+		.export _memset
+		.code
+_memset:
+		push	bc
+#ifdef BANKED_Z80
+		ld	hl,6		; Allow for the push of BC
+#else
+		ld	hl,4		; Allow for the push of BC
+#endif
+		add	hl,sp
+		ld	e,(hl)
+		inc	hl
+		ld	d,(hl)		; Pointer
+		push	de		; Return is the passed pointer
+		inc	hl
+		ld	a,(hl)		; fill byte
+		inc	hl		; skip fill high
+		inc	hl
+		ld	c,(hl)
+		inc	hl
+		ld	b,(hl)		; length into BC
+
+		ld	l,a		; We need to free up A for the loop check
+		ex	de,hl		; now have HL as the pointer and E as the fill byte
+		jp	loopin
+
+loop:
+		ld	(hl),e
+		inc	hl
+		dec	bc
+loopin:
+		ld	a,b
+		or	c
+		jr	nz,loop
+		pop	hl		; Address passed in
+		pop	bc		; Restore BC
+		ret
+
+		.export _strlen
+		.code
+_strlen:
+#ifdef BANKED_Z80
+		ld	hl,4		; Allow for the push of BC
+#else
+		ld	hl,2		; Allow for the push of BC
+#endif
+		add	hl,sp
+		ld	e,(hl)
+		inc	hl
+		ld	d,(hl)		; Pointer
+		ex	de,hl
+		xor	a
+		ld	de, 0xFFFF
+sloop:		inc	de
+		cp	(hl)
+		inc	hl
+		jr	nz, sloop
+		ex	de,hl
+		ret

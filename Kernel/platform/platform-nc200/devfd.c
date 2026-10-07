@@ -9,7 +9,6 @@ static timer_t spindown_timer = 0;
 
 int devfd_open(uint_fast8_t minor, uint16_t flag)
 {
-    flag;
     if(minor != 0) {
         udata.u_error = ENODEV;
         return -1;
@@ -82,8 +81,6 @@ static void fd_seek(uint16_t lba)
 /* Select a drive and ensure the motor is on. */
 static void fd_select(int minor)
 {
-    (void)minor;
-
     mod_control(0x00, 0x20); /* motor on (active low) */
     nudge_timer();
 }
@@ -148,13 +145,11 @@ static int devfd_transfer(bool is_read, uint_fast8_t is_raw)
 
 int devfd_read(uint_fast8_t minor, uint_fast8_t is_raw, uint_fast8_t flag)
 {
-    flag;minor;
     return devfd_transfer(true, is_raw);
 }
 
 int devfd_write(uint_fast8_t minor, uint_fast8_t is_raw, uint_fast8_t flag)
 {
-    flag;minor;
     return devfd_transfer(false, is_raw);
 }
 

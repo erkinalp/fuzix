@@ -47,19 +47,18 @@
 /* Reclaim the discard space for buffers */
 #define CONFIG_DYNAMIC_BUFPOOL
 
-#define MAX_BLKDEV  	2	/* 2 IDE drives */
-#define CONFIG_IDE              /* enable if IDE interface present */
-#define CONFIG_SD
-#define SD_DRIVE_COUNT	1
+#define CONFIG_TD_NUM 	2	/* 2 IDE drives */
+#define CONFIG_TD_IDE              /* enable if IDE interface present */
+#define CONFIG_TINYIDE_8BIT
+#define IDE_IS_8BIT(x)	1
+#define CONFIG_TD_SD
+#define TD_SD_NUM	1
 
 #define TICKSPERSEC	10   /* Ticks per second */
 
 #define PROGBASE	0x0000  /* also data base */
 #define PROGLOAD	0x0100  /* also data base */
 #define PROGTOP		0xF000  /* Top of program */
-
-#define DP_BASE		0x0000
-#define DP_SIZE		0x0100
 
 #define TTY_INIT_BAUD	B38400
 #define BOOT_TTY	(512 + 1)   /* Set this to default device for stdio, stderr */

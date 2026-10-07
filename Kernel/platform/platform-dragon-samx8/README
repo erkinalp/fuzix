@@ -1,0 +1,88 @@
+This port is for the Dragon 64 with SAMx8 memory expansion.  It uses the 16K
+banks memory model with flexible mapping.
+
+The SAMx8 has COMMON flags to fix either or both of the top 4K regions in place
+as being from page 31, so we're using the very top one for the common area.
+
+Video RAM has been squeezed into the lower addresses of the same page, so
+bank16k can be told that all of pages 4--30 are available for user processes.
+
+The CPU vectors at $FFFx are taken from the same page in COMMON mode, so while
+they're read-only at that address, they can be modified by mapping page 31
+elsewhere.
+
+RAM top set to F000.  Video mapped to $C000+ while modifying.
+
+It's expected that a boot loader will position the kernel within pages 0--3.
+One of the first things the start code does is copy the common area from page 3
+to page 31.  After initialisation, page 3 is added to the pool for user
+processes.
+
+Like the MOOH and the GIME, the SAMx8 has two tasks, so data copying is mostly
+restricted to stashing the udata per-process (hidden "behind" the real udata in
+process's top page).  The kernel runs from task 1, userspace from task 0.
+
+Much of the code started off in the MOOH (Tormod Volden) and CoCo 3 (Brett
+Gordon) platforms.
+
+TTY allocation:
+
+tty1 is 256x192 RG6 bitmaps graphics mode using 8x8 font
+tty2 is 32x16 SG4 text mode
+tty3, tty4 reserved
+tty5 is 6551 ACIA (tested working @ 9600 baud)
+tty6, tty7 for DriveWire (untested)
+
+
+RUNNING ON REAL HARDWARE
+========================
+
+You'll need a Dragon 64 with SAMx8 fitted, and a CoCoSDC.
+
+# Build the 'sdc' subtarget with CoCoSDC support
+$ make TARGET=dragon-samx8 SUBTARGET=sdc diskimage
+
+Copy "Images/dragon-samx8/fuzix-sdc.img" to your SD card, possibly as
+"FUZIX.VHD".
+
+On your Dragon, mount the VHD file (assuming Pere Serrat's DOSplus extender):
+
+SDRIVE1"FUZIX.VHD"
+
+Then type BOOT.  Type 'hda1' at the boot prompt.
+
+Swap appears to work.
+
+
+RUNNING UNDER EMULATION
+=======================
+
+We build a bootstrap floppy image which contains a bootloader and the kernel.
+Once the kernel starts, it has support to mount the real Fuzix image over
+DriveWire.
+
+# Build the 'emu' subtarget with DriveWire support
+$ make TARGET=dragon-samx8 SUBTARGET=emu diskimage
+
+# Serve the HD image over DriveWire.  You can use a more user-friendly
+# DriveWire server if you like.
+$ socat TCP4-LISTEN:65504,nodelay,fork,bind=127.0.0.1 SYSTEM:"lwwire drive=0\\,Images/dragon-samx8/filesys.img 2>/dev/null" &
+
+# Run XRoar as a Dragon 64 with SAMx8 fitted, with a "Becker port" enabled
+# DragonDOS cartridge.
+$ xroar -m dragon64 -machine-opt sam=samx8 -cart dragondos -cart-becker Images/dragon-samx8/fuzix-ddos.DSK
+
+XRoar should automatically type "BOOT" to boot off the mounted floppy.  Type
+'dw' at the boot prompt.  Remember when you finish that you have a socat job
+running in the background.
+
+Swap will not work in this configuration, as the swap partition is not visible
+over DriveWire.
+
+
+COMPRESSING THE KERNEL
+======================
+
+Completely optional, but if you have dzip installed, appending
+FZLOAD09_FORMAT=dzip to the make command in the examples above will compress
+the kernel, which loads faster.

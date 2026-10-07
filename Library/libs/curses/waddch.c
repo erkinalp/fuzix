@@ -66,7 +66,7 @@ int waddch(WINDOW *win, int c)
 		if (waddch(win, '^') == ERR) return(ERR);
 		return(waddch(win, c + '@'));
 	}
-	ch |= (win->_attrs & ATR_MSK);
+	ch = c | (win->_attrs & ATR_MSK);
 	if (win->_line[y][x] != ch) {	/* only if data change */
 		if (win->_minchng[y] == _NO_CHANGE)
 			win->_minchng[y] = win->_maxchng[y] = x;

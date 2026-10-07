@@ -1,0 +1,21 @@
+Initial sketch to see if TMS7000 is doable
+
+The experimental board set up has
+
+0000-00FF	Onboard registers (00-7F only)
+0100-01FF	I/O. Onboard and external (CF is at 0x90)
+0200-04FF	Used for loading then replaced with udata/stacks
+0500-3FFF	Common space (actually bankable 0200-3FFF)
+4000-FFFF	Banked space
+
+The wiring is a 4bit x 2 mux as with the 8085 but it's fed from port A.
+Port A starts at 0xFF but this doesn't matter much as our ROM can configure
+it anyway. This does mean a 70x1 part will not work.
+
+The low 16K and the upper 48K each use a nybble of port A
+
+ROM enable maps the ROM over stuff and is driven by the OUT1 pin on the
+16x50A.
+
+It's not a useful setup. It'll start and go through some early boot up but
+it's too slow to run Fuzix.

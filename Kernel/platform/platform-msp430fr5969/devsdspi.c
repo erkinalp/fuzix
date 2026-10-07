@@ -49,7 +49,7 @@ uint8_t sd_spi_receive_byte(void)
 }
 
 
-bool sd_spi_receive_sector(void)
+bool sd_spi_rxsect(void)
 {
 	uint8_t* addr = blk_op.addr;
 	uint8_t* endaddr = addr + 512;
@@ -59,7 +59,7 @@ bool sd_spi_receive_sector(void)
 	return 0;
 }
 
-bool sd_spi_transmit_sector(void)
+bool sd_spi_txsect(void)
 {
 	uint8_t* addr = blk_op.addr;
 	uint8_t* endaddr = addr + 512;

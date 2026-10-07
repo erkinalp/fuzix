@@ -9,16 +9,23 @@ const unsigned char __mon_lengths[2][12] = {
 #define SECS_PER_DAY	86400
 #define SECS_PER_HOUR	3600
 
+#define DAYS_TO_1990	7305
+#define DAYS_TO_2010	14610
+
 /* Do the basic computation and turn days/remainder into a tz */
 void __compute_tm(struct tm *tmbuf, long days, long rem)
 {
 	register unsigned int y;
-	const unsigned char *ip;
+	register uint16_t tmp;
+	const register unsigned char *ip;
 
 	tmbuf->tm_hour = rem / SECS_PER_HOUR;
-	rem %= SECS_PER_HOUR;
-	tmbuf->tm_min = rem / 60;
-	tmbuf->tm_sec = rem % 60;
+
+	/* Use a short type as rem % 3600 will fit a smaller type
+	   and save us two 32bit divides */
+	tmp = rem % SECS_PER_HOUR;
+	tmbuf->tm_min = tmp / 60;
+	tmbuf->tm_sec = tmp % 60;
 
 	/* January 1, 1970 was a Thursday.  */
 	tmbuf->tm_wday = (4 + days) % 7;
@@ -26,8 +33,14 @@ void __compute_tm(struct tm *tmbuf, long days, long rem)
 		tmbuf->tm_wday += 7;
 	y = 1970;
 
-	/* TODO: should we do a couple of straight checks for say 2000
-		 and 2020 base ? */
+	if (days >= DAYS_TO_2010) {
+		y = 2010;
+		days -= DAYS_TO_2010;
+	} else if (days >= DAYS_TO_1990) {
+		y = 1990;
+		days -= DAYS_TO_1990;
+	}
+
 	while (days >= (rem = __isleap(y) ? 366 : 365)) {
 		++y;
 		days -= rem;
@@ -36,14 +49,20 @@ void __compute_tm(struct tm *tmbuf, long days, long rem)
 		--y;
 		days += __isleap(y) ? 366 : 365;
 	}
+
+	/* Days is now in the 0-366 range */
+	tmp = days;
 	tmbuf->tm_year = y - 1900;
-	tmbuf->tm_yday = days;
+	tmbuf->tm_yday = tmp;
+
 	ip = __mon_lengths[__isleap(y)];
 	y = 0;
-	while (days >= ip[y])
-		days -= ip[y++];
+	while (tmp >= *ip) {
+		tmp -= *ip++;
+		y++;
+	}
 	tmbuf->tm_mon = y;
-	tmbuf->tm_mday = days + 1;
+	tmbuf->tm_mday = tmp + 1;
 }
 
 static void __tm_conv(struct tm *tmbuf, time_t * pt)

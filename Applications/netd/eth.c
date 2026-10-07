@@ -81,3 +81,11 @@ int device_init(void)
 
 uint8_t has_arp = 1U;
 uint16_t mtu = 1500U;
+
+void arguments(int argc, const char *argv[])
+{
+  if (argc != 1) {
+    fprintf(stderr, "%s: unexpected arguments.\n");
+    exit(1);
+  }
+}

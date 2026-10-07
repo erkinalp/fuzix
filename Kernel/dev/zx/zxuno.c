@@ -16,22 +16,21 @@ extern uint8_t fuller, kempston, kmouse, kempston_mbmask;
  *	We don't do anything with the MMU and video.
  */
 
-__sfr __banked __at 0xfc3b uno_ctrl;
-__sfr __banked __at 0xfd3b uno_data;
-
-__sfr __banked __at 0xbf3b ula_ctrl;
-__sfr __banked __at 0xff3b ula_data;
+#define UNO_CTRL	0xFC3B
+#define UNO_DATA	0xFD3B
+#define ULA_CTRL	0xBF3B
+#define ULA_DATA	0xFF3B
 
 uint8_t probe_zxuno(void)
 {
 	uint8_t n;
 	uint8_t c;
-	uno_ctrl = 0xff;
-	uno_data = 0x00;
+	out(UNO_CTRL, 0xff);
+	out(UNO_DATA, 0x00);
 
 	/* Check if Uno is present */
 	for (n = 0; n < 64; n++) {
-		c = uno_data;
+		c = in(UNO_DATA);
 		if (c == 0)
 			return 1;
 		if (c < 32 || c > 127)
@@ -84,69 +83,69 @@ void configure_zxuno(void)
 	uint8_t d;
 	uint8_t *p;
 
-	uno_ctrl = 0xFF;
-	uno_data = 0x00;
+	out(UNO_CTRL, 0xFF);
+	out(UNO_DATA, 0x00);
 
 	kputs("ZX Uno Detected\n");
 	for (c = 0; c < 64; c++) {
-		d = uno_data;
+		d = in(UNO_DATA);
 		if (d == 0) break;
 		kputchar(d);
 	}
 	kputchar('\n');
-	
-	uno_ctrl = 0;
-	if (uno_data & 0x80)
+
+	out(UNO_CTRL, 0);
+	if (in(UNO_DATA) & 0x80)
 		kputs("Warning: ZX Uno configuration is locked.\n");
 	else {
-		c = uno_data;
+		c = in(UNO_DATA);
 		/* Contention off, Pentagon timing (as best), NMI off,
 		   DIVMMC on */
-		c &= ~0x10;	
+		c &= ~0x10;
 		c |= 0x66;
-		uno_data = c;
+		out(UNO_DATA, c);
 	}
-	uno_ctrl = 6;
-	uno_data = 0x12;	/* Plug in stick is Kempston, alt is fuller */
+	out(UNO_CTRL, 6);
+	out(UNO_DATA, 0x12);	/* Plug in stick is Kempston, alt is fuller */
 	kempston = 1;
 	fuller = 1;
 	kmouse = 1;
 
-	/* Vroooomm.... */	
-	uno_ctrl = 0x0B;
-	c = uno_data;
+	/* Vroooomm.... */
+	out(UNO_CTRL, 0x0B);
+	c = in(UNO_DATA);
 	c &= 0x3F;
 	c |= 0x80;		/* 14MHz (don't set C0!!!) */
-	uno_data = c;
+	out(UNO_DATA, c);
 
-	uno_ctrl = 0x0E;
-	c = uno_data;
+	out(UNO_CTRL, 0x0E);
+	c = in(UNO_DATA);
 	c &= ~0x80;		/* SD on */
 	c |= 0x40;		/* Horizontal MMU and Timex video on */
-	uno_data = c;
+	out(UNO_DATA, c);
 
-	uno_ctrl = 0x0F;
-	c = uno_data;
+	out(UNO_CTRL, 0x0F);
+	c = in(UNO_DATA);
 	c &= 0xF8;		/* ULAplus, Radistano, Timex on */
-	uno_data = c;
+	out(UNO_DATA, c);
 
 	/* FIXME: do we need to set radasctrl |= 3 */
-	uno_ctrl = 0xFB;
-	if (uno_data & 1) 	/* 60 HZ */
+	out(UNO_CTRL,  0xFB);
+	if (in(UNO_DATA) & 1) 	/* 60 HZ */
 		kputs("Warning 60Hz not yet supported.\n");
 
 	p = palette;
 	/* Initial palette */
 	for (c = 0; c < 32; c++) {
-		ula_ctrl = c;
-		ula_data = *p;
-		ula_ctrl = c + 32;
-		ula_data = *p++;
+		out(ULA_CTRL, c);
+		out(ULA_DATA, *p);
+		out(ULA_CTRL, c + 32);
+		out(ULA_DATA, *p++);
 	}
 }
 
 uint8_t locked_zxuno(void)
 {
-	uno_ctrl = 0;
-	return uno_data & 0x80;
+	out(UNO_CTRL, 0);
+	return in(UNO_DATA) & 0x80;
 }

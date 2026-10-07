@@ -24,16 +24,7 @@ PROGBASE                    equ 0x8000       ; programs and data start here
 
 NBUFS			    equ 4
 
-; Have these defined so that lowlevel-6809.s can be used as-is
-SAM_USER macro
-	endm
-
-SAM_KERNEL macro
-	endm
-
-SAM_SAVE macro
-	endm
-
-SAM_RESTORE macro
-	endm
+; SAM_USER/SAM_KERNEL/SAM_SAVE/SAM_RESTORE were lwasm-syntax macro stubs
+; kept for lowlevel-6809.s, but as6809 cannot parse them and nothing in
+; this port expands them any more.
 

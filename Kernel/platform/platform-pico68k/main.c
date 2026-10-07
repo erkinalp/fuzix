@@ -57,14 +57,13 @@ void pagemap_init(void)
 	   SPI while clock counting the instructions has a certain appeal */
 	via->t1c_l = (uint8_t) 40000;	/* 200Hz */
 	via->t1c_h = 40000 >> 8;
-	via->acr = 0x40;	/* Timer continous */
-	via->ier = 0x40;	/* Timer interrupt */
+	via->acr = 0x40;	/* Timer continuous */
+	via->ier = 0xC0;	/* Timer interrupt */
 }
 
-/* Udata and kernel stacks */
-/* We need an initial kernel stack and udata so the slot for init is
-   set up at compile time */
-u_block udata_block[PTABSIZE];
+/* Fake udata and stack used for swapping stuff in and out etc */
+/* We also use this for pre init time */
+u_block udata_swap;
 
 /* This will belong in the core 68K code once finalized */
 
@@ -77,7 +76,6 @@ void install_vdso(void)
 
 uint8_t plt_udata_set(ptptr p)
 {
-	p->p_udata = &udata_block[p - ptab].u_d;
 	return 0;
 }
 

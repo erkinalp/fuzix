@@ -20,8 +20,8 @@
  */
 const char *_findPath(char *name, const char *path)
 {
-	char *p;
-	const char *envp;
+	register char *p;
+	register const char *envp;
 	if (*path == '/' || /* qualified name */ *path == '.')
 		return path;
 
@@ -53,7 +53,7 @@ const char *_findPath(char *name, const char *path)
 
 /* We can't shortcut this on xtensa because it's all register based. Really we should change this to just do the shortcut on 8bit platforms
    where it matters */
-#if !defined(__CC65__) && !defined(__CC68__) && !defined(__XTENSA_CALL0_ABI__) && !defined(__riscv)
+#if !defined(__XTENSA_CALL0_ABI__) && !defined(__riscv)
 
 /* FIXME: review typing of all of these for const stuff and standard */
 int execl(const char *pathP, const char *arg0, ...)
@@ -63,11 +63,7 @@ int execl(const char *pathP, const char *arg0, ...)
 
 int execlp(const char *pathP, const char *arg0, ...)
 {
-#ifdef PREFER_STACK
 	char name[PATHLEN + 1];
-#else
-	static char name[PATHLEN + 1];
-#endif
 	return execve(_findPath(name, pathP), (void *)&arg0, environ);
 }
 #else
@@ -79,7 +75,7 @@ int execl(const char *pathP, const char *arg0, ...)
 {
 	va_list ptr;
 	const char *arg[32];
-	const char **p = arg;
+	register const char **p = arg;
 
 	va_start(ptr, arg0);
 
@@ -103,12 +99,8 @@ int execlp(const char *pathP, const char *arg0, ...)
 {
 	va_list ptr;
 	const char *arg[32];
-	const char **p = arg;
-#ifdef PREFER_STACK
+	register const char **p = arg;
 	char name[PATHLEN + 1];
-#else
-	static char name[PATHLEN + 1];
-#endif
 
 	va_start(ptr, arg0);
 

@@ -41,12 +41,12 @@ typedef union {            /* this structure is endian dependent */
 /* Sane behaviour for unused parameters */
 #define used(x)
 
-#define gcc_miscompile_workaround()	__asm("":::"memory")
-
 #define BIG_ENDIAN
 
-#define __packed		__attribute__((packed))
-#define barrier()		asm volatile("":::"memory")
+#define __packed
+#define barrier()
 
 #define __fastcall
-#define NORETURN __attribute__((__noreturn__))
+#define NORETURN
+
+#define inline

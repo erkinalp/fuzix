@@ -128,7 +128,6 @@ uint8_t write_core_image(void)
 		return 0;
 	}
 	if (parent) {
-		i_lock(parent);
 		if ((ino = newfile(parent, (uint8_t *)"core")) != NULL) {
 			ino->c_node.i_mode = F_REG | 0400;
 			setftime(ino, A_TIME | M_TIME | C_TIME);
@@ -152,11 +151,11 @@ uint8_t write_core_image(void)
 //TODO			coredump_user_registers(ino);
 			/* Ask the memory manager to dump the memory map */
 			coredump_image(ino);
-			i_unlock_deref(ino);
-			i_unlock_deref(parent);
+			i_deref(ino);
+			i_deref(parent);
 			return W_COREDUMP;
 		}
-		i_unlock_deref(parent);
+		i_deref(parent);
 	}
 	return 0;
 }

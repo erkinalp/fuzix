@@ -50,12 +50,12 @@ uint_fast8_t devsd_transfer_sector(void)
 	    if(blk_op.is_read){
                 success = (sd_spi_wait(false) == 0xFE);
                 if(success)
-                    sd_spi_receive_sector();
+                    sd_spi_rxsect();
             }else{
                 success = false;
                 if(sd_spi_wait(true) == 0xFF){
                     sd_spi_transmit_byte(0xFE);
-                    sd_spi_transmit_sector();
+                    sd_spi_txsect();
                     sd_spi_transmit_byte(0xFF); /* dummy CRC */
                     sd_spi_transmit_byte(0xFF);
                     /* Was the data accepted ? */

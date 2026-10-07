@@ -1,0 +1,12 @@
+U_DATA__TOTALSIZE           equ 0x0200        ; 256+256
+
+VIDEO_BASE		    equ 0x4000	     ; 8K mapped in the video window
+VIDEO_END		    equ 0x6000	     ; for now
+
+PROGBASE                    equ 0x6400       ; programs and data start here
+
+IOPAGE			    equ 0xE7	     ; I/O window
+
+KHIGH	.equ	0xF0		; page value for kernel A000-DFFF
+lopage	.equ	0		; offset to write to set cartridge
+hipage	.equ	0xE7C9		; register to write to set upper bank

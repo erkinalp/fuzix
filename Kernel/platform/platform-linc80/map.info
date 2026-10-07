@@ -1,0 +1,5 @@
+# Vectors
+V 0000-00FF
+# Serial buffers
+a 0100-01FF
+b 0200-02FF

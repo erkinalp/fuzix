@@ -26,8 +26,19 @@ From UZI by Doug Braun and UZI280 by Stefan Nitschke.
 #define NULL (void *)0
 #endif
 
+/* register-hint type for compilers that need it (defined empty elsewhere) */
 #ifndef regptr
 #define regptr
+#endif
+
+/* Inode locking is a no-op unless the platform asks for sleeping locks */
+#ifndef CONFIG_BLOCK_SLEEP
+#define i_unlock(x)	do {} while(0)
+#define i_lock(x)	do {} while(0)
+#define i_islocked(x)	do {} while(0)
+#define i_unlock_deref(x)	i_deref(x)
+#define n_open_lock(a,b)	n_open((a),(b))
+#define getinode_lock(x)	getinode(x)
 #endif
 
 #define min(a,b) ( (a) < (b) ? (a) : (b) )
@@ -60,15 +71,6 @@ From UZI by Doug Braun and UZI280 by Stefan Nitschke.
 #endif
 #ifndef HIBYTE32
 #define HIBYTE32(x)	((uint8_t)((x) >> 24))
-#endif
-
-#ifndef CONFIG_BLOCK_SLEEP
-#define i_unlock(x)	do {} while(0)
-#define i_lock(x)	do {} while(0)
-#define i_islocked(x)	do {} while(0)
-#define i_unlock_deref(x)	i_deref(x)
-#define n_open_lock(a,b)	n_open((a),(b))
-#define getinode_lock(x)	getinode(x)
 #endif
 
 #ifdef CONFIG_LEVEL_2
@@ -176,7 +178,7 @@ struct tms {
 typedef int32_t off_t;	/* 32MB file and fs size limit */
 typedef uint32_t uoff_t;	/* Internal use so we can keep the compiler happy */
 
-typedef uint16_t blkno_t;    /* Can have 65536 512-byte blocks in filesystem */
+typedef uint32_t blkno_t;    /* FS32: 32-bit block numbers, fs to 2TB */
 #define NULLBLK ((blkno_t)-1)
 
 #if (BLKSIZE == 400)
@@ -187,7 +189,15 @@ typedef uint16_t blkno_t;    /* Can have 65536 512-byte blocks in filesystem */
 #include "blk512.h"
 #endif
 
-#define BLKOVERSIZE32	0xFE	/* Bits 25+ mean we exceeded the file size */
+/* The offset guard in writei()/ftruncate().  Classic value was 0xFE -
+ * "bits 25+ mean we exceeded the (32MB) file size" - and it fired
+ * SIGXFSZ, whose default action KILLS the process.  On FS32 32MB is an
+ * ordinary offset: the first thing to write past it was fsck-fuzix
+ * rebuilding a 256MB card's free list, and the repair tool died
+ * mid-repair.  FS32's real limits are enforced elsewhere (bmap returns
+ * NULLBLK past THREE_IND_END for files; blkdev bounds partitions), so
+ * the only job left for this mask is the off_t sign bit. */
+#define BLKOVERSIZE32	0x80
 
 /* State of the block. We have some free bits here if we need them */
 #define BF_FREE		0
@@ -208,6 +218,13 @@ typedef struct blkbuf {
     uint8_t     bf_dirty;	/* bit 0 used */
     uint8_t     bf_busy;	/* bits 0-1 used */
     uint16_t    bf_time;        /* LRU time stamp */
+#ifdef CONFIG_BUFSTAT_DEBUG
+    /* DEBUG: who was running when this buffer was last pinned. Only
+       meaningful while bf_busy, and only here to find a buffer leak -
+       see include/bufstat.h. Three bytes a buffer, so opt-in. */
+    uint16_t    bf_pid;
+    uint8_t     bf_call;
+#endif
 } blkbuf, *bufptr;
 
 #if defined(CONFIG_BLKBUF_HELPERS)
@@ -237,6 +254,15 @@ extern void blkzero(struct blkbuf *buf);
    keep live (i_addr[0] for the dev ptr) and the 36 we don't (or 32/32 for
    speed). We'd then be able to drop half the bits for an open inode onto
    disk safely */
+/* FS32 on-disk inode: exactly 256 bytes on disk, two per block, never
+   straddling a block.  i_addr is 40 direct + single + double + triple
+   indirect (DIRECT_BLOCKS et al in blk512.h).  Offsets fixed by
+   FS32-FORMAT.md.
+   The IN-CORE struct deliberately omits the trailing 56 reserved
+   bytes: with ITABSIZE in-core inodes that padding would cost 3.5K of
+   SRAM holding constant zeros.  breadi skips it and bwritei writes
+   zeros in its place; DINODE_SIZE is the on-disk slot size. */
+#define DINODE_SIZE 256
 typedef struct dinode {
     uint16_t i_mode;
     uint16_t i_nlink;		/* Note we have 64K inodes so we never overflow */
@@ -246,8 +272,16 @@ typedef struct dinode {
     uint32_t   i_atime;		/* Breaks in 2038 */
     uint32_t   i_mtime;		/* Need to hide some extra bits ? */
     uint32_t   i_ctime;		/* 24 bytes */
-    blkno_t  i_addr[20];
-} dinode;               /* Exactly 64 bytes long! */
+    uint8_t  i_timeh[3];	/* bits 32-39 of a/m/ctime; 0 in v1 */
+    uint8_t  i_pad;		/* must be 0 */
+    blkno_t  i_addr[DIRECT_BLOCKS + 3];
+} dinode;               /* 200 bytes in core, 256 on disk */
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+/* FCK's cc1 is pre-C11 and cannot parse _Static_assert */
+_Static_assert(sizeof(dinode) == DINODE_SIZE - 56,
+	       "FS32 in-core dinode is the on-disk one minus reserve");
+#endif
 
 /* We use the Linux one for compatibility. There's no real Unix 'standard'
    for such things */
@@ -301,13 +335,33 @@ typedef struct cinode {
     uint8_t    c_refs;          /* In-core reference count */
     uint8_t    c_readers;	/* Count of readers by oft entry */
     uint8_t    c_writers;	/* Count of writers by oft entry */
-    uint8_t    c_flags;           
+    uint8_t    c_flags;
 #define CDIRTY		0x80	/* Modified flag. */
 #define CRDONLY		0x40	/* On a read only file system */
 #define CFLOCK		0x0F	/* flock bits */
 #define CFLEX		0x0F	/* locked exclusive */
 #define CFMAX		0x0E	/* highest shared lock count permitted */
    uint8_t     c_super;		/* Superblock index */
+   /* Which socket this inode is, for F_SOCK.  In-core only, and it
+    * has to be: it used to live in c_node.i_addr[0], which is the
+    * first data block pointer of a REAL on-disk inode, and i_deref()
+    * writes a dying inode back to disk without truncating a socket -
+    * so the inode landed on the free list still carrying the socket
+    * number as a block pointer, and the next file or pipe to be given
+    * that inode number inherited it.  Truncating that file handed the
+    * number to blk_free() and the kernel stopped with "validblk:
+    * invalid blk".  Slot 0 was invisible (blk_free ignores block 0),
+    * so it took a resident server - the first thing to hold slot 0
+    * while anything else opened a socket - to make it reachable. */
+   uint8_t     c_sock;
+   /* A pipe's stream positions belong to the PIPE, not to any one
+    * fd: each open() starts its fd at offset 0, so a FIFO whose
+    * writers come and go per message wrote every record over the
+    * first one while the reader walked ahead into never-written
+    * blocks and was handed zeros.  In-core only - pipes are never
+    * valid on disk between uses. */
+   uint16_t    c_pipe_roff;
+   uint16_t    c_pipe_woff;
 #ifdef CONFIG_BLOCK_SLEEP
    uint16_t    c_lock;		/* inode lock state */
 #endif
@@ -323,55 +377,54 @@ typedef struct direct {
 
 
 /*
- * Superblock structure
+ * FS32 superblock structure: exactly one 512-byte block, in memory and
+ * on disk, offsets fixed by FS32-FORMAT.md.  Every field is naturally
+ * aligned so there is no implicit padding on any target we build.
+ * (The old filesys_user tail - label, geometry - is gone: nothing on
+ * this port used it and FS32 declares those bytes reserved.)
  */
 #define FILESYS_TABSIZE 50
 typedef struct filesys { /* note: exists in mem and on disk */
-    uint16_t      s_mounted;
-    uint16_t      s_isize;
-    uint16_t      s_fsize;
-    uint16_t      s_nfree;
-    blkno_t       s_free[FILESYS_TABSIZE];
-    int16_t       s_ninode;
-    uint16_t      s_inode[FILESYS_TABSIZE];
-    uint8_t       s_fmod;
+    uint16_t      s_mounted;	/* 0: magic 0xFB32 */
+    uint16_t      s_version;	/* 2: FS32_VERSION */
+    uint32_t      s_isize;	/* 4: first data block */
+    uint32_t      s_fsize;	/* 8: total blocks */
+    blkno_t       s_tfree;	/* 12: total free blocks */
+    int16_t       s_nfree;	/* 16: valid entries in s_free */
+    uint16_t      s_tinode;	/* 18: total free inodes */
+    blkno_t       s_free[FILESYS_TABSIZE];	/* 20 */
+    int16_t       s_ninode;	/* 220 */
+    uint16_t      s_inode[FILESYS_TABSIZE];	/* 222 */
+    uint8_t       s_fmod;	/* 322 */
     /* 0 is 'legacy' and never written to disk */
 #define FMOD_GO_CLEAN	0	/* Write a clean to the disk (internal) */
 #define FMOD_DIRTY	1	/* Mounted or uncleanly unmounted from r/w */
 #define FMOD_CLEAN	2	/* Clean. Used internally to mean don't
 				   update the super block */
-    uint8_t       s_timeh;	/* bits 32-40: FIXME - wire up */
-    uint32_t      s_time;
-    blkno_t       s_tfree;
-    uint16_t      s_tinode;
-    uint8_t	  s_shift;	/* Extent size */
+    uint8_t       s_timeh;	/* 323: bits 32-40: FIXME - wire up */
+    uint32_t      s_time;	/* 324 */
+    uint8_t	  s_shift;	/* 328: must be 0 in FS32 v1 */
+    uint8_t	  s_pad0[3];	/* 329 */
+    /* On disk bytes 332..511 are reserved, written as zero.  They are
+       deliberately NOT in the in-core struct: NMOUNTS copies of 180
+       constant zeros is SRAM this platform does not have spare.  sync()
+       zeroes them on the way out. */
 } filesys, *fsptr;
 
-/*
- * Superblock with userspace fields that are not kept in the kernel
- * mount table.
- */
-struct filesys_user {
-    struct filesys s_fs;
-    /* Allow for some kernel expansion */
-    uint8_t	  s_reserved;
-    uint16_t	  s_reserved2[16];
-    /* This is only used by userspace */
-    uint16_t	  s_props;	/* Property bits indicating which are valid */
-#define S_PROP_LABEL	1
-#define S_PROP_GEO	2
-    /* For now only one property set - geometry. We'll eventually use this
-       when we don't know physical geometry and need to handle stuff with
-       tools etc */
-    uint8_t	  s_label_name[32];
+/* Free-list chain block: written as this explicit struct, never as a
+   memory overlay from &s_nfree - the overlay's shape was an accident
+   of the old struct packing (FS32-FORMAT.md, "Free list"). */
+typedef struct fblk {
+    int16_t       f_nfree;	/* 1..50 */
+    uint16_t      f_pad;	/* 0 */
+    blkno_t       f_free[FILESYS_TABSIZE];
+} fblk;
 
-    uint16_t      s_geo_heads;	/* If 0/0/0 is specified and valid it means */
-    uint16_t	  s_geo_cylinders; /* pure LBA - no idea of geometry */
-    uint16_t	  s_geo_sectors;
-    uint8_t	  s_geo_skew;	/* Soft skew if present (for hard sectored media) */
-                                /* Gives the skew (1/2/3/4/5/... etc) */
-    uint8_t	  s_geo_secsize;/* Physical sector size in log2 form*/
-};
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(struct filesys) == 332,
+	       "FS32 superblock in-core region ends at 332");
+_Static_assert(sizeof(struct fblk) == 204, "FS32 free chain block layout");
+#endif
 
 typedef struct oft {
     off_t     o_ptr;      /* File position pointer */
@@ -386,6 +439,15 @@ struct mount {
     uint16_t m_flags;
     inoptr   m_mntpt;     /* Mount point */
     struct filesys m_fs;
+    /*
+     * V7's s_ilock. Not in struct filesys because that is the on-disk
+     * superblock. i_alloc() rebuilds m_fs.s_inode[] from index 0 and
+     * assigns s_ninode at the end, and it does block I/O to do it - so
+     * two overlapping rebuilds interleave into one array and the loser's
+     * entries survive as inodes that have already been handed out.
+     * i_alloc's own comment asked for this lock.
+     */
+    uint8_t  m_ilock;
 };
 #define MS_RDONLY	1
 #define MS_NOSUID	2
@@ -457,7 +519,7 @@ struct mount {
 #define A_FREEZE		4	/* Unimplemented, want for NC100? */
 #define A_SWAPCTL		16	/* Unimplemented */
 #define A_CONFIG		17	/* Unimplemented */
-#define A_FTRACE		18	/* Unimplemented: 
+#define A_FTRACE		18	/* Unimplemented:
                                           Hook to the syscall trace debug */
 #define A_SUSPEND               32	/* Suspend to RAM (optional) */
 
@@ -465,7 +527,7 @@ struct mount {
 
 #define A_SC_ADD		1
 
-                                          
+
 /* Process table entry */
 
 struct sigbits {
@@ -510,7 +572,7 @@ typedef struct p_tab {
     uint16_t	p_pgrp;		/* Process group */
     uint8_t	p_nice;
     uint8_t	p_event;	/* Events */
-    usize_t	p_top;		/* Copy of u_top */
+    uaddr_t	p_top;		/* Copy of u_top */
     usize_t	p_size;		/* For ps (KBytes) */
 #ifdef CONFIG_UDATA_TEXTTOP
     usize_t	p_texttop;	/* Copy of u_texttop */
@@ -523,7 +585,7 @@ typedef struct p_tab {
     void *	p_profbuf;
     uaddr_t	p_profsize;
     uaddr_t	p_profoff;
-#endif    
+#endif
     /* Put new stuff we don't care about in asm or ps at the end */
     struct p_tab *p_timerq;
 } p_tab, *ptptr;
@@ -547,7 +609,7 @@ typedef struct u_data {
     bool        u_insys;        /* True if in kernel */
     uint8_t     u_callno;       /* sys call being executed. */
     uaddr_t     u_syscall_sp;   /* Stores SP when process makes system call */
-    susize_t    u_retval;       /* Return value from sys call */
+    arg_t       u_retval;       /* Return value from sys call */
     int16_t     u_error;        /* Last error number */
     void *      u_sp;           /* Stores SP when process is switchped */
     bool        u_ininterrupt;  /* True when the interrupt handler is running (prevents recursive interrupts) */
@@ -557,7 +619,7 @@ typedef struct u_data {
     arg_t       u_argn2;	/* Third C argument */
     arg_t       u_argn3;        /* Fourth C argument */
     void *      u_isp;          /* Value of initial sp (argv) */
-    usize_t	u_top;		/* Top of memory for this task */
+    uaddr_t	u_top;		/* Top of memory for this task */
     uaddr_t	u_break;	/* Top of data space */
     uaddr_t	u_codebase;	/* Platform base pointers */
     int     (*u_sigvec[NSIGS])(int);   /* Array of signal vectors */
@@ -571,14 +633,14 @@ typedef struct u_data {
     bool        u_sysio;        /* True if I/O to system space */
 
     /* This block gets written to acct */
-    
+
     /* We overwrite u_mask with p->p_uid on the exit */
     uint16_t    u_mask;         /* umask: file creation mode mask */
     uint16_t    u_gid;
     uint16_t    u_euid;
     uint16_t    u_egid;
     char        u_name[8];      /* Name invoked with */
-    
+
     /* This section is not written out except as padding */
     uint8_t     u_files[UFTSIZE];       /* Process file table: indices into open file table, or NO_FILE. */
     uint16_t	u_cloexec;	/* Close on exec flags */
@@ -598,7 +660,7 @@ typedef struct u_data {
     uaddr_t u_texttop;		/* Top of binary text (used for I/D systems) */
 #endif
    /* TODO: A specific define for "32bit" */
-#if defined(__mc68000__) || defined(__ns32k__) || defined(__ARM_ARCH_7EM__) || defined(__riscv)
+#if defined(__mc68000__) || defined(__ns32k__) || defined(__ARM_ARCH_7EM__) || defined(__riscv) || defined(__Z8000__)
     uaddr_t u_database;		/* data base for systems with separate code/data
 				   blocks. FIXME - sort this out in the usermode hdr */
 #endif
@@ -902,15 +964,15 @@ extern bool validdev(uint16_t dev);
 #define valaddr(a,b,c)	(b)
 #define valaddr_r(a,b)	(b)
 #define valaddr_w(a,b)	(b)
-#define uget(a,b,c)	(_uget(a, b, c) * 0)
-#define uput(a,b,c)	(_uput(a, b, c) * 0)
+#define uget(a,b,c)	_uget(a, b, c)
+#define uput(a,b,c)	_uput(a, b, c)
 #define ugetc(a)	_ugetc(a)
 #define ugetw(a)	_ugetw(a)
 #define ugetl(a)	_ugetl(a)
 #define uputc(v, p)	_uputc(v, p)
 #define uputw(v, p)	_uputw(v, p)
 #define uputl(v, p)	_uputl(v, p)
-#define uzero(a,b)	(_uzero(a, b) * 0)
+#define uzero(a,b)	_uzero(a, b)
 #else
 extern usize_t valaddr(const uint8_t *base, usize_t size, uint_fast8_t is_write);
 extern usize_t valaddr_r(const uint8_t *base, usize_t size);
@@ -936,9 +998,9 @@ extern int uzero(void *userspace_dest, usize_t count);
 #define _uputc(v, p) ((*(uint8_t*)(p) = (v)), 0)
 #define _uputw(v, p) ((*(uint16_t*)(p) = (v)), 0)
 #define _uputl(v, p) ((*(uint32_t*)(p) = (v)), 0)
-#define _uget(a,b,c) (memcpy(b,a,c) && 0)
-#define _uput(a,b,c) (memcpy(b,a,c) && 0)
-#define _uzero(a,b)  (memset(a,0,b) && 0)
+#define _uget(a,b,c) ((unsigned)memcpy(b,a,c) * 0)
+#define _uput(a,b,c) ((unsigned)memcpy(b,a,c) * 0)
+#define _uzero(a,b)  ((unsigned)memset(a,0,b) * 0)
 #else
 /* usermem.c or usermem_std.s */
 extern int16_t _ugetc(const uint8_t *user) __fastcall;
@@ -974,6 +1036,11 @@ extern void bdrop(uint16_t dev);
 extern bufptr freebuf(void);
 extern void bufinit(void);
 extern void bufdump (void);
+extern int bufstat_report(uint8_t *data);	/* DEBUG, see bufstat.h */
+
+/* CONFIG_BUFSTAT_DEBUG keeps the per-buffer owner fields (bf_pid/
+   bf_call) that bufstat reports; without it they read as zero and
+   cost no RAM. Define it in config.h when hunting buffer leaks. */
 extern int bdread(bufptr bp);
 extern int bdwrite(bufptr bp);
 extern int cdread(uint16_t dev, uint_fast8_t flag);
@@ -1000,6 +1067,7 @@ extern int no_ioctl(uint_fast8_t minor, uarg_t a, char *b);
 /* open file, "name" in user address space */
 extern uint8_t lastname[31];
 extern inoptr n_open(uint8_t *uname, inoptr *parent);
+extern inoptr n_open_argn(void);
 extern inoptr i_open(uint16_t dev, uint16_t ino);
 extern inoptr srch_dir(inoptr wd, uint8_t *compname);
 extern inoptr srch_mt(inoptr ino);
@@ -1027,11 +1095,21 @@ extern void i_deref(inoptr ino);
 extern void corrupt_fs(uint16_t devno);
 extern void wr_inode(inoptr ino);
 extern bool isdevice(inoptr ino);
-extern int f_trunc_blocks(inoptr ino, uint16_t nblock);
+extern int f_trunc_blocks(inoptr ino, blkno_t nblock);
 extern int f_trunc(inoptr ino);
-extern void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, uint16_t nblock);
+extern void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, blkno_t nkeep);
 extern blkno_t bmap(inoptr ip, blkno_t bn, unsigned int rwflg);
+#ifdef CONFIG_FS_TRIPWIRE_DEEP
+/* names the caller in the panic - see validblk_at() in filesys.c */
+extern void validblk_at(uint16_t dev, blkno_t num, const char *who);
+/* checks an inode's block list as it is read and as it is written back,
+ * to say whether a bad pointer came off the disk or was made in memory */
+extern void ino_blocks_check(uint16_t dev, uint16_t inum, const dinode *d,
+                             const char *where);
+#define validblk(dev, num) validblk_at((dev), (num), __func__)
+#else
 extern void validblk(uint16_t dev, blkno_t num);
+#endif
 extern inoptr getinode(uint_fast8_t uindex);
 extern bool super(void);
 extern bool esuper(void);
@@ -1118,6 +1196,8 @@ extern void swapper(ptptr p);
 extern void swapper2(ptptr p, uint16_t map);
 extern uint8_t get_common(void);
 extern void swap_finish(uint_fast8_t page, ptptr p);
+extern void swaptask(void);
+extern ptptr swapproc;
 /* These two are provided by the bank code selected for the port */
 extern int swapout(ptptr p);
 extern void swapin(ptptr p, uint16_t map);

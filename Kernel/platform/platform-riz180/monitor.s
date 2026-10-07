@@ -1,43 +1,41 @@
+# 1 "monitor.S"
 ; 2015-01-17 William R Sowerbutts
+# 1 "kernelu.def"
+;
+U_DATA__TOTALSIZE           .equ 0x200        ; 256+256
+Z80_TYPE                    .equ 2
 
-                .module monitor
-                .include "kernel.def"
-	        .include "../../cpu-z180/z180.def"
-                .globl _plt_monitor
-		.globl _plt_reboot
-                .globl map_kernel
+OS_BANK                     .equ 0x00         ; value from include/kernel.h
 
-                .globl outchar
-                .globl outnewline
-                .globl outhl
+; Memory layout
+FIRST_RAM_BANK              .equ 0x40         ; 128K of RAM
+Z180_IO_BASE                .equ 0xC0
 
-                .area _COMMONMEM
+CPU_CLOCK_KHZ               .equ 6144         ; 6.144MHz * 1
+TICKSPERSEC                 .equ 40           ; timer interrupt rate (Hz)
+TCR_CLOCK		    .equ 7680
 
-; -----------------------------------------------------------------------------
-.ifne USE_FANCY_MONITOR ; -----------------------------------------------------
-                .area _COMMONMEM ; actual monitor lives in high memory
-                .include "../../lib/monitor-z80.s"
+PROGBASE		    .equ 0x0000
+PROGLOAD		    .equ 0x0100
 
-;                .area _COMMONMEM ; just a stub goes in common memory
-_plt_monitor:
-                di
-                jp monitor_entry
+; disabling this saves around approx 0.5KB
+# 5 "monitor.S"
+	.export _plt_monitor
+	.export _plt_reboot
+# 19
+	.common
+_plt_monitor:  di
+	call outnewline
+	; just dump a few words from the stack
+	ld b, 50
+stacknext:
+	pop hl
+	call outhl
+	ld a, #' '
+	call outchar
+	djnz stacknext
+	halt
 
 
-; -----------------------------------------------------------------------------
-.else ; MICRO MONITOR ---------------------------------------------------------
-                 .globl outchar
-                 .globl outnewline
-                 .globl outhl
-@@ -35,7 +22,10 @@ stacknext:      pop hl
-                 call outchar
-                 djnz stacknext
-                 halt
-.endif
-
-_plt_reboot:
-		; Map ROM for all of low area
-		ld a,#0xF0
-		out (MMU_CBAR),a
-		; Jump into it
-		rst 0
+_plt_reboot:	; TODO
+	jr _plt_monitor

@@ -7,6 +7,7 @@
 
 /* flat allocators */
 extern void *kmalloc(size_t, uint8_t owner);
+extern void *kmalloc_largest(size_t, uint8_t owner);
 extern void kfree_s(void *, size_t);
 extern unsigned long kmemavail(void);
 extern unsigned long kmemused(void);

@@ -1,2 +1,2 @@
-reserve C000-CFFF
-reserve 0400-07FF
+I C000-CFFF
+V 0400-07FF

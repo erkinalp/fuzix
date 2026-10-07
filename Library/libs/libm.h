@@ -22,6 +22,12 @@ extern void __force_eval(float f);
 #define FORCE_EVAL(x)	__force_eval(x)
 #endif
 
+/* On targets without extended-precision registers a plain assignment
+ * is already strict (used by the FreeBSD-derived __rem_pio2.c). */
+#ifndef STRICT_ASSIGN
+#define STRICT_ASSIGN(type, lval, rval)	((lval) = (type)(rval))
+#endif
+
 union fshape {
 	float value;
 	uint32_t bits;
@@ -225,5 +231,7 @@ float  __expo2f(float);
 
 double __log1p(double);
 float  __log1pf(float);
+
+void _fnum(double, int, int, char *);
 
 #endif

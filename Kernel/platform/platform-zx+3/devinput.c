@@ -8,9 +8,10 @@
 
 static uint8_t ay_p1_save, ay_p2_save;
 
-__sfr __at 0xF5	ay_reg;
-__sfr __banked __at 0x01F6	ay_player1;
-__sfr __banked __at 0x02F6	ay_player2;
+#define AY_REG		0xF5
+#define AY_PLAYER1	0x01F6
+#define AY_PLAYER2	0x02F6
+
 
 static char buf[32];
 
@@ -44,7 +45,7 @@ static uint8_t ay_encode(uint8_t r)
 
 static uint8_t ay_js(uint8_t *slot)
 {
-    uint8_t r = ay_player1;
+    uint8_t r = in(AY_PLAYER1);
     if (r == ay_p1_save)
         return 0;
     ay_p1_save = r;
@@ -55,7 +56,7 @@ static uint8_t ay_js(uint8_t *slot)
 
 static uint8_t ay_js2(uint8_t *slot)
 {
-    uint8_t r = ay_player2;
+    uint8_t r = in(AY_PLAYER2);
     if (r == ay_p2_save)
         return 0;
     ay_p2_save = r;
@@ -66,7 +67,7 @@ static uint8_t ay_js2(uint8_t *slot)
 
 int plt_input_read(uint8_t *slot)
 {
-    uint8_t r, k;
+    uint_fast8_t r, k;
     if (remq(&kqueue, &r)) {
         remq(&kqueue, &k);
 	*slot++ = KEYPRESS_CODE | r;
@@ -74,7 +75,7 @@ int plt_input_read(uint8_t *slot)
 	return 2;
     }
 
-    ay_reg = 0x0E;
+    out(AY_REG, 0x0E);
     if (ay_js(slot))
         return 2;
     if (ay_js2(slot))
@@ -87,7 +88,7 @@ void plt_input_wait(void)
     psleep(&kqueue);	/* We wake this on timers so it works for sticks */
 }
 
-int plt_input_write(uint8_t flag)
+int plt_input_write(uint_fast8_t flag)
 {
     flag;
     udata.u_error = EINVAL;
@@ -96,8 +97,7 @@ int plt_input_write(uint8_t flag)
 
 void poll_input(void)
 {
-    ay_reg=0x0E;
-    if (ay_player1 != ay_p1_save || ay_player2 != ay_p2_save)
+    out(AY_REG, 0x0E);
+    if (in(AY_PLAYER1) != ay_p1_save || in(AY_PLAYER2) != ay_p2_save)
         wakeup(&kqueue);
 }
-        

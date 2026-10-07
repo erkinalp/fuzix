@@ -1,9 +1,9 @@
-/* 
+/*
 
    Network via the LWWire standard for DW4
 
 */
-  
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -141,7 +141,7 @@ int device_read( unsigned char *buf, int len )
     while( l > 0 ){
 	if( l > CHUNKZ )
 	    s = CHUNKZ;
-	else 
+	else
 	    s = l;
 	dwnet_recv_chunk( buf, s );
 	buf += CHUNKZ;
@@ -177,3 +177,11 @@ int device_init( void )
 
 uint8_t has_arp = 1;
 uint16_t mtu = 1500;
+
+void arguments(int argc, const char *argv[])
+{
+  if (argc != 1) {
+    fprintf(stderr, "%s: unexpected arguments.\n");
+    exit(1);
+  }
+}

@@ -3,7 +3,7 @@
 #include <string.h>
 #include <ctype.h>
 
-char *strcasestr(const char *needle, const char *haystack)
+char *strcasestr(const char *needle, register const char *haystack)
 {
   size_t s = strlen(needle);
   char c = tolower(needle[0]);

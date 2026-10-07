@@ -40,6 +40,7 @@ typedef union {            /* this structure is endian dependent */
 #define cpu_to_le16(x)	(x)
 #define le16_to_cpu(x)	(x)
 #define cpu_to_le32(x)	(x)
+#define regptr	register
 #define le32_to_cpu(x)	(x)
 
 #define ntohs(x)	((((x) & 0xFF) << 8) | (((x) & 0xFF00) >> 8))
@@ -60,5 +61,3 @@ typedef union {            /* this structure is endian dependent */
 
 extern void out(uint_fast8_t port, uint_fast8_t val);
 extern uint_fast8_t in(uint_fast8_t port);
-
-#define regptr	register

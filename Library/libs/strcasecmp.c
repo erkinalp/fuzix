@@ -6,7 +6,7 @@
 #include <string.h>
 #include <ctype.h>
 
-int strcasecmp(const char *s, const char *d)
+int strcasecmp(register const char *s, register const char *d)
 {
    for(;;)
    {

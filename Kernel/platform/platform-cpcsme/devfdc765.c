@@ -22,7 +22,7 @@
 static timer_t spindown_timer, recal_timer;
 
 static uint8_t lastdrive;
-static uint8_t trackpos[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
+static uint8_t trackpos[2] = { 0xFF, 0xFF };
 
 int devfd_open(uint_fast8_t minor, uint16_t flag)
 {

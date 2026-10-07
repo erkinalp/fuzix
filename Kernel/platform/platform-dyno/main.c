@@ -34,8 +34,8 @@ void z180_timer_interrupt(void)
     unsigned char a;
 
     /* we have to read both of these registers in order to reset the timer */
-    a = TIME_TCR;
-    a = TIME_TMDR0L;
+    a = in(TIME_TCR);
+    a = in(TIME_TMDR0L);
     timer_interrupt();
     /* FDC timer */
     n ^= 1;
@@ -43,25 +43,17 @@ void z180_timer_interrupt(void)
         fd_tick();
 }
 
-void plt_idle(void)
-{
-    /* Let's go to sleep while we wait for something to interrupt us */
-    __asm
-        halt
-    __endasm;
-}
-
 void plt_interrupt(void)
 {
     switch(irqvector){
         case Z180_INT_TIMER0:
-            z180_timer_interrupt(); 
+            z180_timer_interrupt();
             return;
         case Z180_INT_ASCI0:
-            tty_pollirq_asci0();
+            tty_pirq_asci0();
             return;
         case Z180_INT_ASCI1:
-            tty_pollirq_asci1();
+            tty_pirq_asci1();
             return;
         default:
             return;

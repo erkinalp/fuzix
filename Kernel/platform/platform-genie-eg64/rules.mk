@@ -1,14 +1,15 @@
-export CROSS_CC_SEG1=--codeseg CODE1
-export CROSS_CC_SEG2=--codeseg CODE1
-export CROSS_CC_SEG3=--codeseg CODE1
-export CROSS_CC_SEG4=--codeseg CODE1
-export CROSS_CC_VIDEO=--codeseg VIDEO
+export CROSS_CC_SEG1=
+export CROSS_CC_SEG2=
+export CROSS_CC_SEG3=
+export CROSS_CC_SEG4=
+export CROSS_CC_VIDEO
 #
-export CROSS_CC_SYS1=--codeseg CODE1
-export CROSS_CC_SYS2=--codeseg CODE1
-export CROSS_CC_SYS3=--codeseg CODE
-export CROSS_CC_SYS4=--codeseg CODE
-export CROSS_CC_SYS5=--codeseg CODE2
-export CROSS_CC_SEGDISC=--codeseg DISCARD
+export CROSS_CC_SYS1=-Tcommon
+export CROSS_CC_SYS2=-Tcommon
+export CROSS_CC_SYS3=-Tcommon
+export CROSS_CC_SYS4=-Tcommon
+export CROSS_CC_SYS5=
+export CROSS_CC_SEGDISC=-Tdiscard
 
-CROSS_CCOPTS += --peep-file $(FUZIX_ROOT)/Kernel/cpu-z80/rst.peep
+CROSS_CCOPTS += -Os
+

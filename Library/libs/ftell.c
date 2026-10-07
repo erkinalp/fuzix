@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-long ftell(FILE *fp)
+long ftell(register FILE *fp)
 {
    if (fflush(fp) == EOF)
       return EOF;

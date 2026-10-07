@@ -14,13 +14,13 @@ uint8_t keybuf[10];
 /* Previous state */
 uint8_t keymap[10];
 
-struct vt_repeat keyrepeat = { 150, 25 };
+struct vt_repeat keyrepeat = { 25, 2 };
 
 static uint8_t kbd_timer;
 
 static uint8_t keybyte, keybit;
 static uint8_t newkey;
-static int keysdown = 0;
+static int8_t keysdown = 0;
 
 uint8_t keyboard[10][8] = {
 	{KEY_UP, KEY_RIGHT, KEY_DOWN, '9', '6', '3',13, '.'},
@@ -77,12 +77,8 @@ static void keydecode(void)
 	
 	if (ct) {
 #ifdef CONFIG_VT_MULTI
-		if (c == KEY_F1){
-			cpckbd_conswitch(1);
-			return;
-		}
-		if (c == KEY_F2){
-			cpckbd_conswitch(2);
+		if ((c >= KEY_F1) && (c <= KEY_F4)){
+			cpckbd_conswitch(c - KEY_F1 + 1);
 			return;
 		}
 #endif
@@ -126,9 +122,9 @@ static void keydecode(void)
 }
 
 
-void tty_pollirq(void)
+void tty_poll(void)
 {
-	int i;
+	int8_t i;
 
 	newkey = 0;
 
@@ -137,7 +133,7 @@ void tty_pollirq(void)
 		return;
 
 	for (i = 0; i < 10; i++) {
-		int n;
+		int8_t n;
 		uint8_t key = (~keybuf[i]) ^ keymap[i];
 		if (key) {
 			uint8_t m = 0x80;
@@ -149,6 +145,8 @@ void tty_pollirq(void)
 							queue_input(keyboard[i][n]);
 						}
 						keysdown--;
+						if (i == keybyte && n == keybit)
+                            kbd_timer = 0;
 					}
 
 				if ((key & m) && !(keymap[i] & m)) {
@@ -164,16 +162,21 @@ void tty_pollirq(void)
 		}
 		keymap[i] = ~keybuf[i];
 	}
-	if (keysdown && keysdown < 3) {
-		if (newkey) {
-			keydecode();
-			kbd_timer = keyrepeat.first;
-		} else if (! --kbd_timer) {
-			keydecode();
-			kbd_timer = keyrepeat.continual;
-		}
+	if (newkey && keysdown && keysdown < 3) {
+		keydecode();
+		kbd_timer = keyrepeat.first;
 	}
+}
 
+void tty_pollirq (void){
+
+	tty_poll();
+    if (keysdown && keysdown < 3) {
+        if (!--kbd_timer) {
+            keydecode();
+            kbd_timer = keyrepeat.continual;
+        }
+    }
 }
 
 static uint8_t update_keyboard(void) __naked

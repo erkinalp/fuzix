@@ -1,5 +1,3 @@
-include $(FUZIX_ROOT)/Target/rules.8085
-
 CFLAGS += -DNETD_LITTLE_ENDIAN
 
 SRCS  = netd.c uip.c uiplib.c timer.c clock-arch.c uip_arp.c telnet.c lwwire.c

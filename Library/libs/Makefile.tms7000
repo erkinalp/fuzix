@@ -1,0 +1,14 @@
+CC = fcc -mtms7000
+ASM = fcc -mtms7000
+AR = ar
+PLATFORM = tms7000
+export PLATFORM
+CC_OPT = -c -I$(shell pwd)/../include -I$(shell pwd)/../include/$(PLATFORM) -X -Os
+ASM_OPT = -c -o
+LORDER = lordertms7000
+ENDIAN =
+SRC_C = htons.o htonl.o
+SRC_ASM = setjmp_$(PLATFORM).s longjmp_$(PLATFORM).s
+SRC_CRT0 = crt0_$(PLATFORM).s crt0nostdio_$(PLATFORM).s
+
+include Makefile.common

@@ -24,7 +24,6 @@
  *
  * TODO:
  *    #asm -> asm("...") translation.
- *    ?: in #if expressions
  *    Complete #line directive.
  *    \n in "\n" in a stringized argument.
  *    Comments in stringized arguments should be deleted.
@@ -97,6 +96,7 @@ static int do_proc_if(int);
 static void do_proc_include(void);
 static void do_proc_define(void);
 static void do_proc_undef(void);
+static void do_proc_line(void);
 static void do_proc_else(void);
 static void do_proc_endif(void);
 static void do_proc_tail(void);
@@ -671,7 +671,14 @@ static int do_preproc(void)
 {
 	int val, no_match = 0;
 
-	if ((val = get_onetok(SKIP_SPACE)) == TK_WORD) {
+	/*
+	 * The directive NAME is not subject to macro replacement - only
+	 * what follows it is.  Read with substitution, "#define line 1000"
+	 * turned the next "#line line" into "#1000 1000", which matched no
+	 * directive at all: the line was silently passed through as text
+	 * and the file quietly kept its own numbering.
+	 */
+	if ((val = gettok_nosub()) == TK_WORD) {
 		if (strcmp(curword, "ifdef") == 0)
 			do_proc_if(0);
 		else if (strcmp(curword, "ifndef") == 0)
@@ -708,9 +715,7 @@ static int do_preproc(void)
 				pgetc();
 				/* Ignore #pragma ? */
 			} else if (strcmp(curword, "line") == 0) {
-				do_proc_copy_hashline();
-				pgetc();
-				/* Ignore #line for now. */
+				do_proc_line();
 			} else if (strcmp(curword, "asm") == 0) {
 				alltok |= 0x100;
 				return do_proc_copy_hashline();
@@ -735,6 +740,41 @@ static int do_preproc(void)
 
 	*curword = 0;		/* Just in case */
 	return 0;
+}
+
+/*
+ * #line N ["file"]
+ *
+ * The arguments are macro expanded, which is why this cannot copy the
+ * raw line the way #pragma does: after "#define line 1000" the
+ * directive "#line line" has to set 1000, and the tokeniser is what
+ * performs the substitution.
+ *
+ * c_lineno counts the line being read and is advanced by the newline
+ * character itself (chget_raw), so the number is stored AFTER that
+ * newline has been consumed - at which point c_lineno names the line
+ * about to be read, which is the one #line is talking about.
+ *
+ * The optional file name is accepted and skipped: renaming the file
+ * would also have to unwind at the end of an #include, and nothing
+ * needs it yet.
+ */
+static void do_proc_line(void)
+{
+	int tok;
+	long n = -1;
+
+	tok = get_onetok(SKIP_SPACE);
+	if (tok == TK_NUM)
+		n = strtol(curword, (void *) 0, 10);
+	else
+		cerror("Expected a line number after #line");
+
+	while (tok != '\n' && tok != EOF)
+		tok = get_onetok(SKIP_SPACE);
+
+	if (n >= 0)
+		c_lineno = n;
 }
 
 static int do_proc_copy_hashline(void)
@@ -1148,6 +1188,13 @@ static int_type get_expression(int prio)
 			if (prio >= 1)
 				return lvalue;
 			break;
+		case '?':
+			/* The conditional binds looser than every operator
+			   above, so only the outermost call may take it:
+			   "a || b ? c : d" is "(a || b) ? c : d". */
+			if (prio >= 1)
+				return lvalue;
+			break;
 		}
 		switch (curtok) {
 		case '*':
@@ -1225,7 +1272,34 @@ static int_type get_expression(int prio)
 			lvalue = (lvalue || rvalue);
 			break;
 
-		case '?':	/* XXX: To add */
+		case '?':
+			/*
+			 * The middle operand is a full expression, so it
+			 * parses at priority 0 and stops at the ':' - which
+			 * is not an operator here, so it lands in curtok.
+			 * The right operand parses at 0 as well, which is
+			 * what makes the conditional right associative:
+			 * "a ? b : c ? d : e" is "a ? b : (c ? d : e)".
+			 *
+			 * Both arms are evaluated where C evaluates only
+			 * the chosen one.  Nothing in this evaluator has a
+			 * side effect and division by zero is already
+			 * guarded below, so the value is the same either
+			 * way - "(-1 ? 3 : (0/0))" is 3, not an error.
+			 */
+			{
+				int_type tval, fval;
+
+				tval = get_expression(0);
+				if (curtok != ':') {
+					cerror("Expected ':'");
+					no_op = 1;
+					break;
+				}
+				fval = get_expression(0);
+				lvalue = lvalue ? tval : fval;
+			}
+			break;
 
 		default:
 			no_op = 1;
@@ -1310,6 +1384,15 @@ static int_type get_exp_value(void)
 				else
 					curtok = get_onetok(SKIP_SPACE);
 			}
+		} else if (strcmp("__LINE__", curword) == 0) {
+			/* is_ckey() turns __LINE__ into TK_LINE, but only
+			   in gettok(); the #if evaluator reads through
+			   get_onetok(), so the word arrived here and took
+			   the "unknown name is zero" rule below - which
+			   made "#if __LINE__ == 42" false everywhere and
+			   #line impossible to test. */
+			value = c_lineno;
+			curtok = get_onetok(SKIP_SPACE);
 		} else
 			curtok = get_onetok(SKIP_SPACE);
 
@@ -1462,6 +1545,115 @@ static void gen_substrings(char *macname, char *data_str, int arg_count, int is_
 #endif
 }
 
+/* Is the next thing in a macro body a '##', ignoring blanks? */
+static int next_is_paste(const char *p)
+{
+	while (*p == ' ' || *p == '\t')
+		p++;
+	return (p[0] == '#' && p[1] == '#');
+}
+
+/*
+ * Macro replace an argument before it is substituted into the body.
+ *
+ * C89 6.8.3.1: a parameter is replaced by its argument after the
+ * argument has been macro expanded - unless the parameter is an
+ * operand of '#' or '##', which take it as written.  Without this the
+ * argument NAMES were pasted: with "#define CAT(x,y) x ## y" and
+ * "#define XCAT(x,y) CAT(x,y)", XCAT(FOO,BAR) gave FOOBAR where C
+ * gives foobar, because CAT saw FOO and BAR rather than what they
+ * stand for.
+ *
+ * Object-like macros only.  A function-like macro inside an argument
+ * is still substituted as written: expanding it needs the call parsed
+ * and run through gen_substrings from here, and this reader is built
+ * around pushing text back into the input rather than expanding a
+ * string in place.  That remains a gap - a narrower one than pasting
+ * the wrong token, and the rescan that follows substitution still
+ * expands such a call in every position except an operand of '##'.
+ *
+ * Iterates to a fixpoint so "#define A B" "#define B c" resolves, with
+ * a pass cap so a pair that refer to each other stops rather than
+ * spinning.
+ */
+static char *expand_arg_text(const char *in)
+{
+	char *cur;
+	int pass;
+
+	cur = xmalloc(strlen(in) + 1);
+	strcpy(cur, in);
+
+	for (pass = 0; pass < 32; pass++) {
+		char *out = xmalloc(4);
+		int len = 4, cc = 0, changed = 0;
+		int in_quote = 0, quote_char = 0;
+		char *p = cur;
+
+		*out = '\0';
+		while (*p) {
+			char word[WORDSIZE];
+			int wl = 0;
+			const char *s;
+
+			if (in_quote) {
+				if (*p == '\\' && p[1]) {
+					if (cc + 3 > len) {
+						len += 20;
+						out = xrealloc(out, len);
+					}
+					out[cc++] = *p++;
+					out[cc++] = *p++;
+					continue;
+				}
+				if (*p == quote_char)
+					in_quote = 0;
+			} else if (*p == '"' || *p == '\'') {
+				in_quote = 1;
+				quote_char = *p;
+			} else if ((*p >= 'A' && *p <= 'Z')
+				   || (*p >= 'a' && *p <= 'z')
+				   || *p == '_' || *p == '$') {
+				struct define_item *d;
+
+				while (((*p >= '0' && *p <= '9')
+					|| (*p >= 'A' && *p <= 'Z')
+					|| (*p >= 'a' && *p <= 'z')
+					|| *p == '_' || *p == '$')
+				       && wl < WORDSIZE - 1)
+					word[wl++] = *p++;
+				word[wl] = '\0';
+				d = read_entry(word);
+				if (d != 0 && d->arg_count == -1
+				    && !(d->flags & F_INUSE)) {
+					s = d->value;
+					changed = 1;
+				} else
+					s = word;
+				if (cc + (int) strlen(s) + 2 > len) {
+					len += strlen(s) + 20;
+					out = xrealloc(out, len);
+				}
+				strcpy(out + cc, s);
+				cc += strlen(s);
+				unlock_entry(d);
+				continue;
+			}
+			if (cc + 2 > len) {
+				len += 20;
+				out = xrealloc(out, len);
+			}
+			out[cc++] = *p++;
+		}
+		out[cc] = '\0';
+		free(cur);
+		cur = out;
+		if (!changed)
+			break;
+	}
+	return cur;
+}
+
 static char *insert_substrings(char *data_str, struct arg_store *arg_list, int arg_count)
 {
 	int ac, ch;
@@ -1472,6 +1664,8 @@ static char *insert_substrings(char *data_str, struct arg_store *arg_list, int a
 	int in_quote = 0;
 	int quote_char = 0;
 	int ansi_stringize = 0;
+	int paste_prev = 0;	/* the text just consumed was a '##' */
+	char *expanded = 0;
 
 #if CPP_DEBUG
 	fprintf(stderr, "\n### Macro substitution in '%s'\n", data_str);
@@ -1528,6 +1722,7 @@ static char *insert_substrings(char *data_str, struct arg_store *arg_list, int a
 						data_str--;
 						cerror("'##' operator at end of macro");
 					}
+					paste_prev = 1;
 					continue;
 				}
 				data_str++;
@@ -1596,12 +1791,27 @@ static char *insert_substrings(char *data_str, struct arg_store *arg_list, int a
 			cerror("'#' operator should be followed by a macro argument name");
 		}
 
+		/*
+		 * An argument is macro replaced before substitution unless
+		 * it is an operand of '##' - either side - or of '#', which
+		 * is handled above and leaves s pointing at its own text.
+		 */
+		if (s != curword && !paste_prev && !next_is_paste(data_str)) {
+			expanded = expand_arg_text(s);
+			s = expanded;
+		}
+		paste_prev = 0;
+
 		if (cc + 2 + strlen(s) > len) {
 			len += strlen(s) + 20;
 			rv = xrealloc(rv, len);
 		}
 		strcpy(rv + cc, s);
 		cc = strlen(rv);
+		if (expanded) {
+			free(expanded);
+			expanded = 0;
+		}
 	}
 
 	rv[cc] = '\0';

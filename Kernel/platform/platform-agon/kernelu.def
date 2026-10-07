@@ -1,0 +1,59 @@
+; FUZIX mnemonics for memory addresses etc
+
+U_DATA__TOTALSIZE	.equ	0x200	; 256+256 bytes @ E000
+U_DATA_STASH		.equ	0xDE00	; DE00-DFFF
+
+PROGBASE		.equ	0x0000
+PROGLOAD		.equ	0x0100
+
+Z80_TYPE		.equ	0	; CMOS
+
+#undef Z80_MMU_HOOKS
+#undef CONFIG_SWAP
+
+NBUFS			.equ	5	; must match config.h
+
+CPU_CLOCK_KHZ		.equ	18432
+
+KERNEL_BANK		.equ	0x04
+
+; eZ80F92 internal I/O at 0x0080-0x00FF so use in0/out0
+TMR0_CTL		.equ	0x80
+TMR0_RR_L		.equ	0x81
+TMR0_RR_H		.equ	0x82
+TMR1_CTL		.equ	0x83
+TMR2_CTL		.equ	0x86
+TMR3_CTL		.equ	0x89
+TMR4_CTL		.equ	0x8C
+TMR5_CTL		.equ	0x8F
+
+WDT_CTL			.equ	0x93
+
+PB_DR			.equ	0x9A
+PB_ALT1			.equ	0x9C
+PB_ALT2			.equ	0x9D
+PD_DDR			.equ	0xA3
+PD_ALT1			.equ	0xA4
+PD_ALT2			.equ	0xA5
+
+RAM_CTL			.equ	0xB4
+RAM_ADDR_U		.equ	0xB5
+
+SPI_BRG_L		.equ	0xB8
+SPI_BRG_H		.equ	0xB9
+SPI_CTL			.equ	0xBA
+SPI_SR			.equ	0xBB
+SPI_TSR			.equ	0xBC
+SPI_RBR			.equ	0xBC
+
+UART0_THR		.equ	0xC0
+UART0_RBR		.equ	0xC0
+UART0_IER		.equ	0xC1
+UART0_FCTL		.equ	0xC2
+UART0_MCTL		.equ	0xC4
+UART0_LSR		.equ	0xC5
+UART0_MSR		.equ	0xC6
+
+I2C_CTL			.equ	0xCB
+
+UART1_IER		.equ	0xD1

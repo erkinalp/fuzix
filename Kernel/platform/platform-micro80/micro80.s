@@ -1,74 +1,96 @@
-
-        .module micro80
-
+# 1 "micro80.S"
         ; exported symbols
-        .globl init_hardware
-	.globl _program_vectors
-	.globl map_kernel
-	.globl map_proc
-	.globl map_proc_always
-	.globl map_kernel_di
-	.globl map_kernel_restore
-	.globl map_proc_di
-	.globl map_proc_always_di
-	.globl map_save_kernel
-	.globl map_restore
-	.globl map_for_swap
-	.globl map_buffers
-	.globl plt_interrupt_all
-	.globl _plt_reboot
-	.globl _plt_monitor
-	.globl _bufpool
-	.globl _int_disabled
-
-        ; imported symbols
-        .globl _ramsize
-        .globl _procmem
-        .globl outhl
-        .globl outnewline
-	.globl interrupt_handler
-	.globl unix_syscall_entry
-	.globl nmi_handler
-	.globl null_handler
-	.globl ___sdcc_enter_ix
+        .export init_hardware
+	.export _program_vectors
+	.export map_kernel
+	.export map_proc
+	.export map_proc_always
+	.export map_kernel_di
+	.export map_kernel_restore
+	.export map_proc_di
+	.export map_proc_always_di
+	.export map_save_kernel
+	.export map_restore
+	.export map_for_swap
+	.export map_buffers
+	.export plt_interrupt_all
+	.export _plt_reboot
+	.export _plt_monitor
+	.export _plt_idle
+	.export _bufpool
+	.export _int_disabled
 
 	; exported debugging tools
-	.globl inchar
-	.globl outchar
+	.export inchar
+	.export outchar
+# 1 "kernelu.def"
+; FUZIX mnemonics for memory addresses etc
 
-        .include "kernel.def"
-        .include "../../cpu-z80/kernel-z80.def"
+U_DATA__TOTALSIZE	.equ	0x200	; 256+256 bytes @ 0xC000
+Z80_TYPE		.equ	0	; CMOS
+
+Z80_MMU_HOOKS		.equ 0
+
+CONFIG_SWAP		.equ 1
+
+PROGBASE		.equ	0x1000
+PROGLOAD		.equ	0x1000
+
+; Mnemonics for I/O ports etc
+
+; Z80 CTC ports
+CTC_CH0		.equ	0x10	; CTC channel 0 and interrupt vector
+CTC_CH1		.equ	0x11	; CTC channel 1 (periodic interrupts)
+CTC_CH2		.equ	0x12	; CTC channel 2
+CTC_CH3		.equ	0x13	; CTC channel 3
 
 
+SIOA_D		.equ	0x18
+SIOA_C		.equ	0x19
+SIOB_D		.equ	0x1A
+SIOB_C		.equ	0x1B
+RTS_LOW		.equ	0xEA
+
+PIOA_D		.equ	0x1C
+PIOA_C		.equ	0x1D
+PIOB_D		.equ	0x1E
+PIOB_C		.equ	0x1F
+# 1 "../../cpu-z80u/kernel-z80.def"
+ 
+# 26
+ 
+# 44
+ 
+# 30 "micro80.S"
 ;=========================================================================
 ; Buffers
 ;=========================================================================
-        .area _BUFFERS
+	.buffers
 
 _bufpool:
-        .ds (BUFSIZE * 4) ; adjust NBUFS in config.h in line with this
+        .ds 520  * 4 ; adjust NBUFS in config.h in line with this
 
 ;=========================================================================
 ; Initialization code
 ;=========================================================================
-        .area _DISCARD
+	.discard
 init_hardware:
-	ld hl,#128
+	ld hl,128
 	ld (_ramsize), hl
-	ld hl,#60
+	ld hl,60
 	ld (_procmem), hl
 
-	ld a,#3
+	ld a,3
 	out (0xEE),a
 	in a,(0xEF)
-	and #0xFC			; make sure CS lines are high
+	and 0xFC			; make sure CS lines are high
 	out (0xEF),a
-	ld a,#2
+	ld a,2
 	out (0xEE),a
-	ld a,#0xF0			; CS1 is low for 1000-FFFF
+	ld a,0xF0			; CS1 is low for 1000-FFFF
 	out (0xEF),a
 
-	ld a,#3				; set the register to MCR
+	ld a,3				; set the register to MCR
 	out (0xEE),a			; for speed
 
 	;
@@ -76,60 +98,51 @@ init_hardware:
 	;	and the low 4K common
 	;
 
-	ld hl,#sio_setup
-	ld bc,#0xA00 + SIOA_C		; 10 bytes to SIOA_C
-	otir
-	ld hl,#sio_setup
-	ld bc,#0x0C00 + SIOB_C		; and to SIOB_C
-	otir
+	call sio_install
 
-	ld hl,#siob_txd
+	ld hl,siob_txd
 	ld (0xff0),hl			; SIO B TX empty
-	ld hl,#siob_status
+	ld hl,siob_status
 	ld (0xff2),hl			; SIO B External status
-	ld hl,#siob_rx_ring
+	ld hl,siob_rx_ring
 	ld (0xff4),hl			; SIO B Receive
-	ld hl,#siob_special
+	ld hl,siob_special
 	ld (0xff6),hl			; SIO B Special
-	ld hl,#sioa_txd
+	ld hl,sioa_txd
 	ld (0xff8),hl			; SIO A TX empty
-	ld hl,#sioa_status
+	ld hl,sioa_status
 	ld (0xffa),hl			; SIO A External status
-	ld hl,#sioa_rx_ring
+	ld hl,sioa_rx_ring
 	ld (0xffc),hl			; SIO A Received
-	ld hl,#sioa_special
+	ld hl,sioa_special
 	ld (0xffe),hl			; SIO A Special
 
 	; write zeroes across all vectors
-	ld hl,#0
-	ld de,#1
-	ld bc,#0x007f			; program first 0x80 bytes only
-	ld (hl),#0x00
+	ld hl,0
+	ld de,1
+	ld bc,0x007f			; program first 0x80 bytes only
+	ld (hl),0x00
 	ldir
 
 	; now install the interrupt vector at 0x0038
-	ld a,#0xC3			; JP instruction
+	ld a,0xC3			; JP instruction
 	ld (0x0038),a
-	ld hl,#interrupt_handler
+	ld hl,interrupt_handler
 	ld (0x0039),hl
 
 	ld (0x0000),a
-	ld hl,#null_handler		; to Our Trap Handler
+	ld hl,null_handler		; to Our Trap Handler
 	ld (0x0001),hl
 
 	ld (0x0066),a			; Set vector for NMI
-	ld hl,#nmi_handler
+	ld hl,nmi_handler
 	ld (0x0067),hl
 
-	ld hl,#rstblock			; Install rst helpers
-	ld de,#8
-	ld bc,#32
-	ldir
 	;
 	; Defense in depth - shut everything up first
 	;
 
-	ld a,#0x43
+	ld a,0x43
 	out (CTC_CH0),a			; set CH0 mode
 	out (CTC_CH1),a			; set CH1 mode
 	out (CTC_CH2),a			; set CH2 mode
@@ -140,26 +153,26 @@ init_hardware:
 	; The CTC is clocked at 3.6864MHz
 	;
 	; IM2 vector for the CTC
-	ld hl, #spurious
+	ld hl, spurious
 	ld (0xfe0),hl			; CTC vectors
 	ld (0xfe2),hl
 	ld (0xfe6),hl
-	ld hl, #interrupt_handler	; Standard tick handler
+	ld hl, interrupt_handler	; Standard tick handler
 	ld (0xfe4),hl
 
-	ld a,#0xE0
+	ld a,0xE0
 	out (CTC_CH0),a	; set the CTC vector
-	ld a,#0xB5
+	ld a,0xB5
 	out (CTC_CH2),a
-	ld a,#144
+	ld a,144
 	out (CTC_CH2),a	; 100 Hz
 
 	;
 	; Set up counter CH3 to count CH2 - assumes ZC2 is jumpered to TRG3
 	;
-	ld a,#0x47
+	ld a,0x47
 	out (CTC_CH3),a
-	ld a,#255
+	ld a,255
 	out (CTC_CH3),a
 
         ; Done CTC Stuff
@@ -174,20 +187,20 @@ init_hardware:
 	;	B 2-0:	SPI select
 	;
 
-	ld a,#0xFF
+	ld a,0xFF
 	out (PIOA_C),a		; bitwise
-	ld a,#0xF9		; CLK and MOSI are outputs
+	ld a,0xF9		; CLK and MOSI are outputs
 	out (PIOA_C),a
-	ld a,#0x07
+	ld a,0x07
 	out (PIOA_C),a		; no interrupts
-	ld a,#0xFF
+	ld a,0xFF
 	out (PIOB_C),a		; bitwise
-	ld a,#0xF8		; SPI selects are outputs
+	ld a,0xF8		; SPI selects are outputs
 	out (PIOB_C),a
-	ld a,#0x07
+	ld a,0x07
 	out (PIOB_C),a
 
-	ld a,#0x0f
+	ld a,0x0f
 	ld i,a
 	im 2
 	ret
@@ -209,7 +222,14 @@ sio_setup:
 ;=========================================================================
 ; Kernel code
 ;=========================================================================
-        .area _COMMONMEM
+
+	.code
+
+_plt_idle:
+	halt
+	ret
+
+	.common
 
 _plt_monitor:
 _plt_reboot:
@@ -219,7 +239,7 @@ _plt_reboot:
 	halt
 
 _int_disabled:
-	.db 1
+	.byte 1
 
 plt_interrupt_all:
 	ret
@@ -263,14 +283,14 @@ map_for_swap:
 
 ;=========================================================================
 ; map_proc_always - map process pages
-; Inputs: page table address in #U_DATA__U_PAGE
+; Inputs: page table address in 2     
 ; Outputs: none; all registers preserved
 ;=========================================================================
 map_proc_always:
 map_proc_always_di:
 	push af
 	in a,(0xEF)
-	or #0x02		; CS1 enable for user space
+	or 0x02		; CS1 enable for user space
 	out (0xEF),a
 	pop af
 	ret
@@ -287,7 +307,7 @@ map_kernel_di:
 map_kernel_restore:
 	push af
 	in a,(0xEF)
-	and #0xFD		; CS1 disable for kernel
+	and 0xFD		; CS1 disable for kernel
 	out (0xEF),a
 	pop af
 	ret
@@ -313,25 +333,30 @@ map_save_kernel:
 	push af
 	in a,(0xEF)
 	ld (map_save),a
-	and #0xFD
+	and 0xFD
 	out (0xEF),a
 	pop af
 	ret
 
 
 map_save:
-	.db 0
+	.byte 0
 ;
 ;	A little SIO helper
 ;
-	.globl _sio_r
-	.globl _sio2_otir
+	.export _sio2_otir
 
 _sio2_otir:
-	ld b,#0x06
+	pop de
+	pop hl
+	push hl
+	push de
+	push bc
+	ld b, 0x06
 	ld c,l
-	ld hl,#_sio_r
+	ld hl,_sio_r
 	otir
+	pop bc
 	ret
 
 
@@ -351,7 +376,7 @@ ocloop_sio:
         xor a                   ; read register 0
         out (SIOA_C), a
 	in a,(SIOA_C)		; read Line Status Register
-	and #0x04			; get THRE bit
+	and 0x04			; get THRE bit
 	jr z,ocloop_sio
 	; now output the char to serial port
 	pop af
@@ -368,108 +393,7 @@ inchar:
         xor a                           ; read register 0
         out (SIOA_C), a
 	in a,(SIOA_C)   		; read Line Status Register
-	and #0x01			; test if data is in receive buffer
+	and 0x01			; test if data is in receive buffer
 	jr z,inchar			; no data, wait
 	in a,(SIOA_D)   		; read the character from the UART
-	ret
-
-;=========================================================================
-;
-;	Logic for IM2 interrupt driven SIO
-;
-;=========================================================================
-
-	.area _SERIALDATA
-
-	.globl _sio_state
-	.globl _sio_dropdcd
-	.globl _sio_rxl
-	.globl _sio_txl
-
-; These are laid out and exposed as arrays to C
-_sio_wr5:
-_sioa_wr5:
-	.db 0xEA		; DTR, 8bit, tx enabled
-_siob_wr5:
-	.db 0xEA		; DTR, 8bit, tx enabled
-_sio_flow:
-_sioa_flow:
-	.db 0			; Flow starts off
-_siob_flow:
-	.db 0			; Flow starts off
-_sio_state:
-_sioa_state:
-	.db 0			; Last status report
-_siob_state:
-	.db 0			; Last status report
-_sio_dropdcd:
-_sioa_dropdcd:
-	.db 0			; DCD dropped since last checked
-_siob_dropdcd:
-	.db 0			; DCD dropped since last checked
-_sio_rxl:
-_sioa_rxl:
-	.db 0
-_siob_rxl:
-	.db 0
-_sio_txl:
-_sioa_txl:
-	.db 0
-_siob_txl:
-	.db 0
-
-	.include "../../dev/z80sio.s"
-
-sio_ports a
-sio_ports b
-
-	.area _COMMONMEM
-
-;
-;	We don't do any clever IRQ re-entry tricks so we can use the istack.
-;	If we ever do soft interrupts and take the sio during a timer int
-;	we will need a small (16 byte or so) private sio work stack and to
-;	be very careful with our stack handling on switches.
-;
-
-.macro switch
-.endm
-
-.macro switchback
-.endm
-
-sio_handler_im2	a, SIOA_C, SIOA_D, reti
-sio_handler_im2 b, SIOB_C, SIOB_D, reti
-
-;
-;	Stub helpers for code compactness. Note that
-;	sdcc_enter_ix is in the standard compiler support already
-;
-	.area _DISCARD
-
-;
-;	The first two use an rst as a jump. In the reload sp case we don't
-;	have to care. In the pop ix case for the function end we need to
-;	drop the spare frame first, but we know that af contents don't
-;	matter
-;
-
-rstblock:
-	jp	___sdcc_enter_ix
-	.ds	5
-___spixret:
-	ld	sp,ix
-	pop	ix
-	ret
-	.ds	3
-___ixret:
-	pop	af
-	pop	ix
-	ret
-	.ds	4
-___ldhlhl:
-	ld	a,(hl)
-	inc	hl
-	ld	h,(hl)
-	ld	l,a
 	ret

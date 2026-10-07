@@ -22,7 +22,7 @@ typedef struct node_t
 void *tfind(void *key, void **_rootp, __compar_fn_t compar)
 /* find a node, or return 0 */
 {
-    node **rootp = _rootp;
+    register node **rootp = _rootp;
     if (rootp == NULL)
 	return NULL;
     while (*rootp != NULL)	/* T1: */

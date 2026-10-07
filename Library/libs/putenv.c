@@ -13,7 +13,7 @@ int putenv(char *var)
 {
 static char ** mall_env;
 static int extras;
-   char **p, **d;
+   register char **p, **d;
    char * r;
    int len;
 

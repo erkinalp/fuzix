@@ -109,8 +109,10 @@ int main(int c, const char *v[])
 	/* sh_getenv can call error handlers so initialize the
 	   subshell trap and if it fails (eg being passed a broken
 	   environment) just carry on instead of entering hyperspace */
-	if (setjmp(subshell) == 0)
+	flags = ttyflg;
+	if (setjmp(errshell) == 0)
 		sh_getenv();
+	flags = 0;
 
 	/* look for restricted */
 /*	if(c>0 && any('r', *v) ) { rflag=0 ;} */
@@ -143,11 +145,18 @@ int main(int c, const char *v[])
 	dfault(&ifsnod, sptbnl);
 
 	if ((beenhere++) == FALSE) {	/* ? profile */
-		if (*cmdadr == '-'
-		    && (input = pathopen(nullstr, profile)) >= 0) {
-			exfile(rflag);
-			flags &= ~ttyflg;
-			;
+		if (*cmdadr == '-') {
+			/* System-wide profile first, then the user's own */
+			static const char etcprofile[] = "/etc/profile";
+			if ((input = pathopen(nullstr, etcprofile)) >= 0) {
+				exfile(rflag);
+				flags &= ~ttyflg;
+			}
+			if ((input = pathopen(nullstr, profile)) >= 0) {
+				exfile(rflag);
+				flags &= ~ttyflg;
+				;
+			}
 		}
 		if (rflag == 0) {
 			flags |= rshflg;
@@ -226,8 +235,7 @@ static void exfile(BOOL prof)
 				prs(mailmsg);
 			}
 			mailtime = statb.st_mtime;
-			if (line_input(ps1nod.namval) < 0)
-			{
+			if (line_input(ps1nod.namval) < 0) {
 				prs(ps1nod.namval);
 				alarm(TIMEOUT);
 			}

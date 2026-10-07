@@ -38,7 +38,7 @@
  * The library routines call this routine to interpret
  * network numbers.
  */
-in_addr_t inet_network(const char *cp)
+in_addr_t inet_network(register const char *cp)
 {
 	in_addr_t val, base, n;
 	char c;

@@ -2,6 +2,8 @@ package platform-cpcsme
 
 disable-pkg platform-cpcsme
 
+f 0644 /root/.profile /userspace/.profile
+
 l /bin/sh /bin/sh.orig
 r /bin/sh
 l /bin/fsh /bin/sh
@@ -18,6 +20,3 @@ l /etc/resolv.conf /etc/resolv.conf.orig
 r /etc/resolv.conf
 f 0644 /etc/resolv.conf /userspace/resolv.conf
 
-l /etc/termcap /etc/termcap.orig
-r /etc/termcap
-f 0644 /etc/termcap /userspace/termcap

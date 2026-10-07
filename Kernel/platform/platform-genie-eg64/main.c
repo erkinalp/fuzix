@@ -27,24 +27,18 @@ void do_beep(void)
 {
 }
 
-__sfr __at 0xE0 irqstat3;
-__sfr __at 0xEC irqack3;
-
-/* We assign these to dummy to deal with an sdcc bug (should be fixed in next
-   SDCC) */
 void plt_interrupt(void)
 {
-  uint8_t dummy;
   uint8_t irq = ioread(0x37E0);
 
   tty_interrupt();
   kbd_interrupt();
 
   if (irq & 0x40)
-    dummy = ioread(0x37EC);
+    ioread(0x37EC);
   if (irq & 0x80) {
     timer_interrupt();
-    dummy = ioread(0x37E0);	/* Ack the timer */
+    ioread(0x37E0);	/* Ack the timer */
   }
 }
 
@@ -67,32 +61,32 @@ void plt_discard(void)
 
 #ifdef CONFIG_RTC
 
-__sfr __at 0xB0 rtc_secl;
-__sfr __at 0xB1 rtc_sech;
-__sfr __at 0xB2 rtc_minl;
-__sfr __at 0xB3 rtc_minh;
-__sfr __at 0xB4 rtc_hourl;
-__sfr __at 0xB5 rtc_hourh;
-/* day of week is B6 */
-__sfr __at 0xB7 rtc_dayl;
-__sfr __at 0xB8 rtc_dayh;
-__sfr __at 0xB9 rtc_monl;
-__sfr __at 0xBA rtc_monh;
-__sfr __at 0xBB rtc_yearl;
-__sfr __at 0xBC rtc_yearh;
+#define RTC_SECL	0xB0
+#define RTC_SECH	0xB1
+#define RTC_MINL	0xB2
+#define RTC_MINH	0xB3
+#define RTC_HOURL	0xB4
+#define RTC_HOURH	0xB5
+#define RTC_DOW		0xB6
+#define RTC_DAYL	0xB7
+#define RTC_DAYH	0xB8
+#define RTC_MONL	0xB9
+#define RTC_MONH	0xBA
+#define RTC_YEARL	0xBB
+#define RTC_YEARH	0xBC
 
 /* FIXME: the RTC is optional so we should test for it first */
-uint8_t plt_rtc_secs(void)
+uint_fast8_t plt_rtc_secs(void)
 {
     uint8_t sl, rv;
     /* BCD encoded */
     do {
-        sl = rtc_secl;
+        sl = in(RTC_SECL);
         /* RTC may be absent */
         if (sl == 255)
           return 255;
-        rv = sl + rtc_sech * 10;
-    } while (sl != rtc_secl);
+        rv = sl + in(RTC_SECH) * 10;
+    } while (sl != in(RTC_SECL));
     return rv;
 }
 
@@ -108,7 +102,7 @@ int plt_rtc_read(void)
     if (udata.u_count < len)
         len = udata.u_count;
 
-    if (rtc_secl == 255) {
+    if (in(RTC_SECL) == 255) {
       udata.u_error = EOPNOTSUPP;
       return -1;
     }
@@ -118,19 +112,19 @@ int plt_rtc_read(void)
        new year */
     do {
       p = cmos.data.bytes;
-      r = rtc_secl;
-      y  = (rtc_yearh << 4) | rtc_yearl;
+      r = in(RTC_SECL);;
+      y  = (in(RTC_YEARH) << 4) | in(RTC_YEARL);
       if (y >= 0x70)
           *p++ = 0x19;
       else
           *p++ = 0x20;
       *p++ = y;
-      *p++ = ((rtc_monh  & 1)<< 4) | rtc_monl;
-      *p++ = ((rtc_dayh & 3) << 4) | rtc_dayl;
-      *p++ = ((rtc_hourh & 3) << 4) | rtc_hourl;
-      *p++ = ((rtc_minh & 7) << 4) | rtc_minl;
-      *p++ = ((rtc_sech & 7) << 4) | rtc_secl;
-    } while ((r ^ rtc_secl) & 0x0F);
+      *p++ = ((in(RTC_MONH) & 1)<< 4) | in(RTC_MONL);
+      *p++ = ((in(RTC_DAYH) & 3) << 4) | in(RTC_DAYL);
+      *p++ = ((in(RTC_HOURH) & 3) << 4) | in(RTC_HOURL);
+      *p++ = ((in(RTC_MINH) & 7) << 4) | in(RTC_MINL);
+      *p++ = ((in(RTC_SECH) & 7) << 4) | in(RTC_SECL);
+    } while ((r ^ in(RTC_SECL)) & 0x0F);
 
     cmos.type = CMOS_RTC_BCD;
     if (uput(&cmos, udata.u_base, len) == -1)
@@ -148,16 +142,3 @@ int plt_rtc_write(void)
 }
 
 #endif
-
-/*
- *	So that we don't suck in a library routine we can't use from
- *	the runtime
- */
-
-size_t strlen(const char *p)
-{
-  size_t len = 0;
-  while(*p++)
-    len++;
-  return len;
-}

@@ -1,7 +1,7 @@
 /*
  * putpwent.c - This file is part of the libc-8086/pwd package for ELKS,
  * Copyright (C) 1995, 1996 Nat Friedman <ndf@linux.mit.edu>.
- * 
+ *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Library General Public
  *  License as published by the Free Software Foundation; either
@@ -23,7 +23,7 @@
 #include <pwd.h>
 
 int
-putpwent(const struct passwd * passwd, FILE * f)
+putpwent(register const struct passwd * passwd, FILE * f)
 {
   if (passwd == NULL || f == NULL)
     {

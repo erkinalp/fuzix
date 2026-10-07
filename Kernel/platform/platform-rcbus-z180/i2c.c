@@ -12,37 +12,33 @@
 #include <i2c.h>
 #include <i2c_bitbang.h>
 
-__sfr __at 0x0C i2c;
+#define I2C	0x0C
 
 /* There isn't a huge point optimizing this, we are not supposed to go over
    100 or 400KHz anyway. The expectations of the caller are that
    - any delays needed are made before the signal is changed
    - on a read a delay is made before the signal is read
-   
+
    But basically it only matters that both are the same side. */
 
 void i2c_set(uint_fast8_t bus, uint_fast8_t val)
 {
-    used(bus);
     gpio_set(val, val);
 }
 
 void i2c_clear(uint_fast8_t bus, uint_fast8_t val)
 {
-    used(bus);
     gpio_set(val, 0);
 }
 
 uint_fast8_t i2c_sda(uint_fast8_t bus)
 {
-    used(bus);
-    return i2c & I2C_RX_SDA;
+    return in(I2C) & I2C_RX_SDA;
 }
 
 /* The SC126 cannot handle clock stretching */
 uint_fast8_t i2c_scl(uint_fast8_t bus)
 {
-    used(bus);
     return I2C_RX_SCL;
 }
 
@@ -61,7 +57,6 @@ int i2c_claim_bus(uint_fast8_t bus)
 
 void i2c_release_bus(uint_fast8_t bus)
 {
-    used(bus);
 #ifdef CONFIG_RTC_DS1302
     rtc_defer = 0;
 #endif

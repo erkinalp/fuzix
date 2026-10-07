@@ -4,9 +4,9 @@
 
 void *memmove(void *dest, const void *src, size_t len)
 {
-	uint8_t *dp = dest;
-	const uint8_t *sp = src;
-	
+	register uint8_t *dp = dest;
+	register const uint8_t *sp = src;
+
 	if (sp < dp) {
 		dp += len;
 		sp += len;

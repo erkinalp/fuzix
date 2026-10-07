@@ -8,7 +8,7 @@
 #include <ctype.h>
 
 /********************** Function stricmp ************************************/
-int stricmp(const char *s, const char *d)
+int stricmp(register const char *s, register const char *d)
 {
 	for (;;) {
 		unsigned char sc = *(const uchar *) s++, dc = *(const uchar *) d++;

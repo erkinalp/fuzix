@@ -1,9 +1,9 @@
 #include <string.h>
 
-void *memset(void *dest, int data, size_t len)
+void *memset(void *dest, int data, register size_t len)
 {
-	char *p = dest;
-	char v = (char)data;
+	register char *p = dest;
+	register char v = (char)data;
 
 	while(len--)
 		*p++ = v;

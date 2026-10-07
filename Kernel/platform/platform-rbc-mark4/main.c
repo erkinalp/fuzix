@@ -9,6 +9,9 @@ uint16_t ramtop = PROGTOP;
 extern unsigned char irqvector;
 uint16_t swap_dev = 0xFFFF;
 
+uint16_t rtc_port = 0x8A;
+uint8_t rtc_shadow = 0x00;
+
 struct blkbuf *bufpool_end = bufpool + NBUFS; /* minimal for boot -- expanded after we're done with _DISCARD */
 
 void plt_discard(void)
@@ -25,11 +28,9 @@ void plt_discard(void)
 
 void z180_timer_interrupt(void)
 {
-    unsigned char a;
-
     /* we have to read both of these registers in order to reset the timer */
-    a = TIME_TCR;
-    a = TIME_TMDR0L;
+    in(TIME_TCR);
+    in(TIME_TMDR0L);
 
 #ifdef CONFIG_PROPIO2
     /* The PropIO2 does not have an interrupt on keypress. */
@@ -39,26 +40,17 @@ void z180_timer_interrupt(void)
     timer_interrupt();
 }
 
-void plt_idle(void)
-{
-    /* Let's go to sleep while we wait for something to interrupt us;
-     * Makes the Mark IV's run LED go red, which amuses me greatly. */
-    __asm
-        halt
-    __endasm;
-}
-
 void plt_interrupt(void)
 {
     switch(irqvector){
         case Z180_INT_TIMER0:
-            z180_timer_interrupt(); 
+            z180_timer_interrupt();
             return;
         case Z180_INT_ASCI0:
-            tty_pollirq_asci0();
+            tty_pirq_asci0();
             return;
         case Z180_INT_ASCI1:
-            tty_pollirq_asci1();
+            tty_pirq_asci1();
             return;
         default:
             return;

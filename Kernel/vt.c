@@ -30,7 +30,7 @@
  *	For the simple case of a vt permanently mapped into the kernel space
  *	and using character mode the driver can provide all the other logic
  *	for free.
- *	
+ *
  *	In that case
  *	define CONFIG_VT_SIMPLE
  *	VT_BASE is the base address in kernelspace
@@ -40,7 +40,8 @@
  *	very sure you inspect the asm output for calls to compiler helpers
  *	and don't add any.
  *
- *	Extensions in use
+ *	Extensions in use (we mostly follow Atari ST)
+ *
  *	- Esc a c	Set vtattr bits (inverse, etc)
  *
  *	- Esc b c	Set ink colour
@@ -59,6 +60,10 @@
  *	Bit 5 indicates bit 4-0 are platform specific colour
  *	Bit 6 should be set to keep it in the ascii range
  *	Bit 7 should be clear
+ *	- Esc e		Hide cursor
+ *	- Esc f		Show cursor
+ *	- Esc p		Inverse on
+ *	- Esc q		Inverse off
  *
  *	Possible VT extensions to look at
  *	- Esc-L		Insert blank line, move lines below down
@@ -103,7 +108,7 @@ static void cursor_fix(void)
 	}
 }
 
-static void charout(unsigned char c)
+static void charout(register unsigned char c)
 {
 	/* Fast path printable symbols */
 	if (c <= 0x1b) {
@@ -140,8 +145,7 @@ fix:
 	cursor_fix();
 }
 
-
-static int escout(unsigned char c)
+static int escout(register unsigned char c)
 {
 	if (c == 'A') {
 		if (cursory)
@@ -165,6 +169,16 @@ static int escout(unsigned char c)
 	}
 	if (c == 'E') {
 		clear_lines(0, VT_BOTTOM + 1);
+		return 0;
+	}
+	if (c == 'F') {
+		vtattr |= VTA_ALTCHAR;
+		vtattr_notify();
+		return 0;
+	}
+	if (c == 'G') {
+		vtattr &= ~VTA_ALTCHAR;
+		vtattr_notify();
 		return 0;
 	}
 	if (c == 'H') {
@@ -199,6 +213,16 @@ static int escout(unsigned char c)
 		cursor_disable();
 		return 0;
 	}
+	if (c == 'p') {
+		vtattr |= VTA_INVERSE;
+		vtattr_notify();
+		return 0;
+	}
+	if (c == 'q') {
+		vtattr &= ~VTA_INVERSE;
+		vtattr_notify();
+		return 0;
+	}
 	if (c == 'Y')
 		return 2;
 	if (c == 'a')
@@ -223,7 +247,7 @@ void vt_cursor_on(void)
 }
 
 /* VT52 alike functionality */
-void vtoutput(unsigned char *p, unsigned int len)
+void vtoutput(register unsigned char *p, register unsigned int len)
 {
 	irqflags_t irq;
 	uint8_t cq;
@@ -249,7 +273,7 @@ void vtoutput(unsigned char *p, unsigned int len)
 	   this right down */
 	do {
 		while (len--) {
-			unsigned char c = *p++;
+			register unsigned char c = *p++;
 			if (vtmode == 0) {
 				charout(c);
 				continue;
@@ -270,7 +294,8 @@ void vtoutput(unsigned char *p, unsigned int len)
 					cursorx = ncursorx;
 				vtmode = 0;
 			} else if (vtmode == 4 ){
-				vtattr = c;
+				vtattr &= VTA_ALTCHAR;
+				vtattr |= c & ~VTA_ALTCHAR;
 				vtmode = 0;
 				vtattr_notify();
 				continue;
@@ -299,7 +324,7 @@ void vtoutput(unsigned char *p, unsigned int len)
 }
 
 /* Note: multiple vt switching handled by platform wrapper */
-int vt_ioctl(uint_fast8_t minor, uarg_t request, char *data)
+int vt_ioctl(uint_fast8_t minor, uarg_t request, register char *data)
 {
 	if (minor <= MAX_VT) {
 		switch(request) {
@@ -320,7 +345,7 @@ int vt_ioctl(uint_fast8_t minor, uarg_t request, char *data)
 				keyrepeat.first *= (TICKSPERSEC/10);
 				keyrepeat.continual *= (TICKSPERSEC/10);
 				return 0;
-#endif					
+#endif
 			case VTSIZE:
 				return (VT_BOTTOM + 1) << 8 | (VT_RIGHT + 1);
 			case VTATTRS:
@@ -330,7 +355,7 @@ int vt_ioctl(uint_fast8_t minor, uarg_t request, char *data)
 	return tty_ioctl(minor, request, data);
 }
 
-int vt_inproc(uint_fast8_t minor, uint_fast8_t c)
+int vt_inproc(register uint_fast8_t minor, register uint_fast8_t c)
 {
 #ifdef CONFIG_UNIKEY
 	if (c == KEY_POUND) {
@@ -376,7 +401,7 @@ void vtinit(void)
 
 #ifdef CONFIG_VT_MULTI
 
-void vt_save(struct vt_switch *vt)
+void vt_save(register struct vt_switch *vt)
 {
 	vt->vtmode = vtmode;
 	vt->vtattr = vtattr;
@@ -388,7 +413,7 @@ void vt_save(struct vt_switch *vt)
 	vt->paper = vtpaper;
 }
 
-void vt_load(struct vt_switch *vt)
+void vt_load(register struct vt_switch *vt)
 {
 	vtmode = vt->vtmode;
 	vtattr = vt->vtattr;
@@ -433,6 +458,10 @@ void cursor_on(int8_t y, int8_t x)
 
 void plot_char(int8_t y, int8_t x, uint16_t c)
 {
+	if (vtattr & VTA_ALTCHAR)
+		c |= 0x80;
+	else
+		c &= 0x7F;
 	*char_addr(y, x) = VT_MAP_CHAR(c);
 }
 

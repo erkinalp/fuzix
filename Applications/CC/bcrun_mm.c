@@ -1,0 +1,815 @@
+/*
+ *	The mm_* BASIC runtime, native inside bcrun.
+ *
+ *	Included from the end of bcrun.c so everything stays one
+ *	translation unit: the wrappers need arg()/argd()/dput()/mem and
+ *	the interpreter needs mm_wrap_lookup()/mmrt_reserve(), and none
+ *	of it wants external linkage.
+ *
+ *	mmb_runtime.c and mmb_runtime.h are verbatim copies of the master
+ *	files in Applications/mmb2c, compiled from there (-I../mmb2c).
+ *	They used to be copies here, which drifted.
+ *
+ *	The scheme: the runtime's own code runs on native pointers,
+ *	untouched.  Every entry point a translated program can call gets
+ *	a small wrapper converting VM offsets to native pointers on the
+ *	way in (mm_ptr) and back on the way out (mm_off).  The only state
+ *	a program can hold a pointer to - the scratch-string pool and the
+ *	by-ref pool - is carved out of VM memory by mmrt_reserve() and
+ *	bound into the runtime, so those pointers are ordinary VM
+ *	addresses.  Everything else (FILE channels, DATA cursors, GOSUB
+ *	stack, INPUT line buffer) is native state the program only ever
+ *	names, never addresses.
+ */
+
+/* Everything the runtime includes must be read BEFORE the strtoll
+   macros below, or a first-read declaration of strtoll would be
+   macro-expanded into garbage.  All are include-guarded no-ops where
+   bcrun.c already pulled them in. */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <ctype.h>
+#include <time.h>
+
+/*
+ *	Microseconds since start, same sources as the time_us libcall:
+ *	the PC3 kernel's clock through /dev/sys on the board, wall clock
+ *	on the development machine.  Defined before the runtime is
+ *	included so its MM_HOSTED branches pick it up.
+ *
+ *	All 64 bits: TIMER is a float in MMBasic, so the runtime keeps its
+ *	base in microseconds, and the 31-bit ADVAL(-9) those used to come
+ *	from wraps every 36 minutes - which would send TIMER backwards in
+ *	the middle of a program.
+ */
+static long long time_us64(void)
+{
+	return lib_us64();
+}
+
+/*
+ *	Fuzix libc's strtoll stops at 32 bits; bc_strtoll above is the
+ *	one 64-bit parser every host shares, so the runtime's VAL() and
+ *	friends parse identically on the development machine and the
+ *	board.
+ */
+#define strtoll(s, e, b)  bc_strtoll((s), (e), (b), 0)
+#define strtoull(s, e, b) ((unsigned long long)bc_strtoll((s), (e), (b), 1))
+
+/*
+ *	The runtime's own maths goes through the shared table too.  The
+ *	kernel exports one libm from flash (mfns_share fills mfns[] from
+ *	it at startup, fatally if absent), but these four are also called
+ *	DIRECTLY below - mm_pow, mm_atan3, the float formatter, the
+ *	statistics reducers - which made the linker keep private copies
+ *	of pow, atan2, log10 and sqrt plus their internals (__log1p,
+ *	scalbn, atan): ~5K in every process, duplicating functions the
+ *	kernel already runs from flash with the DCP.  Routing the direct
+ *	calls through mfns[] drops them.  Index by position: the mfns
+ *	order is the table ABI (sqrt 9, log10 12, pow 16, atan2 17).
+ *	On the hosts mfns[] holds the local functions, so this is an
+ *	identity there.
+ */
+#define sqrt(x)      ((mfns[9].f1)(x))
+#define log10(x)     ((mfns[12].f1)(x))
+#define pow(x, y)    ((mfns[16].f2)((x), (y)))
+#define atan2(y, x)  ((mfns[17].f2)((y), (x)))
+
+/*
+ *	And the rest of them, for the same reason.  Four were redirected
+ *	when this was written and the runtime calls ten: mm_acos, mm_asin
+ *	and mm_log still named theirs directly, which kept acos (1,192),
+ *	asin (1,008) and log (868) - and the range reducers behind them -
+ *	in EVERY process for functions the kernel already runs from flash.
+ *
+ *	The whole point of MFN(f) being NULL under MM_PC3 is that nothing
+ *	references the local copies so the linker drops them, and one
+ *	direct call is enough to defeat it silently.  So the list is
+ *	complete now rather than "the ones that showed up": floor, ceil
+ *	and fabs are here as well, because a future edit adding one more
+ *	caller should not quietly put 3K back.
+ *
+ *	Indices are the table ABI (libm_table.c), by position.
+ */
+#define sin(x)       ((mfns[0].f1)(x))
+#define cos(x)       ((mfns[1].f1)(x))
+#define tan(x)       ((mfns[2].f1)(x))
+#define asin(x)      ((mfns[3].f1)(x))
+#define acos(x)      ((mfns[4].f1)(x))
+#define atan(x)      ((mfns[5].f1)(x))
+#define sinh(x)      ((mfns[6].f1)(x))
+#define cosh(x)      ((mfns[7].f1)(x))
+#define tanh(x)      ((mfns[8].f1)(x))
+#define exp(x)       ((mfns[10].f1)(x))
+#define log(x)       ((mfns[11].f1)(x))
+#define floor(x)     ((mfns[13].f1)(x))
+#define ceil(x)      ((mfns[14].f1)(x))
+#define fabs(x)      ((mfns[15].f1)(x))
+#define fmod(x, y)   ((mfns[18].f2)((x), (y)))
+
+#define MM_HOSTED 1
+#include "mmb_runtime.c"
+
+/* ---- offset <-> pointer -------------------------------------------- */
+
+/*
+ *	need is how much must exist above the offset: MM_STRSZ for a
+ *	string argument, 0 for arrays and buffers whose extent is the
+ *	runtime's own business (exactly as fread's was).  NULL passes
+ *	through so optional index arrays keep working.
+ */
+/*
+ *	Both identities now: a program address is a machine address (see
+ *	vptr in bcrun.c).  Kept as functions because the ~135 wrappers
+ *	below are written in terms of them, and because NULL still has to
+ *	survive the round trip in both directions.
+ */
+static char *mm_ptr(unsigned long off, unsigned long need)
+{
+	(void)need;
+	return (char *)(uintptr_t)off;
+}
+
+static long mm_off(const char *p)
+{
+	return (long)(unsigned long)(uintptr_t)p;
+}
+
+/*
+ *	Argument fetchers by type; a double or an MMINTEGER takes two
+ *	slots.  READ THAT AGAIN BEFORE WRITING A WRAPPER: the slots are 32
+ *	bits, so the argument NUMBER is not the parameter number, and I(n)
+ *	on a parameter declared MMINTEGER silently reads half of it.
+ *
+ *	Three wrappers were written I(0), I(1), I(2) for three MMINTEGER
+ *	parameters.  What the callee saw was the low half of the first, the
+ *	high half of the first (0), and the low half of the second:
+ *	mm_i2c_open(38, 39, 400) reached the kernel as sda=38, scl=0,
+ *	khz=39, and mm_rtcreg(reg, val, 1) wrote 0 to every register - which
+ *	on the DS3231 control register turns the alarm pin into a 1 Hz
+ *	square wave, so the alarm test passed for the wrong reason.
+ *
+ *	The runtime's answer was to declare those parameters int, since a
+ *	pin, a register and a length all fit one; the general rule stands
+ *	for anything genuinely 64-bit.  The compiler cannot help here - the
+ *	call is correct C either way - and neither can the host gates,
+ *	where the runtime is called directly and never through a slot.
+ */
+#define Ps(n)	mm_ptr((unsigned long)(uint32_t)arg(n), MM_STRSZ)
+#define Pa(n)	mm_ptr((unsigned long)(uint32_t)arg(n), 0)
+#define PI(n)	((MMINTEGER *)(void *)Pa(n))
+#define PF(n)	((MMFLOAT *)(void *)Pa(n))
+#define PSA(n)	((char (*)[MM_STRSZ])(void *)Pa(n))
+#define I(n)	((int)arg(n))
+#define LL(n)	((MMINTEGER)argll(n))
+#define D(n)	((MMFLOAT)argd(n))
+
+/* ---- the wrappers --------------------------------------------------- */
+
+/* scratch and by-ref */
+static void w_tmp(void)      { A = mm_off(mm_tmp()); }
+static void w_mark(void)     { A = S32(mm_mark()); }
+static void w_release(void)  { mm_release((unsigned)arg(0)); A = 0; }
+static void w_byref_f(void)  { A = mm_off((char *)mm_byref_f(D(0))); }
+static void w_byref_i(void)  { A = mm_off((char *)mm_byref_i(LL(0))); }
+
+/* core string ops */
+static void w_sset(void)     { mm_sset(Ps(0), Ps(1)); A = 0; }
+static void w_ssetm(void)    { mm_ssetm(Ps(0), I(1), Ps(2)); A = 0; }
+static void w_ssetc(void)    { mm_ssetc(Ps(0), Pa(1)); A = 0; }
+static void w_ssetn(void)    { mm_ssetn(Ps(0), Pa(1), I(2)); A = 0; }
+static void w_scat(void)     { A = mm_off(mm_scat(Ps(0), Ps(1))); }
+static void w_scmp(void)     { A = mm_scmp(Ps(0), Ps(1)); }
+static void w_scopy(void)    { A = mm_off(mm_scopy(Ps(0))); }
+
+/* console */
+static void w_putc(void)     { mm_putc(I(0)); A = 0; }
+static void w_pr_s(void)     { mm_pr_s(Ps(0)); A = 0; }
+static void w_pr_i(void)     { mm_pr_i(LL(0)); A = 0; }
+static void w_pr_f(void)     { mm_pr_f(D(0)); A = 0; }
+static void w_pr_nl(void)    { mm_pr_nl(); A = 0; }
+static void w_pr_se(void)    { mm_pr_se(Ps(0)); A = 0; }
+static void w_pr_ie(void)    { mm_pr_ie(LL(0)); A = 0; }
+static void w_pr_fe(void)    { mm_pr_fe(D(0)); A = 0; }
+static void w_pr_tabe(void)  { mm_pr_tabe(); A = 0; }
+static void w_pr_tab(void)   { mm_pr_tab(); A = 0; }
+static void w_col(void)      { A = mm_col(); }
+static void w_tab(void)      { A = mm_off(mm_tab(LL(0))); }
+
+/* number -> string */
+static void w_int_to_str(void)     { mm_int_to_str(Pa(0), argll(1), I(3)); A = 0; }
+static void w_int_to_str_pad(void) { mm_int_to_str_pad(Pa(0), argll(1),
+					(signed char)arg(3), I(4), I(5)); A = 0; }
+static void w_float_to_str(void)   { mm_float_to_str(Pa(0), D(1), I(3), I(4),
+					(unsigned char)arg(5)); A = 0; }
+
+/* numeric helpers */
+static void w_toint(void)    { A = mm_toint(D(0)); }
+static void w_idiv(void)     { A = mm_idiv(LL(0), LL(2)); }
+static void w_mod(void)      { A = mm_mod(LL(0), LL(2)); }
+static void w_fdiv(void)     { A = dput(mm_fdiv(D(0), D(2))); }
+static void w_pow(void)      { A = dput(mm_pow(D(0), D(2))); }
+static void w_sqr(void)      { A = dput(mm_sqr(D(0))); }
+static void w_log(void)      { A = dput(mm_log(D(0))); }
+static void w_asin(void)     { A = dput(mm_asin(D(0))); }
+static void w_acos(void)     { A = dput(mm_acos(D(0))); }
+static void w_atan3(void)    { A = dput(mm_atan3(D(0), D(2))); }
+static void w_rnd(void)      { A = dput(mm_rnd()); }
+static void w_randomize(void){ mm_randomize(LL(0)); A = 0; }
+static void w_sgn(void)      { A = mm_sgn(D(0)); }
+static void w_int(void)      { A = dput(mm_int(D(0))); }
+static void w_fix(void)      { A = dput(mm_fix(D(0))); }
+
+/* string functions */
+static void w_asc(void)      { A = mm_asc(Ps(0)); }
+static void w_instr(void)    { A = mm_instr(LL(0), Ps(2), Ps(3)); }
+static void w_val(void)      { A = dput(mm_val(Ps(0))); }
+static void w_chr(void)      { A = mm_off(mm_chr(LL(0))); }
+static void w_left(void)     { A = mm_off(mm_left(Ps(0), LL(1))); }
+static void w_right(void)    { A = mm_off(mm_right(Ps(0), LL(1))); }
+static void w_mid(void)      { A = mm_off(mm_mid(Ps(0), LL(1), LL(3))); }
+static void w_ucase(void)    { A = mm_off(mm_ucase(Ps(0))); }
+static void w_lcase(void)    { A = mm_off(mm_lcase(Ps(0))); }
+static void w_ltrim(void)    { A = mm_off(mm_ltrim(Ps(0))); }
+static void w_rtrim(void)    { A = mm_off(mm_rtrim(Ps(0))); }
+static void w_space(void)    { A = mm_off(mm_space(LL(0))); }
+static void w_strrep(void)   { A = mm_off(mm_strrep(LL(0), LL(2))); }
+static void w_str_f(void)    { A = mm_off(mm_str_f(D(0), LL(2), LL(4), Ps(6))); }
+static void w_str_i(void)    { A = mm_off(mm_str_i(LL(0), LL(2), LL(4), Ps(6))); }
+static void w_hex(void)      { A = mm_off(mm_hex(LL(0), LL(2))); }
+static void w_oct(void)      { A = mm_off(mm_oct(LL(0), LL(2))); }
+static void w_bin(void)      { A = mm_off(mm_bin(LL(0), LL(2))); }
+static void w_format(void)   { A = mm_off(mm_format(D(0), Ps(2))); }
+static void w_mid_assign(void) { mm_mid_assign(Ps(0), LL(1), LL(3), Ps(5)); A = 0; }
+/* BYTE()/TRIM$/FIELD$, BIT/BYTE/FLAG, BIN2STR$/STR2BIN, GOSUB and the
+   MAP() arithmetic are all program-side now (mmb_misc.h). */
+
+/* date and time are program-side now (mmb_datetime.h): calendar
+   arithmetic over time(), which is already a libcall. */
+
+/* files */
+static void w_open(void)     { mm_open(Ps(0), I(1), LL(2)); A = 0; }
+static void w_close(void)    { mm_close(LL(0)); A = 0; }
+static void w_flush(void)    { mm_flush(LL(0)); A = 0; }
+static void w_close_all(void){ mm_close_all(); A = 0; }
+static void w_fpr_s(void)    { mm_fpr_s(LL(0), Ps(2)); A = 0; }
+static void w_fpr_i(void)    { mm_fpr_i(LL(0), LL(2)); A = 0; }
+static void w_fpr_f(void)    { mm_fpr_f(LL(0), D(2)); A = 0; }
+static void w_fpr_nl(void)   { mm_fpr_nl(LL(0)); A = 0; }
+static void w_fpr_tab(void)  { mm_fpr_tab(LL(0)); A = 0; }
+static void w_eof(void)      { A = mm_eof(LL(0)); }
+static void w_loc(void)      { A = mm_loc(LL(0)); }
+static void w_lof(void)      { A = mm_lof(LL(0)); }
+static void w_seek(void)     { mm_seek(LL(0), LL(2)); A = 0; }
+static void w_getline(void)  { A = mm_off(mm_getline(LL(0))); }
+static void w_input_str(void){ A = mm_off(mm_input_str(LL(0), LL(2))); }
+static void w_input_line(void){ mm_input_line(LL(0)); A = 0; }
+static void w_input_next(void){ A = mm_off(mm_input_next()); }
+static void w_atoi(void)     { A = mm_atoi(Ps(0)); }
+static void w_atof(void)     { A = dput(mm_atof(Ps(0))); }
+
+/* file management */
+static void w_kill(void)     { mm_kill(Ps(0)); A = 0; }
+static void w_rename(void)   { mm_rename(Ps(0), Ps(1)); A = 0; }
+static void w_fcopy(void)    { mm_copy(Ps(0), Ps(1)); A = 0; }
+static void w_mkdir(void)    { mm_mkdir(Ps(0)); A = 0; }
+static void w_rmdir(void)    { mm_rmdir(Ps(0)); A = 0; }
+static void w_chdir(void)    { mm_chdir(Ps(0)); A = 0; }
+static void w_cwd(void)      { A = mm_off(mm_cwd()); }
+static void w_inkey(void)    { A = mm_off(mm_inkey()); }
+/* PRINT @(x,y[,mode]) - returns the empty string, like MMBasic's */
+static void w_at(void)       { A = mm_off(mm_at(LL(0), LL(2), LL(4))); }
+static void w_dir(void)      { A = mm_off(mm_dir(Ps(0), I(1), I(2))); }
+static void w_files(void)    { mm_files(Ps(0)); A = 0; }
+
+/* DIM a(n)/REDIM's arithmetic and every other whole-array operation
+ * are program-side now (mmb_array.h); only mm_arr_count below keeps a
+ * crossing, because every array parameter's count goes through it. */
+
+/* DATA / READ / RESTORE is program-side now (mmb_data.h): the tables
+ * are the program's own data and the cursor its own state.  The
+ * VM-offset shim for the string table went with it. */
+
+/* SORT is program-side now (mmb_sort.h): pure computation over the
+   program's own arrays, so no crossing exists for it any more. */
+
+/* the one whole-array crossing left - see the note above */
+static void w_arr_count(void){ A = mm_arr_count(PI(0)); }
+
+/* misc Tier A */
+static void w_pause(void)    { mm_pause(D(0)); A = 0; }
+static void w_error_s(void)  { mm_error_s(Ps(0)); A = 0; }
+/* ON ERROR: the state pair lives in the PROGRAM's memory so a guard in
+   generated code is a load, not a call through here.  Pa(0) translates
+   the program address the way every by-reference argument is. */
+static void w_err_bind(void) { mm_err_bind((int *)Pa(0)); A = 0; }
+static void w_on_error(void) { mm_on_error(I(0), LL(1)); A = 0; }
+/* The error state across an interrupt handler - MMBasic's
+   GotAnInterrupt/cmd_ireturn pair.  In here rather than in the
+   program's own memory because the errno and the message are the
+   runtime's statics; the ON ERROR skip pair is reached through the
+   pointer mm_err_bind already gave us. */
+static void w_int_err_push(void) { mm_int_err_push(); A = 0; }
+static void w_int_err_pop(void)  { mm_int_err_pop(); A = 0; }
+/* SETTICK's clock off the board.  On the PC3 the generated code reads
+   TIMER0 itself (pc3_us64) and never comes through here. */
+static void w_us(void)           { A = mm_us(); }
+static void w_rand32(void)       { A = mm_rand32(); }
+/* ON KEY: peek at the next decoded key, and eat it.  A key the poll
+   does not want stays queued for INKEY$. */
+static void w_key_peek(void)     { A = mm_key_peek(); }
+static void w_key_drop(void)     { mm_key_drop(); A = 0; }
+/* RTC GETREG/SETREG - one DS3231 register, through the kernel because
+   /dev/i2c refuses the clock's own address. */
+static void w_rtcreg(void)       { A = mm_rtcreg(I(0), I(1), I(2)); }
+/* I2C2 - the second controller.  Pa(2) is the caller's buffer; the
+   transfer is one whole transaction, which is why this stays a syscall
+   (300us of bus against a 1.5us crossing). */
+static void w_i2c_open(void)     { A = mm_i2c_open(I(0), I(1), I(2), I(3)); }
+static void w_i2c_close(void)    { mm_i2c_close(); A = 0; }
+/* SPI0 - MMBasic's first controller, on header pins.  Pa(0)/Pa(1) are
+   the caller's buffers and either may be 0: tx alone writes, rx alone
+   reads, both together writes and reads.  mm_ptr passes NULL through,
+   which is what makes "0" work as "no buffer" from the program. */
+static void w_spi_open(void)
+{ A = mm_spi_open(I(0), I(1), I(2), I(3), I(4), I(5)); }
+static void w_spi_close(void)    { mm_spi_close(); A = 0; }
+static void w_spi_xfer(void)
+{ A = mm_spi_xfer((unsigned char *)Pa(0), (unsigned char *)Pa(1), I(2)); }
+static void w_i2c_xfer(void)
+{ A = mm_i2c_xfer(I(0), I(1), I(2), (unsigned char *)Pa(3), I(4)); }
+/* The general form: bus 0 is the fixed one (GP20/21, the QWIIC socket
+   and the DS3231), bus 1 is I2C2 on header pins. */
+static void w_i2c_msg(void)
+{ A = mm_i2c_msg(I(0), I(1), I(2), I(3), (unsigned char *)Pa(4), I(5)); }
+static void w_i2c_stat(void) { A = mm_i2c_stat(); }
+static void w_errno(void)    { A = mm_errno(); }
+/* through a scratch temp: MM.ERRMSG$ lives in bcrun's own memory, and a
+   program can only be handed a pointer inside the VM's address space */
+static void w_errmsg(void)   { A = mm_off(mm_scopy(mm_errmsg())); }
+static void w_pr_commit(void){ mm_pr_commit(); A = 0; }
+static void w_ver(void)      { A = dput(mm_ver()); }
+static void w_device(void)   { A = mm_off(mm_scopy(mm_device())); }
+/* MM.INFO()'s answers.  The string ones go through mm_scopy for the
+   same reason MM.ERRMSG$ does: they live in bcrun's own memory and a
+   program can only be handed a pointer inside the VM's address space. */
+static void w_platform(void) { A = mm_off(mm_scopy(mm_platform())); }
+static void w_path(void)     { A = mm_off(mm_scopy(mm_path())); }
+static void w_current(void)  { A = mm_off(mm_scopy(mm_current())); }
+static void w_drive(void)    { A = mm_off(mm_scopy(mm_drive())); }
+static void w_exists_file(void) { A = mm_exists_file(Ps(0)); }
+static void w_exists_dir(void)  { A = mm_exists_dir(Ps(0)); }
+static void w_filesize(void) { A = mm_filesize(Ps(0)); }
+static void w_pinno(void)    { A = mm_pinno(Ps(0)); }
+static void w_fontwidth(void)  { A = mm_fontwidth(); }
+static void w_fontheight(void) { A = mm_fontheight(); }
+static void w_hpos(void)     { A = mm_hpos(); }
+static void w_vpos(void)     { A = mm_vpos(); }
+static void w_keydown(void)  { A = mm_keydown(I(0)); }
+static void w_cmdline(void)  { A = mm_off(mm_scopy(mm_cmdline())); }
+/* The generated main passes its own argc/argv, which are meaningless
+   here - the entry is dispatched without them.  bcrun's are the real
+   ones, so they are what gets bound, and the generated C stays the same
+   in both worlds. */
+static void w_argv_bind(void) { mm_argv_bind(prog_argc, prog_argv); A = 0; }
+static void w_timer_set(void){ mm_timer_set(D(0)); A = 0; }
+static void w_run_begin(void) { mm_run_begin(); A = 0; }
+static void w_run_arg(void)   { mm_run_arg(Ps(0)); A = 0; }
+static void w_run_arg_i(void) { mm_run_arg_i(LL(0)); A = 0; }
+static void w_run_arg_f(void) { mm_run_arg_f(D(0)); A = 0; }
+static void w_run_exec(void)  { A = mm_run_exec(); }
+/* CPU RESTART.  mm_restart execs mm_argv0, which w_argv_bind filled
+   from bcrun's own prog_argv - so the .bc program re-executes by the
+   path the shell actually used, and bcrun's loader runs it afresh. */
+static void w_restart(void)   { mm_restart(); A = 0; }
+static void w_disksize(void)  { A = mm_disksize(); }
+static void w_run_bg(void)    { A = mm_run_bg(); }
+/* SPRITE LOADPNG: run the decoder and read the sprite back.  The
+   buffer is the program's, so it arrives as a VM offset and Pa turns
+   it into the real address, exactly as the framebuffer reads do. */
+static void w_run_pipe(void)  { A = mm_run_pipe(); }
+static void w_run_pipe_read(void)
+{
+	/* int, void *, int - three 32-bit slots, so I(0), Pa(1), I(2).
+	   Not LL(0)/Pa(2)/LL(4): see the note in mmb_runtime.h about
+	   slots, which this got wrong once already. */
+	A = mm_run_pipe_read(I(0), (void *)Pa(1), I(2));
+}
+static void w_run_pipe_close(void) { A = mm_run_pipe_close(I(0)); }
+static void w_play_start(void){ A = mm_play_start(); }
+static void w_play_stop(void) { A = mm_play_stop(); }
+static void w_play_owner(void){ A = mm_play_owner(); }
+static void w_play_send(void) { A = mm_play_send(LL(0), LL(2), LL(4),
+					        LL(6), LL(8), LL(10)); }
+static void w_snd_cmd(void)   { A = mm_snd_cmd(LL(0), LL(2), LL(4),
+					       LL(6), LL(8), LL(10)); }
+static void w_snd_stop(void)  { A = mm_snd_stop(); }
+
+/* graphics - every argument and result is RGB888, as in MMBasic */
+static void w_pixel(void)    { mm_pixel(LL(0), LL(2), LL(4)); A = 0; }
+static void w_pixel_get(void){ A = mm_pixel_get(LL(0), LL(2)); }
+static void w_cls(void)      { mm_cls(LL(0)); A = 0; }
+static void w_line(void)     { mm_line(LL(0), LL(2), LL(4), LL(6), LL(8));
+                               A = 0; }
+static void w_hres(void)     { A = mm_hres(); }
+/* Raw framebuffer reads for FILL.  Pa(2) is the program's buffer - no
+   MMU, so the kernel fills it where it lies, the same as every other
+   buffer that crosses here. */
+static void w_fb_read(void)  { A = mm_fb_read(LL(0), LL(2),
+					      (void *)Pa(4)); }
+/* ... and writes, for BLIT: native bytes back into the draw target. */
+static void w_fb_put(void)   { A = mm_fb_put(LL(0), LL(2),
+					     (const void *)Pa(4)); }
+/* The rectangle forms of the same pair: rows of len bytes, stride apart
+   in the target and contiguous in the program's buffer.  One crossing
+   for a whole rectangle, where the row calls above were one per row and
+   two per written row. */
+static void w_fb_readr(void) { A = mm_fb_readr(LL(0), LL(2), LL(4),
+					       LL(6), (void *)Pa(8)); }
+static void w_fb_putr(void)  { A = mm_fb_putr(LL(0), LL(2), LL(4),
+					      LL(6), (const void *)Pa(8)); }
+static void w_fb_scroll2(void) { A = mm_fb_scroll2(LL(0), LL(2), LL(4)); }
+static void w_colour_index(void) { A = mm_colour_index(LL(0)); }
+static void w_fb_geom(void)  { A = mm_fb_geom(); }
+static void w_vres(void)     { A = mm_vres(); }
+static void w_mode(void)     { mm_mode(LL(0)); A = 0; }
+static void w_colour(void)   { mm_colour(LL(0), LL(2)); A = 0; }
+static void w_fg(void)       { A = mm_fg(); }
+static void w_bg(void)       { A = mm_bg(); }
+/* The arrays belong to the program, so they arrive as VM offsets and
+   the kernel is handed the real address inside mem. */
+static void w_plot(void)     { mm_plot((const short *)Pa(0), LL(1), LL(3));
+                               A = 0; }
+static void w_fill(void)     { mm_fill((const short *)Pa(0), LL(1), LL(3));
+                               A = 0; }
+/* PIXEL xa(), ya() [, c | ca()] - six array pointers, of which one of
+   each pair is null, then the scalar colour and the count. */
+static void w_pixels(void)   { mm_pixels(PF(0), PI(1), PF(2), PI(3),
+                                         PF(4), PI(5), LL(6), LL(8));
+                               A = 0; }
+/* TEXT and FONT.  mm_fontinfo hands back the cell through two by-ref
+   integers, which is why it takes pointers where everything around it
+   takes values - the caller is mmg_text in mmb_gfx.h, not BASIC. */
+static void w_fontinfo(void) { A = mm_fontinfo(LL(0), PI(2), PI(3)); }
+/* MM.INFO(FONT ADDRESS n).  A machine address, so it comes back whole:
+   no MMU here and the fonts are in kernel flash, far outside anything
+   the VM's own offsets describe.  PEEK is not in this table at all - it
+   compiles into the program from mmb_peek.h and needs no crossing. */
+static void w_fontaddr(void) { A = mm_fontaddr(LL(0)); }
+/* DefineFont: the address goes the OTHER way - the program's own font
+   data, which lives in the program's image and is read by the kernel
+   where it lies.  A machine address again, so it crosses whole. */
+static void w_fontdef(void)  { A = mm_fontdef(LL(0), LL(2), LL(4)); }
+static void w_font(void)     { mm_font(LL(0), LL(2)); A = 0; }
+/* What FONT last selected - two by-ref integers back, like mm_fontinfo
+   above, and for the same caller: mmg_text needs TEXT's defaults and
+   they live on this side. */
+static void w_font_cur(void) { mm_font_cur(PI(0), PI(1)); A = 0; }
+/* OPTION CONSOLE: where a PRINT goes - the screen, the serial line, or
+   both.  One integer in, nothing out. */
+static void w_console(void)  { mm_console(LL(0)); A = 0; }
+static void w_gtext(void)    { mm_gtext(LL(0), LL(2), LL(4), LL(6),
+                                        LL(8), LL(10), Ps(12), LL(13),
+                                        LL(15));
+                               A = 0; }
+/* GPIO - one crossing for all of SETPIN and PIN; the statements
+   themselves are static functions in mmb_gpio.h, so a program that
+   touches no pins carries none of them. */
+static void w_gpio(void)     { A = mm_gpio(LL(0), LL(2), LL(4)); }
+/* The counting inputs (SETPIN FIN/CIN/PER).  Its own libcall NAME so
+   that a .bc using counting is refused by name on an old bcrun instead
+   of misbehaving through mm_gpio's default case. */
+static void w_pinct(void)    { A = mm_pinct(LL(0), LL(2), LL(4)); }
+/* The PIO output word buffer (WS2812/BITSTREAM) - its own name so an
+   old bcrun refuses instead of turning a failure into a pointer. */
+static void w_pincap(void)   { A = mm_pincap(LL(0), LL(2), LL(4)); }
+static void w_pobuf(void)    { A = mm_pobuf(); }
+/* MAP - the LIVE palette.  mm_map collects an entry, mm_map_set
+   applies the lot during blanking; the MAP() arithmetic and COLOUR
+   MAP are program-side in mmb_misc.h. */
+static void w_map(void)      { mm_map(LL(0), LL(2)); A = 0; }
+static void w_map_set(void)  { mm_map_set(); A = 0; }
+static void w_map_reset(void){ mm_map_reset(); A = 0; }
+/* FRAMEBUFFER - 0 is the screen, 1 the off-screen buffer */
+static void w_fb_create(void){ mm_fb_create(LL(0)); A = 0; }
+static void w_fb_close(void) { mm_fb_close(LL(0)); A = 0; }
+static void w_fb_merge(void) { mm_fb_merge(LL(0)); A = 0; }
+static void w_fb_write(void) { mm_fb_write(LL(0)); A = 0; }
+static void w_fb_cur(void)   { A = mm_fb_cur(); }
+static void w_fb_copy(void)  { mm_fb_copy(LL(0), LL(2), LL(4)); A = 0; }
+static void w_fb_wait(void)  { mm_fb_wait(); A = 0; }
+
+/* LONGSTRING is program-side now (mmb_lstring.h) except the two file
+   forms, whose channel is bcrun's own stdio stream. */
+static void w_ls_print(void) { mm_ls_print(LL(0), PI(2), I(3)); A = 0; }
+static void w_ls_input(void) { A = mm_ls_input(PI(0), I(1), LL(2), LL(4)); }
+
+/* misc */
+static void w_error(void)    { mm_error(Pa(0)); }
+static void w_end(void)      { mm_end(); }
+static void w_timer(void)    { A = dput(mm_timer()); }
+
+/*
+ *	One block for every array and string in the program, from the
+ *	VM heap - which is itself PSRAM on the board (see heap_init in
+ *	bcrun.c), so this is megabytes and costs no syscall.  It used to
+ *	go straight to the kernel here; that was one ioctl pair per call
+ *	and only tolerable because a program allocates once.
+ */
+static void w_heap(void)
+{
+	unsigned long n = (unsigned long)(uint32_t)arg(0);
+
+	A = lib_malloc(n);
+	if (A)
+		memset(vptr(A), 0, n);	/* mm_heap zeroes; so must this */
+	else
+		mm_error("out of memory for arrays and strings");
+}
+
+/*
+ *	The same heap, per invocation, for a routine's LOCAL arrays and
+ *	strings.  Separate from w_heap only so the two can be tuned apart
+ *	later: this one runs on every call and w_heap runs once.
+ */
+static void w_lheap(void)
+{
+	unsigned long n = (unsigned long)(uint32_t)arg(0);
+
+	A = lib_malloc(n);
+	if (A)
+		memset(vptr(A), 0, n);
+	else
+		mm_error("out of memory for LOCAL arrays and strings");
+}
+
+static void w_lfree(void)
+{
+	lib_free((unsigned long)(uint32_t)arg(0));
+	A = 0;
+}
+
+/* ---- name table ----------------------------------------------------- */
+
+/*
+ *	Looked up once per symbol: libcall() caches the result in
+ *	libbind[], so the cost of the scan is paid at most once per name
+ *	per run, not per call.
+ */
+static const struct mmwrap {
+	const char *name;
+	void (*fn)(void);
+} mmwtab[] = {
+	{ "mm_tmp",		w_tmp },
+	{ "mm_mark",		w_mark },
+	{ "mm_release",		w_release },
+	{ "mm_byref_f",		w_byref_f },
+	{ "mm_byref_i",		w_byref_i },
+	{ "mm_sset",		w_sset },
+	{ "mm_ssetm",		w_ssetm },
+	{ "mm_ssetc",		w_ssetc },
+	{ "mm_ssetn",		w_ssetn },
+	{ "mm_scat",		w_scat },
+	{ "mm_scmp",		w_scmp },
+	{ "mm_scopy",		w_scopy },
+	{ "mm_putc",		w_putc },
+	{ "mm_pr_s",		w_pr_s },
+	{ "mm_pr_i",		w_pr_i },
+	{ "mm_pr_f",		w_pr_f },
+	{ "mm_pr_nl",		w_pr_nl },
+	{ "mm_pr_se",		w_pr_se },
+	{ "mm_pr_ie",		w_pr_ie },
+	{ "mm_pr_fe",		w_pr_fe },
+	{ "mm_pr_tabe",	w_pr_tabe },
+	{ "mm_pr_tab",		w_pr_tab },
+	{ "mm_col",		w_col },
+	{ "mm_tab",		w_tab },
+	{ "mm_int_to_str",	w_int_to_str },
+	{ "mm_int_to_str_pad",	w_int_to_str_pad },
+	{ "mm_float_to_str",	w_float_to_str },
+	{ "mm_toint",		w_toint },
+	{ "mm_idiv",		w_idiv },
+	{ "mm_mod",		w_mod },
+	{ "mm_fdiv",		w_fdiv },
+	{ "mm_pow",		w_pow },
+	{ "mm_sqr",		w_sqr },
+	{ "mm_log",		w_log },
+	{ "mm_asin",		w_asin },
+	{ "mm_acos",		w_acos },
+	{ "mm_atan3",		w_atan3 },
+	{ "mm_rnd",		w_rnd },
+	{ "mm_randomize",	w_randomize },
+	{ "mm_sgn",		w_sgn },
+	{ "mm_int",		w_int },
+	{ "mm_fix",		w_fix },
+	{ "mm_asc",		w_asc },
+	{ "mm_instr",		w_instr },
+	{ "mm_val",		w_val },
+	{ "mm_chr",		w_chr },
+	{ "mm_left",		w_left },
+	{ "mm_right",		w_right },
+	{ "mm_mid",		w_mid },
+	{ "mm_ucase",		w_ucase },
+	{ "mm_lcase",		w_lcase },
+	{ "mm_ltrim",		w_ltrim },
+	{ "mm_rtrim",		w_rtrim },
+	{ "mm_space",		w_space },
+	{ "mm_strrep",		w_strrep },
+	{ "mm_str_f",		w_str_f },
+	{ "mm_str_i",		w_str_i },
+	{ "mm_hex",		w_hex },
+	{ "mm_oct",		w_oct },
+	{ "mm_bin",		w_bin },
+	{ "mm_format",		w_format },
+	{ "mm_mid_assign",	w_mid_assign },
+	{ "mm_open",		w_open },
+	{ "mm_close",		w_close },
+	{ "mm_flush",		w_flush },
+	{ "mm_close_all",	w_close_all },
+	{ "mm_fpr_s",		w_fpr_s },
+	{ "mm_fpr_i",		w_fpr_i },
+	{ "mm_fpr_f",		w_fpr_f },
+	{ "mm_fpr_nl",		w_fpr_nl },
+	{ "mm_fpr_tab",		w_fpr_tab },
+	{ "mm_eof",		w_eof },
+	{ "mm_loc",		w_loc },
+	{ "mm_lof",		w_lof },
+	{ "mm_seek",		w_seek },
+	{ "mm_getline",		w_getline },
+	{ "mm_input_str",	w_input_str },
+	{ "mm_input_line",	w_input_line },
+	{ "mm_input_next",	w_input_next },
+	{ "mm_atoi",		w_atoi },
+	{ "mm_atof",		w_atof },
+	{ "mm_kill",		w_kill },
+	{ "mm_rename",		w_rename },
+	{ "mm_copy",		w_fcopy },
+	{ "mm_mkdir",		w_mkdir },
+	{ "mm_rmdir",		w_rmdir },
+	{ "mm_chdir",		w_chdir },
+	{ "mm_cwd",		w_cwd },
+	{ "mm_inkey",		w_inkey },
+	{ "mm_at",		w_at },
+	{ "mm_dir",		w_dir },
+	{ "mm_files",		w_files },
+	{ "mm_arr_count",	w_arr_count },
+	{ "mm_pause",		w_pause },
+	{ "mm_error_s",		w_error_s },
+	{ "mm_err_bind",	w_err_bind },
+	{ "mm_on_error",	w_on_error },
+	{ "mm_int_err_push",	w_int_err_push },
+	{ "mm_int_err_pop",	w_int_err_pop },
+	{ "mm_us",		w_us },
+	{ "mm_rand32",		w_rand32 },
+	{ "mm_key_peek",	w_key_peek },
+	{ "mm_key_drop",	w_key_drop },
+	{ "mm_rtcreg",	w_rtcreg },
+	{ "mm_i2c_open",	w_i2c_open },
+	{ "mm_i2c_close",	w_i2c_close },
+	{ "mm_spi_open",	w_spi_open },
+	{ "mm_spi_close",	w_spi_close },
+	{ "mm_spi_xfer",	w_spi_xfer },
+	{ "mm_i2c_xfer",	w_i2c_xfer },
+	{ "mm_i2c_msg",	w_i2c_msg },
+	{ "mm_i2c_stat",	w_i2c_stat },
+	{ "mm_errno",		w_errno },
+	{ "mm_errmsg",		w_errmsg },
+	{ "mm_pr_commit",	w_pr_commit },
+	{ "mm_ver",		w_ver },
+	{ "mm_device",		w_device },
+	{ "mm_platform",	w_platform },
+	{ "mm_path",		w_path },
+	{ "mm_current",		w_current },
+	{ "mm_drive",		w_drive },
+	{ "mm_exists_file",	w_exists_file },
+	{ "mm_exists_dir",	w_exists_dir },
+	{ "mm_filesize",	w_filesize },
+	{ "mm_pinno",		w_pinno },
+	{ "mm_fontwidth",	w_fontwidth },
+	{ "mm_fontheight",	w_fontheight },
+	{ "mm_hpos",		w_hpos },
+	{ "mm_vpos",		w_vpos },
+	{ "mm_keydown",		w_keydown },
+	{ "mm_cmdline",		w_cmdline },
+	{ "mm_argv_bind",	w_argv_bind },
+	{ "mm_timer_set",	w_timer_set },
+	{ "mm_run_begin",	w_run_begin },
+	{ "mm_run_arg",		w_run_arg },
+	{ "mm_run_arg_i",	w_run_arg_i },
+	{ "mm_run_arg_f",	w_run_arg_f },
+	{ "mm_run_exec",	w_run_exec },
+	{ "mm_restart",		w_restart },
+	{ "mm_disksize",	w_disksize },
+	{ "mm_run_bg",		w_run_bg },
+	{ "mm_run_pipe",	w_run_pipe },
+	{ "mm_run_pipe_read",	w_run_pipe_read },
+	{ "mm_run_pipe_close",	w_run_pipe_close },
+	{ "mm_play_start",	w_play_start },
+	{ "mm_play_stop",	w_play_stop },
+	{ "mm_play_owner",	w_play_owner },
+	{ "mm_play_send",	w_play_send },
+	{ "mm_snd_cmd",		w_snd_cmd },
+	{ "mm_snd_stop",	w_snd_stop },
+	{ "mm_pixel",		w_pixel },
+	{ "mm_pixel_get",	w_pixel_get },
+	{ "mm_cls",		w_cls },
+	{ "mm_line",		w_line },
+	{ "mm_hres",		w_hres },
+	{ "mm_fb_read",		w_fb_read },
+	{ "mm_fb_put",		w_fb_put },
+	{ "mm_fb_readr",	w_fb_readr },
+	{ "mm_fb_putr",		w_fb_putr },
+	{ "mm_fb_scroll2",	w_fb_scroll2 },
+	{ "mm_colour_index",	w_colour_index },
+	{ "mm_fb_geom",		w_fb_geom },
+	{ "mm_vres",		w_vres },
+	{ "mm_mode",		w_mode },
+	{ "mm_colour",		w_colour },
+	{ "mm_fg",		w_fg },
+	{ "mm_bg",		w_bg },
+	{ "mm_plot",		w_plot },
+	{ "mm_fill",		w_fill },
+	{ "mm_pixels",		w_pixels },
+	{ "mm_gpio",		w_gpio },
+	{ "mm_pinct",		w_pinct },
+	{ "mm_pincap",		w_pincap },
+	{ "mm_pobuf",		w_pobuf },
+	{ "mm_map",		w_map },
+	{ "mm_map_set",		w_map_set },
+	{ "mm_map_reset",	w_map_reset },
+	{ "mm_fontinfo",	w_fontinfo },
+	{ "mm_fontaddr",	w_fontaddr },
+	{ "mm_fontdef",		w_fontdef },
+	{ "mm_font",		w_font },
+	{ "mm_font_cur",	w_font_cur },
+	{ "mm_console",		w_console },
+	{ "mm_gtext",		w_gtext },
+	{ "mm_fb_create",	w_fb_create },
+	{ "mm_fb_close",	w_fb_close },
+	{ "mm_fb_write",	w_fb_write },
+	{ "mm_fb_cur",		w_fb_cur },
+	{ "mm_fb_copy",		w_fb_copy },
+	{ "mm_fb_merge",	w_fb_merge },
+	{ "mm_fb_wait",		w_fb_wait },
+	{ "mm_ls_print",	w_ls_print },
+	{ "mm_ls_input",	w_ls_input },
+	{ "mm_error",		w_error },
+	{ "mm_end",		w_end },
+	{ "mm_timer",		w_timer },
+	{ "mm_heap",		w_heap },
+	{ "mm_lheap",		w_lheap },
+	{ "mm_lfree",		w_lfree },
+	{ NULL,			NULL }
+};
+
+static void (*mm_wrap_lookup(const char *name))(void)
+{
+	const struct mmwrap *w;
+	for (w = mmwtab; w->name; w++)
+		if (strcmp(w->name, name) == 0)
+			return w->fn;
+	return NULL;
+}
+
+/* ---- VM space for the pools ----------------------------------------- */
+
+#define MMRT_BYREFSZ	((unsigned long)MM_BYREFN * sizeof(union mm_byref_u))
+#define MMRT_POOLSZ	((unsigned long)MM_TMPN * MM_STRSZ)
+
+/*
+ *	Called from load() once the symbol and string tables are in: if
+ *	the program imports any mm_* name, carve the scratch pool and the
+ *	by-ref pool out of VM memory between bss and the heap (by-ref
+ *	first: it holds doubles and the base is rounded to 8).  Returns
+ *	the first address the heap may use.
+ */
+/*
+ *	What mmrt_reserve will want, for whoever has to size mem[] before
+ *	this file is reached.  Always counted rather than only when the
+ *	program imports an mm_* name: it is four kilobytes, every
+ *	translated BASIC program imports one, and a sizing rule that
+ *	depends on the symbol table is a rule that will be wrong once.
+ */
+static unsigned long mmrt_bytes(void)
+{
+	return MMRT_BYREFSZ + MMRT_POOLSZ;
+}
+
+static unsigned long mmrt_reserve(unsigned long base)
+{
+	/* The one answer scan_mm_imports settled before mem[] was sized:
+	   deciding here from the in-memory symbols again is how the pool
+	   could exist without having been counted, or the reverse. */
+	if (!mm_imports)
+		return base;
+
+	base = (base + 7) & ~7UL;
+	if (base + MMRT_BYREFSZ + MMRT_POOLSZ + STACKROOM > MEMTOP) {
+		fprintf(stderr, "bcrun: no room for the mm runtime pool\n");
+		exit(1);
+	}
+	mm_hosted_bind((char *)vptr(base + MMRT_BYREFSZ), vptr(base));
+	return base + MMRT_BYREFSZ + MMRT_POOLSZ;
+}

@@ -32,15 +32,9 @@ void z180_timer_interrupt(void)
 	unsigned char a;
 
 	/* we have to read both of these registers in order to reset the timer */
-	a = TIME_TCR;
-	a = TIME_TMDR0L;
+	in(TIME_TCR);
+	in(TIME_TMDR0L);
 	timer_interrupt();
-}
-
-void plt_idle(void)
-{
-	/* Let's go to sleep while we wait for something to interrupt us */
-	__asm halt __endasm;
 }
 
 void plt_interrupt(void)
@@ -50,13 +44,13 @@ void plt_interrupt(void)
 		z180_timer_interrupt();
 #ifdef CONFIG_NET_WIZNET
 		w5x00_poll();
-#endif		
+#endif
 		return;
 	case Z180_INT_ASCI0:
-		tty_pollirq_asci0();
+		tty_pirq_asci0();
 		return;
 	case Z180_INT_ASCI1:
-		tty_pollirq_asci1();
+		tty_pirq_asci1();
 		return;
 	default:
 		return;

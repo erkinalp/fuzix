@@ -1,0 +1,23 @@
+cd /bin
+ln sh sh.orig
+rm sh
+bget ../../../Applications/V7/cmd/sh/fsh sh
+chmod 0755 sh
+
+cd /etc
+ln inittab inittab.orig
+rm inittab
+bget ./userspace/inittab inittab
+chmod 0644 inittab
+
+bget ./userspace/netrc netrc
+chmod 0644 netrc
+
+bget ./userspace/resolv.conf resolv.conf
+chmod 0644 resolv.conf
+
+cd /root
+bget ./userspace/.profile .profile
+chmod 0644 .profile
+
+exit

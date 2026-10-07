@@ -28,7 +28,7 @@ tcflag_t termios_mask[NUM_DEV_TTY + 1] = {
 };
 
 /* Write to system console */
-void kputchar(char c)
+void kputchar(uint_fast8_t c)
 {
 	/* handle CRLF */
 	if (c == '\n')
@@ -40,7 +40,7 @@ void kputchar(char c)
  *	CP/M check if the tty is ready. Not something we can do properly
  *	in CP/M 2.2.
  */
-char tty_writeready(uint8_t minor)
+ttyready_t tty_writeready(uint_fast8_t minor)
 {
 	if (cpm_busy)
 		return TTY_READY_SOON;
@@ -50,7 +50,7 @@ char tty_writeready(uint8_t minor)
 		return sysmod_auxost() ? TTY_READY_NOW : TTY_READY_SOON;
 }
 
-void tty_putc(uint8_t minor, unsigned char c)
+void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 {
 	cpm_busy++;
 	if (minor == 1) {
@@ -65,7 +65,7 @@ void tty_putc(uint8_t minor, unsigned char c)
 	cpm_busy--;
 }
 
-void tty_sleeping(uint8_t minor)
+void tty_sleeping(uint_fast8_t minor)
 {
 	used(minor);
 }
@@ -73,7 +73,7 @@ void tty_sleeping(uint8_t minor)
 /* Called every timer tick */
 void tty_pollirq(void)
 {
-	uint8_t c;
+	uint_fast8_t c;
 	/* CP/M is not re-entrant by guarantee */
 	if (cpm_busy)
 		return;
@@ -90,27 +90,27 @@ void tty_pollirq(void)
 	}
 }
 
-void tty_setup(uint8_t minor, uint8_t flags)
+void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 {
 	if (minor == 1)
 		ttydata[1].termios.c_cflag =
-				sysmod_conconf(ttydata[1].termios.c_cflag);
+				c_sysm_conconf(ttydata[1].termios.c_cflag);
 	else
 		ttydata[2].termios.c_cflag =
-				sysmod_auxconf(ttydata[2].termios.c_cflag);
+				c_sysm_auxconf(ttydata[2].termios.c_cflag);
 }
 
-int tty_carrier(uint8_t minor)
+int tty_carrier(uint_fast8_t minor)
 {
 	used(minor);
 	return 1;
 }
 
-void tty_data_consumed(uint8_t minor)
+void tty_data_consumed(uint_fast8_t minor)
 {
 }
 
-int my_tty_open(uint8_t minor, uint16_t flag)
+int my_tty_open(uint_fast8_t minor, uint16_t flag)
 {
 	if (minor == 2 && !(info->features & FEATURE_AUX)) {
 		udata.u_error = ENXIO;
@@ -119,7 +119,7 @@ int my_tty_open(uint8_t minor, uint16_t flag)
 	return tty_open(minor, flag);
 }
 
-static uint8_t tcount;
+static uint_fast8_t tcount;
 
 void plt_interrupt(void)
 {

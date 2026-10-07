@@ -1,0 +1,30 @@
+# Intermediate .s files
+/crt0.s
+/dragon-samx8.s
+/ide.s
+/mem-samx8.s
+/multihead.s
+/tricks.s
+/usermem-samx8.s
+/vc-samx8.s
+/video.s
+
+# Loader
+fzload09-emu.bin
+fzload09-emu.dsk
+fzload09-emu.img
+fzload09-sdc.bin
+fzload09-sdc.dsk
+fzload09-sdc.img
+
+# Detritus
+fuzix.tmpmap
+
+# Temporarily ignore these while fcc used in debug mode (-X)
+/devices-discard.[#%@^s]
+/devices.[#%@^s]
+/devlpr.[#%@^s]
+/devtty.[#%@^s]
+/discard.[#%@^s]
+/main.[#%@^s]
+/vc.[#%@^s]

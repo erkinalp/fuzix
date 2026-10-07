@@ -5,4 +5,4 @@
 ;
 	.common
 
-#include "../../cpu-8080/std-commonmem.s"
+#include "../../cpu-8080/std-commonmem.S"

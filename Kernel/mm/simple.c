@@ -80,7 +80,7 @@ void pagemap_init(void)
  *	Swap out the memory of a process to make room
  *	for something else
  */
-int swapout_new(ptptr p, void *u)
+int swapout_new(register ptptr p, void *u)
 {
 	uint16_t page = p->p_page;
 	uint16_t blk;

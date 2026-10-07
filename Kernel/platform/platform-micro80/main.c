@@ -24,12 +24,7 @@ void plt_discard(void)
 
 static uint8_t idlect;
 
-void plt_idle(void)
-{
-	__asm halt __endasm;
-}
-
-uint8_t plt_param(unsigned char *p)
+uint_fast8_t plt_param(unsigned char *p)
 {
 	used(p);
 	return 0;
@@ -37,10 +32,10 @@ uint8_t plt_param(unsigned char *p)
 
 void plt_interrupt(void)
 {
-	uint8_t n = 255 - CTC_CH3;
+	uint8_t n = 255 - in(CTC_CH(3));
 	tty_drain_sio();
-	CTC_CH3 = 0x47;
-	CTC_CH3 = 255;
+	out(CTC_CH(3), 0x47);
+	out(CTC_CH(3), 255);
 	while(n > 0) {
 		timer_interrupt();
 		n--;

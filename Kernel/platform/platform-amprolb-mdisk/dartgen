@@ -1,0 +1,10 @@
+#!/bin/sh
+#
+#	Generate the z80sio helpers using the template
+#
+cd $FUZIX_ROOT
+cat Kernel/build/dart.hdr
+template <Kernel/dev/z80sio.tmpl a ".abs\n.org 0xFE00" ".commondata" DARTA_C DARTA_D \
+	reti "" "" ".common"
+template <Kernel/dev/z80sio.tmpl b ".abs\n.org 0xFF00" ".commondata" DARTB_C DARTB_D \
+	reti "" "" ".common"

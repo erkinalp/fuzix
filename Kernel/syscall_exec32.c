@@ -43,7 +43,7 @@ static int valid_hdr(inoptr ino, struct exec *bf)
 		return 0;
 	if (bf->stacksize < 4096)
 		bf->stacksize = 4096;
-	/* Emtry must be within text */
+	/* Entry must be within text */
 	if (bf->a_entry >= bf->a_text)
 		return 0;
 	/* Wrapped */
@@ -96,7 +96,7 @@ arg_t _execve(void)
 	uint32_t true_brk;
 	uint_fast8_t mflags;
 
-	if (!(ino = n_open_lock(name, NULLINOPTR)))
+	if (!(ino = n_open_argn()))
 		return (-1);
 
 	if (!((getperm(ino) & OTH_EX) &&
@@ -148,7 +148,7 @@ arg_t _execve(void)
 		goto nogood3;
 
 #ifdef CONFIG_PLATFORM_UDMA
-	plt_udma_kill(p);
+	plt_udma_kill(udata.u_ptab);
 #endif
 	/* Core dump and ptrace permission logic */
 #ifdef CONFIG_LEVEL_2
@@ -212,7 +212,7 @@ arg_t _execve(void)
 	if (plt_relocate(&aout))
 		goto nogood4;
 
-	/* This may wipe the relocations */	
+	/* This may wipe the relocations */
 	uzero((uint8_t *)udata.u_database + aout.a_data,
 		aout.a_bss);
 
@@ -236,7 +236,7 @@ arg_t _execve(void)
 
 	tmpfree(abuf);
 	tmpfree(ebuf);
-	i_unlock_deref(ino);
+	i_deref(ino);
 
 	/* Shove argc and the address of argv just below envp */
 	uputl((uint32_t) nargv, nenvp - 1);
@@ -252,12 +252,6 @@ arg_t _execve(void)
 	 */
 	install_vdso();
 
-#ifdef DEBUG
-	kprintf("Code at %p , Data at %p Stack Size %u)\n",
-		udata.u_codebase, udata.u_database,
-		aout.stacksize);
-	kprintf("Go = %p ISP = %p\n", go, udata.u_isp);
-#endif
 	doexec(go);
 
 nogood4:
@@ -268,7 +262,7 @@ nogood3:
 	tmpfree(ebuf);
 nogood2:
 nogood:
-	i_unlock_deref(ino);
+	i_deref(ino);
 	return (-1);
 }
 

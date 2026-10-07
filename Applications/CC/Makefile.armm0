@@ -1,3 +1,89 @@
-all:
+# The compiler passes hosted on the ARM Fuzix machine.
+#
+# cc1 uses the ARM type model (ILP32) via target-thumb.c and cc2 emits
+# the PC3 bytecode (BYTECODE.md) as a binary object - there is no
+# assembler and no linker for this target.
+#
+# For development, Makefile.host builds cc0/cc1/cc2 as native binaries
+# so the compiler can be run over real source without hardware, and
+# bcdump disassembles what comes out.
+SRC_C1 = target-thumb.c
+SRC_C2 = backend-bcode.c
 
-clean:
+FLOAT = -DNO_FLOAT
+# cc2's large tables live in a PSRAM arena (PC3-PSRAM-ARENA.md): the
+# board build gets near-BIG_TABLES limits at almost no process cost.
+# Without the arena facility in the kernel, cc2 says so and exits -
+# the small static tables stopped fitting a 256K process when the
+# Thumb translator joined them.
+CCOPTS += -DARENA_TABLES
+
+include Makefile.common
+
+# The MMBasic translator and the mm runtime live in Applications/mmb2c
+# and are compiled from there, not from copies.  They used to be
+# verbatim copies in this directory kept in step by two sync scripts,
+# and the copies went stale silently more than once - a header added
+# to the card but not to the sync list, and once the whole translator.
+# vpath means there is one of each again.
+vpath %.c ../mmb2c/mmbc ../mmb2c
+vpath %.h ../mmb2c/mmbc ../mmb2c
+
+# Both compiler passes are recursive descent over expression trees, and
+# a large generated program - a three thousand line BASIC translation -
+# drives them deeper than the platform's 8K default.  The window is
+# fixed at exec time, so the request has to be in the binary: the ELF
+# loader honours PT_GNU_STACK (see USERSTACK_MAX).  Measured need for
+# the eclipse, on a 64-bit host with wider frames: cc1 32K, cc2 24K.
+cc1: LINKER_OPT += --defsym __stack_size=32768
+cc2: LINKER_OPT += --defsym __stack_size=32768
+mmbc: LINKER_OPT += --defsym __stack_size=16384
+
+# The runtime: bcrun executes a bytecode object, bcdump disassembles
+# one. ccbc is the driver that runs the three passes, and goes on the
+# board as /usr/bin/cc. All ordinary Fuzix programs, all in /usr/bin;
+# the passes themselves live in /usr/lib/cc.
+all: bcrun bcdump ccbc mmbc
+
+bcrun: bcrun.o
+	$(LINKER) $(CRT0) bcrun.o -o $@ $(LINKER_OPT) $(LINKER_TAIL)
+
+# MM_PC3 selects the real hardware implementations in mmb_runtime.c -
+# the graphics calls that talk to the kernel through /dev/sys.  Without
+# it the file compiles its HOST fallbacks, where mm_pixel is an empty
+# function: a translated program then draws nothing at all and reports a
+# plausible time, because the calls still happen and still cost.  That
+# is exactly what shipped, so it is worth being blunt about it.  The
+# fallbacks exist so the host gates can run a program that draws;
+# nothing else should ever get them.
+# -I../mmb2c: bcrun_mm.c lives here and #includes "mmb_runtime.c",
+# which does not, so the quoted include has to fall back to a path.
+bcrun.o: CCOPTS += -DMM_PC3 -I../mmb2c
+
+# The MMBasic -> C translator (../mmb2c/mmbc, byte-identical to
+# mmb2c.py by mmbc/cgate.sh).
+# MMBC_ARENA: pools live in one PSRAM arena allocation - the second
+# arena client after cc2.
+MMBC_OBJ = mmbc_main.o mmbc_lex.o mmbc_util.o mmbc_tab.o mmbc_sym.o \
+	   mmbc_expr.o mmbc_builtin.o mmbc_decl.o mmbc_walk.o \
+	   mmbc_stmt.o mmbc_out.o mmbc_type.o mmbc_font.o
+
+$(MMBC_OBJ): CCOPTS += -DMMBC_ARENA
+$(MMBC_OBJ): mmbc.h mmbc_expr.h
+
+mmbc: $(MMBC_OBJ)
+	$(LINKER) $(CRT0) $(MMBC_OBJ) -o $@ $(LINKER_OPT) $(LINKER_TAIL)
+
+bcdump: bcdump.o
+	$(LINKER) $(CRT0) bcdump.o -o $@ $(LINKER_OPT) $(LINKER_TAIL)
+
+ccbc: ccbc.o
+	$(LINKER) $(CRT0) ccbc.o -o $@ $(LINKER_OPT) $(LINKER_TAIL)
+
+bcrun.o bcdump.o: bytecode.h
+bcrun.o: bcrun_mm.c mmb_runtime.c mmb_runtime.h
+backend-bcode.o: backend-thumb.c
+
+# Stage 1: no on-target Z80 runtime libs; the passes are the experiment
+support:
+	@:

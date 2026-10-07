@@ -3,7 +3,11 @@
 
 int strcmp(const char *a, const char *b)
 {
-	return strncmp(a, b, strlen(a));
+	while (*a && *a == *b) {
+		a++;
+		b++;
+	}
+	return (uint8_t)*a - (uint8_t)*b;
 }
 
 int strncmp(const char *a, const char *b, int n)

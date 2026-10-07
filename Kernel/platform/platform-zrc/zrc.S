@@ -105,27 +105,26 @@ init_early:
 ;	program up support hardware like PIO and CTC devices here.
 ;
 init_hardware:
-	ld hl,#2048
-	ld (_ramsize), hl
-	ld de,#64		; and 64K for kernel (so 128K gets you only
-				; two user banks which is OK single user)
-	or a
-	sbc hl,de
-	ld (_procmem), hl
+	ld	a,(_machtype)
+	or	a
+	ld	hl,512
+	jr	nz, is_3vz80
+	ld	hl,2048
+is_3vz80:
+	ld	(_ramsize), hl
+	ld	de,64	; and 64K for kernel (so 128K gets you only
+			; two user banks which is OK single user)
+	or	a
+	sbc	hl,de
+	ld	(_procmem), hl
 
 	; set up interrupt vectors for the kernel (also sets up common memory in page 0x000F which is unused)
-	ld hl, #0
-	push hl
-	call _program_vectors
-	pop hl
+	ld	hl, 0
+	push	hl
+	call	_program_vectors
+	pop	hl
 
-	; Install the rst block for shortening code size
-	ld hl,#rstblock
-	ld de,#8
-	ld bc,#32
-	ldir
-
-	im 1 ; set CPU interrupt mode
+	im	1 ; set CPU interrupt mode
 
 	ret
 
@@ -136,12 +135,12 @@ init_hardware:
 	.common
 
 mapreg:
-	.byte 0	; Our map register is write only so keep a copy
+	.byte	0	; Our map register is write only so keep a copy
 mapsave:
-	.byte 0	; Saved copy of the previous map (see map_save)
+	.byte	0	; Saved copy of the previous map (see map_save)
 
 _kernel_flag:
-	.byte 1	; We start in kernel mode
+	.byte	1	; We start in kernel mode
 
 ;
 ;	This is invoked with a NULL argument at boot to set the kernel
@@ -165,29 +164,9 @@ _program_vectors:
 	ld hl, #interrupt_handler
 	ld (0x0039), hl
 
-	; set restart vector for FUZIX system calls
-	ld (0x0030), a   ;  (rst 30h is unix function call vector)
-	ld hl, #unix_syscall_entry
-	ld (0x0031), hl
-
 	ld (0x0000), a
 	ld hl, #null_handler   ;   to Our Trap Handler
 	ld (0x0001), hl
-#if 0
-	; RST peepholes support
-	ld hl,#___sdcc_enter_ix
-	ld (0x08),a
-	ld (0x09),hl
-	ld hl,#___spixret
-	ld (0x10),a
-	ld (0x11),hl
-	ld hl,#___ixret
-	ld (0x18),a
-	ld (0x19),hl
-	ld hl,#___ldhlhl
-	ld (0x20),a
-	ld (0x21),hl
-#endif
 
 
 	; and fall into map_kernel
@@ -207,7 +186,9 @@ _program_vectors:
 map_buffers:
 	   ; for us no difference. We could potentially use a low 32K bank
 	   ; for buffers but it's not clear it would gain us much value
-	   ; 1F always the top 32K
+	   ; 3F or 0F is always the top 32K depending upon the platform
+	   ; 0x00 is the kernel low bank in all cases
+	   ;
 map_kernel_restore:
 map_kernel_di:
 map_kernel:
@@ -290,47 +271,6 @@ twait:	in a,(0x80)
 	pop af
 	out (0x81),a
 	ret
-
-	.discard
-;
-;	This block is copied into the rst area
-;
-
-;
-;       Stub helpers for code compactness.
-;
-;   Note that sdcc_enter_ix is in the standard compiler support already
-;
-;   The first two use an rst as a jump. In the reload sp case we don't
-;   have to care. In the pop ix case for the function end we need to
-;   drop the spare frame first, but we know that af contents don't
-;   matter
-;
-
-; 8
-rstblock:
-#if 0
-/* TODO */
-	jp	___sdcc_enter_ix
-	.ds	5
-; 16
-___spixret:
-	ld      sp,ix
-	pop     ix
-	ret
-	.ds	3
-___ixret:
-	pop     af
-	pop     ix
-	ret
-	.ds	4
-___ldhlhl:
-	ld      a,(hl)
-	inc     hl
-	ld      h,(hl)
-	ld      l,a
-	ret
-#endif
 
 	.common
 ;

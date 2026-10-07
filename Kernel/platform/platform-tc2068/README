@@ -25,7 +25,8 @@ Video updating
 
 0000-3FFF	Dock RAM	- common and other kernel data
 				  (including font and video)
-4000-7FFF	Home RAM	- screens
+4000-77FF	Home RAM	- screens
+7800-7FFF	Home RAM	- bit of user space poking through
 8000-FFFF	Dock ROM	- kernel boot and kernel code
 
 User mode

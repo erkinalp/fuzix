@@ -13,7 +13,7 @@
  *	DriveWire uses 256 byte sector transfers
  */
 
-static int dw_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
+static int dw_transfer(uint_fast8_t minor, bool is_read, uint_fast8_t rawflag)
 {
     int ct = 0;
     int tries;
@@ -49,7 +49,7 @@ static int dw_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
     cmd[5] = minor;
     cmd[6] = page >> 8;
     cmd[7] = page & 0xFF;
-        
+
     while (ct++ < udata.u_nblock) {
         for (tries = 0; tries < 4 ; tries++) {
             /* kprintf("dw_operation block %d left %d\n", block, nblock); */
@@ -83,26 +83,26 @@ bad2:
 /* FIXME: for bit-banger transport (not Becker) we should set up
    the PIA at some point too */
 
-int dw_open(uint8_t minor, uint16_t flag)
+int dw_open(uint_fast8_t minor, uint16_t flag)
 {
     used(flag);
     used(minor);
     return 0;
 }
 
-int dw_read(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int dw_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     used(flag);
     return dw_transfer(minor, true, rawflag);
 }
 
-int dw_write(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int dw_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     used(flag);
     return dw_transfer(minor, false, rawflag);
 }
 
-int dw_ioctl(uint8_t minor, uarg_t request, char *data)
+int dw_ioctl(uint_fast8_t minor, uarg_t request, char *data)
 {
 	struct dw_trans s;
 	used( minor );

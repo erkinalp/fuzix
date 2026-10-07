@@ -8,8 +8,9 @@
 
 static int err = 0;
 static int head = 0;
+static char *arg0;
 
-static unsigned int bufpair(int bigend, unsigned char *p, int n)
+static unsigned int bufpair(int bigend, register unsigned char *p, int n)
 {
 	if (bigend) {
 		/* mc6809, big endian */
@@ -21,7 +22,7 @@ static unsigned int bufpair(int bigend, unsigned char *p, int n)
 #if defined(__m68k__)
 static void size_binflat(char *name, uint8_t * buf)
 {
-	uint32_t *hdr = (uint32_t *) buf;
+	register uint32_t *hdr = (uint32_t *) buf;
 	uint32_t txtsz, datsz, bsssz, stksz;
 
 	if (ntohl(hdr[1]) != 4) {
@@ -73,42 +74,44 @@ static void size_fzx2(char *name, uint8_t *buf, int endian)
 	printf("%5x%5x%5x%5x%7d%5x %s\n", basepage, txtsz, datsz, bsssz, txtsz + datsz + bsssz, txtsz + datsz + bsssz, name);
 }
 
-int main(int argc, char *argv[])
+static void size(const char *p)
 {
-	FILE *fp;
-	unsigned char buf[32];
-	int n;
+	FILE *fp = fopen(p, "r");
+	static unsigned char buf[32];
 
-	if (argc < 2) {
-		fprintf(stderr, "%s [executable...]\n", argv[0]);
+	if (fp == NULL) {
+		perror(p);
+		err = 1;
+		return;
+	}
+	if (fread(buf, 32, 1, fp) != 1) {
+		fprintf(stderr, "%s: too short ?\n", arg0);
 		exit(1);
 	}
+	fclose(fp);
 
-
-	for (n = 1; n < argc; n++) {
-		fp = fopen(argv[n], "r");
-		if (fp == NULL) {
-			perror(argv[n]);
-			exit(1);
-		}
-		if (fread(buf, 32, 1, fp) != 1) {
-			fprintf(stderr, "%s: too short ?\n", argv[0]);
-			exit(1);
-		}
-		fclose(fp);
-
-		/* Big endian */
-		if (*buf == 0x80 && buf[1] == 0xA8)
-			size_fzx2(argv[n], buf, 1);
-		/* Little endian */
-		else if (*buf == 0xA8 && buf[1] == 0x80)
-			size_fzx2(argv[n], buf, 0);
+	/* Big endian */
+	if (*buf == 0x80 && buf[1] == 0xA8)
+		size_fzx2(p, buf, 1);
+	/* Little endian */
+	else if (*buf == 0xA8 && buf[1] == 0x80)
+		size_fzx2(p, buf, 0);
 #if defined(__m68k__)
-		else if (memcmp(buf, "bFLT", 4) == 0)
-			size_binflat(argv[n], buf);
+	else if (memcmp(buf, "bFLT", 4) == 0)
+		size_binflat(p, buf);
 #endif
-		else
-			fprintf(stderr, "%s: not a Fuzix binary format.\n", argv[n]);
-	}
+	else
+		fprintf(stderr, "%s: not a Fuzix binary format.\n", arg0);
+}
+
+int main(int argc, char *argv[])
+{
+	register char **p = argv;
+
+	arg0 = *p++;
+	if (*p == NULL)
+		size("a.out");
+	else while(*p)
+		size(*p++);
 	exit(err);
 }

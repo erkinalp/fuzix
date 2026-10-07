@@ -49,7 +49,7 @@ void sd_spi_fast(void)
 
 COMMON_MEMORY
 
-bool sd_spi_receive_sector(uint8_t *p) __naked
+bool sd_spi_rxsect(uint8_t *p) __naked
 {
   __asm
     pop de
@@ -69,7 +69,7 @@ doread:
   __endasm;
 }
 
-bool sd_spi_transmit_sector(uint8_t *p) __naked
+bool sd_spi_txsect(uint8_t *p) __naked
 {
   __asm
     pop de

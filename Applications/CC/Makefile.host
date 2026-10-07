@@ -1,0 +1,103 @@
+# Host build of the compiler passes, for development and testing.
+#
+# Builds cc0 and cc1 as native binaries so the front end can be run over
+# real C on the development machine. This is how the 32-bit type model
+# gets exercised without a working code generator or a trip to hardware.
+#
+#   make -f Makefile.host                 # armm0, the 32-bit model
+#   make -f Makefile.host CPU=z80         # the 16-bit model, for comparison
+#
+# Objects go in host-$(CPU)/ so they can never collide with the
+# cross-built .o files that share this directory.
+
+CPU ?= armm0
+FLOAT ?= -DNO_FLOAT
+
+HOSTCC ?= cc
+# -include unistd.h: the passes call write() and expect the Fuzix headers
+# to have declared it. Host-only concern, so fix it here rather than in
+# shared source.
+HOSTCFLAGS = -g -O1 -Wall -Wno-unused-result -DCPU_$(CPU) $(FLOAT) -DBIG_TABLES -include unistd.h
+
+OBJDIR = host-$(CPU)
+
+ifeq ($(CPU),armm0)
+TARGET_SRC = target-thumb.c
+else
+TARGET_SRC = target-$(CPU).c
+endif
+
+SRC_C0 = frontend.c
+
+ifeq ($(CPU),armm0)
+SRC_C2 = backend.c backend-bcode.c
+else
+SRC_C2 = backend.c backend-$(CPU).c
+endif
+
+SRC_C1 = body.c declaration.c enum.c error.c expression.c header.c idxdata.c \
+	initializer.c label.c lex.c main.c primary.c stackframe.c storage.c \
+	struct.c switch.c symbol.c tree.c type.c type_iterator.c $(TARGET_SRC)
+
+OBJ_C0 = $(addprefix $(OBJDIR)/,$(SRC_C0:.c=.o))
+OBJ_C1 = $(addprefix $(OBJDIR)/,$(SRC_C1:.c=.o))
+OBJ_C2 = $(addprefix $(OBJDIR)/,$(SRC_C2:.c=.o))
+
+# bcrun executes a bytecode object, bcdump disassembles one, dumptokens
+# prints cc0's output and ccbc drives the three passes. They are not
+# compiler passes, but every test script needs them, and leaving them to
+# be built by hand means "make clean" quietly breaks the whole suite.
+TOOLS = $(OBJDIR)/bcrun $(OBJDIR)/bcdump $(OBJDIR)/dumptokens $(OBJDIR)/ccbc
+
+all: $(OBJDIR)/cc0 $(OBJDIR)/cc1 $(OBJDIR)/cc2 $(TOOLS)
+
+# fnum.c comes from the C library, and is compiled in here rather than
+# linked: the board's bcrun gets _fnum from libcarmm0, and this build
+# links the host's libc, which has no such symbol.  Compiling the same
+# source both ways is also what keeps %e and %g identical between this
+# bcrun and the board's - which is the whole point of the gates.
+# mmb_runtime.c/.h live in Applications/mmb2c and are named in full:
+# this rule is the only place they appear here, so a vpath would be
+# more machinery than the job needs.
+$(OBJDIR)/bcrun: bcrun.c bcrun_mm.c ../mmb2c/mmb_runtime.c ../mmb2c/mmb_runtime.h bytecode.h ../../Library/libs/fnum.c | $(OBJDIR)
+	$(HOSTCC) $(HOSTCFLAGS) -I../mmb2c -o $@ bcrun.c ../../Library/libs/fnum.c -lm
+
+$(OBJDIR)/bcdump: bcdump.c bytecode.h | $(OBJDIR)
+	$(HOSTCC) $(HOSTCFLAGS) -o $@ bcdump.c
+
+$(OBJDIR)/dumptokens: dumptokens.c token.h | $(OBJDIR)
+	$(HOSTCC) $(HOSTCFLAGS) -o $@ dumptokens.c
+
+$(OBJDIR)/ccbc: ccbc.c | $(OBJDIR)
+	$(HOSTCC) $(HOSTCFLAGS) -o $@ ccbc.c
+
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
+
+$(OBJDIR)/%.o: %.c | $(OBJDIR)
+	$(HOSTCC) $(HOSTCFLAGS) -c -o $@ $<
+
+$(OBJDIR)/cc0: $(OBJ_C0)
+	$(HOSTCC) $(HOSTCFLAGS) -o $@ $^
+
+$(OBJDIR)/cc1: $(OBJ_C1)
+	$(HOSTCC) $(HOSTCFLAGS) -o $@ $^
+
+$(OBJDIR)/cc2: $(OBJ_C2)
+	$(HOSTCC) $(HOSTCFLAGS) -o $@ $^
+
+clean:
+	rm -rf $(OBJDIR)
+
+.PHONY: all clean
+
+# bytecode.h defines the object format: everything that reads or
+# writes it must be rebuilt when it changes, or cc2 keeps writing the
+# old layout while bcrun reads the new one.
+$(OBJ_C2): bytecode.h
+$(OBJDIR)/backend-bcode.o: backend-thumb.c
+
+# symtab.h is the same kind of trap: cc0 writes the symbol table and
+# cc2 reads it, so a change to NAMELEN reaching only one of them gives
+# garbage names rather than an error.
+$(OBJ_C0) $(OBJ_C2): symtab.h

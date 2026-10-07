@@ -134,8 +134,9 @@ struct dw_in *dw_gettab( uint8_t minor ){
 
 /* Translates a DW port no. to a proper minor no */
 int dw_minor( uint8_t port ){
+	int ret;
 	if( port >= 16 ) return port - 16 + DW_NS_OFF  ;
-	int ret = port + DW_MIN_OFF - 1 ;
+	ret = port + DW_MIN_OFF - 1 ;
 	return ret;
 					
 }
@@ -202,6 +203,7 @@ int qfree( uint8_t minor ){
 void dw_vpoll( ){
 	unsigned char buf[2];
 	int i;
+	int minor;
 	/* don't waste time polling of no ports are open*/
 	if( ! open_ports ) return ;
 	/* check ticks - don't poll until our delay is done */
@@ -217,14 +219,15 @@ void dw_vpoll( ){
 		}
 		/* VSER Channel single datum */
 		if( buf[0]<16 ){
-			int minor=dw_minor( buf[0] - 1 );
+			minor=dw_minor( buf[0] - 1 );
 			tty_inproc( minor, buf[1] );
 			continue;
 		}
 		/* VSER Channel closed? */
 		if( buf[0] == 16 ){
-			int minor=dw_minor( buf[1] );
-			struct dw_in *p=dw_gettab( minor );
+			struct dw_in *p;
+			minor=dw_minor( buf[1] );
+			p=dw_gettab( minor );
 		       	if( p->flags & DW_FLG_OPEN ){
 				p->flags &= ~DW_FLG_OPEN;
 				open_ports--;
@@ -235,10 +238,10 @@ void dw_vpoll( ){
 		}
 		/* VSER channel multiple data */
 		if( buf[0] < 32 ){
-			int i;
+			int j;
 			unsigned char b[3];
 			int min;
-			int minor=dw_minor( buf[0]-17 );
+			minor=dw_minor( buf[0]-17 );
 			b[0]=DW_SERREADM;
 			b[1]=buf[0]-17;
 			min=mini( buf[1], qfree( minor ) );
@@ -248,15 +251,15 @@ void dw_vpoll( ){
 				break;
 			}
 			dw_transaction( b,3,tbuf, min, 0 );
-			for( i=0; i<min; i++){
-				tty_inproc( minor, tbuf[i] );
+			for( j=0; j<min; j++){
+				tty_inproc( minor, tbuf[j] );
 			}
 			wait=1;
 			break;
 		}
 		/* VWIN channel single datum */
 		if( buf[0] < 144 ){
-			int minor=dw_minor( buf[0]-48 );
+			minor=dw_minor( buf[0]-48 );
 			tty_inproc( minor, buf[1] );
 			continue;
 		}

@@ -57,7 +57,12 @@ int main(int argc, char *argv[])
             buf[0x16] = 0x4e;
             buf[0x17] = 0xE5;
             bp = buf + 0x18;
-            for (sector = 1; sector < 10; sector++) {
+            static const int order[9] = { 1, 6, 2, 7, 3, 8, 4, 9, 5 }; /*interleave pattern*/
+            int track_skew_step = 2;
+            int skew = (track * track_skew_step) % 9;
+            for (
+                int i = 0; i < 9; i++) {
+                sector = order[(i + skew) % 9];
                 *bp++ = track;
                 *bp++ = side;
                 *bp++ = sector_id_offset+sector;
@@ -75,9 +80,11 @@ int main(int argc, char *argv[])
                 perror(argv[1]);
                 exit(1);
             }
-            if (fwrite(buf, 512, 9, out) != 9) {
-                perror(argv[2]);
-                exit(1);
+            for (int i = 0; i < 9; i++) {
+                if (fwrite(buf + (order[(i + skew) % 9] - 1) * 512, 512, 1, out) != 1) {
+                    perror(argv[2]);
+                    exit(1);
+                }
             }
         }
     }

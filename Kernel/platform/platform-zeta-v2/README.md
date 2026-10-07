@@ -10,6 +10,10 @@ Heavily based on prior work by Will Sowerbutts <will@sowerbutts.com> and others
 - PPIDE hard disk
 - Real time clock
 
+## TODO
+
+- Swap ?
+
 ## Installation
 
 ### Boot From CP/M

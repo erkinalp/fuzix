@@ -141,7 +141,7 @@ static uint8_t do_fd_restore(uint8_t minor)
     return fd_restore(fd_tab + minor);
 }
 
-static int fd_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
+static int fd_transfer(uint_fast8_t minor, bool is_read, uint_fast8_t rawflag)
 {
     int ct = 0;
     int tries;
@@ -174,7 +174,7 @@ static int fd_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
     fd_cmd[6] = dp->shift;
     fd_cmd[7] = dp->step;
     fd_cmd[8] = dp->precomp;
-    
+
     while (ct < udata.u_nblock) {
         /* For each block we need to load we work out where to find it */
         fd_cmd[1] = udata.u_block / dp->sectors;
@@ -251,7 +251,7 @@ static void fd_setup(uint8_t minor, uint8_t step)
     fd_selected = 255;
 }
 
-int fd_open(uint8_t minor, uint16_t flag)
+int fd_open(uint_fast8_t minor, uint16_t flag)
 {
     flag;
     if(minor >= MAX_FD) {
@@ -267,19 +267,19 @@ int fd_open(uint8_t minor, uint16_t flag)
     return 0;
 }
 
-int fd_read(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int fd_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     flag;
     return fd_transfer(minor, true, rawflag);
 }
 
-int fd_write(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int fd_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     flag;rawflag;minor;
     return fd_transfer(minor, false, rawflag);
 }
 
-int fd_ioctl(uint8_t minor, uarg_t request, char *buffer)
+int fd_ioctl(uint_fast8_t minor, uarg_t request, char *buffer)
 {
     uint8_t s;
     struct fdcstep step;

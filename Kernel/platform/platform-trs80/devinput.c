@@ -3,7 +3,7 @@
 #include <input.h>
 #include <devinput.h>
 
-__sfr __at 0x00 stick;
+#define STICK	0x00
 uint8_t old_stick;
 
 static char buf[32];
@@ -20,7 +20,7 @@ void queue_input(uint8_t c)
 
 int plt_input_read(uint8_t *slot)
 {
-    uint8_t r, k;
+    uint_fast8_t r, k;
     if (remq(&kqueue, &r)) {
         remq(&kqueue, &k);
 	*slot++ = KEYPRESS_CODE | r;
@@ -28,7 +28,7 @@ int plt_input_read(uint8_t *slot)
 	return 2;
     }
 
-    r = ~stick;
+    r = ~in(STICK);
     if (r == old_stick)
         return 0;
 
@@ -60,7 +60,7 @@ void plt_input_wait(void)
     psleep(&kqueue);	/* We wake this on timers so it works for sticks */
 }
 
-int plt_input_write(uint8_t flag)
+int plt_input_write(uint_fast8_t flag)
 {
     flag;
     udata.u_error = EINVAL;
@@ -69,6 +69,6 @@ int plt_input_write(uint8_t flag)
 
 void poll_input(void)
 {
-    if (~stick != old_stick)
+    if (~in(STICK) != old_stick)
         wakeup(&kqueue);
 }

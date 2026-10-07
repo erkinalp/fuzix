@@ -148,7 +148,7 @@ int tty_carrier(uint_fast8_t minor)
     return 1;
 }
 
-void tty_pollirq_asci0(void)
+void tty_pollirq_as0(void)
 {
     while(ASCI_STAT0 & 0x80)
         tty_inproc(5, ASCI_RDR0);
@@ -156,7 +156,7 @@ void tty_pollirq_asci0(void)
         ASCI_CNTLA0 &= ~0x08;
 }
 
-void tty_pollirq_asci1(void)
+void tty_pollirq_as1(void)
 {
     while(ASCI_STAT1 & 0x80)
         tty_inproc(6, ASCI_RDR1);
@@ -294,7 +294,7 @@ static void vdp_udgsave(void)
 	unsigned uaddr = 0x1400;	/* Char 128-159 */
 	unsigned addr = 0x3800 + 256 * (inputtty - 1);
 	for (i = 0; i < 256; i++)
-		vdp_writeb(addr, vdp_readb(uaddr++));
+		vdp_writeb(addr++, vdp_readb(uaddr++));
 	irqrestore(irq);
 }
 

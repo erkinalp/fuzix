@@ -1,0 +1,49 @@
+This is a port of the comp.sources.games volume 1 "cent" game. It has
+been ANSIfied, folded into a single file and re-ordered to avoid all the
+messy ANSI prototypes that would otherwise be needed.
+
+A few bugs where fixed including assuming that char was signed and a use after
+free when cleaning up centipedes). Some signal handling has been changed a
+little. Various spots that could loop on character waits with errors have
+been tweaked.
+
+Several features were removed including the load average checking which is
+no longer relevant in the modern world, and also removal of the mid game
+save/restore feature, again not really relevant and quite large codewise.
+In order to get stuff to fit smaller machines I also trimmed out the shared
+score table and the fancier suspend behaviour.
+
+The code here has one small Fuzixism in order to get a 0.1s timer tick but
+should be pretty portable if adjusted to use gettimeofday or similar.
+
+Alan
+
+------------------
+
+Centipede is based on the video game by the same name which has been
+around for many years. It is a real-time 'video' game for standard
+character terminals on Unix machines.
+
+The game was written for 4.1bsd Unix, and has recently been tested
+on 4.2. No guarantees are made for any other versions, though I'd
+be interested in hearing about what happens.
+
+Among other features, the game allows for saving/restoring, has load
+average restrictions, and keeps a high score list. 
+
+Sorry, there is no 'man page' available. A help file is available from
+within the game.
+
+Edit the file 'sys_dep.c' to adjust pathnames for your particular system.
+
+I wrote this game about four years ago, and (after a couple of recent
+modifications) decided it was time that I share it with other Usenet
+game players. I'm not too keen on keeping track of tons of bugs, but
+for the time, feel free to report whatever you want to me at one of
+the mail addresses below.
+
+				Have Fun,
+
+				Nathan Glasser
+				nathan@mit-eddie.uucp (usenet)
+				nathan@xx.lcs.mit.edu (internet)

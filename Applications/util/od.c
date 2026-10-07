@@ -1,5 +1,6 @@
-/* od - octal dump		   Author: Andy Tanenbaum */
-/* Adapted to UZI180 by H. Peraza                         */
+/* od - octal dump		   Author: Andy Tanenbaum             */
+/* Adapted to UZI180 by H. Peraza                             */
+/* A subset of modern flags/options added by Henrik Löfgren   */
 
 #include <stdio.h>
 #include <unistd.h>
@@ -8,11 +9,21 @@
 #include <limits.h>
 #include <string.h>
 
-int  bflag, cflag, dflag, oflag, xflag, hflag, vflag;
-int  hd;
+#define RADIX_HEX   16
+#define RADIX_DEC   10
+#define RADIX_OCT   8
+#define RADIX_ASC   1
+#define RADIX_NONE  0
+
+int  vflag;
+int  addr_radix;
+int  data_radix;
+int  word_length;
+int  print_ascii;
 int  linenr, width, state, ever;
 int  prevwds[8];
 long off;
+long total_bytes=0;
 char buf[512], buffer[BUFSIZ];
 int  next;
 int  bytespresent;
@@ -23,9 +34,11 @@ long offset(int argc, char *argv[], int k);
 void dumpfile(void);
 void wdump(short *words, int k, int radix);
 void bdump(char bytes[16], int k, int c);
+void adump(unsigned char bytes[16], int k);
+void pad(int k);
 void byte(int val, int c);
 int  getwords(short **words);
-int  same(short *w1, int *w2);
+int  same(char *w1, char *w2);
 void outword(int val, int radix);
 void outnum(int num, int radix);
 void addrout(long l);
@@ -101,35 +114,83 @@ void dumpfile(void)
 {
     int k;
     short *words;
-
-    while ((k = getwords(&words))) {	/* 'k' is # bytes read */
-	if (!vflag) {		/* ensure 'lazy' evaluation */
-	    if (k == 16 && ever == 1 && same(words, prevwds)) {
-		if (state == 0) {
-		    printf("*\n");
-		    state = 1;
-		    off += 16L;
-		    continue;
-		} else if (state == 1) {
-		    off += 16L;
-		    continue;
-		}
+    long bytes_read = 0;
+    int run;
+    char *src;
+    char *dst;
+    run = 1;
+    while ((k = getwords(&words)) && run) {	/* 'k' is # bytes read */
+	    bytes_read += k;
+        if (!vflag) {		/* ensure 'lazy' evaluation */
+	        if (k == width && ever == 1 &&
+                same((char *)words, (char *)prevwds)) {
+		        if (state == 0) {
+		            printf("*\n");
+		            state = 1;
+		            off += width;
+		            continue;
+		        } else if (state == 1) {
+		            off += width;
+		            continue;
+		        }
+	        }
 	    }
-	}
-	addrout(off);
-	off += (long) k;
-	state = 0;
-	ever = 1;
-	linenr = 1;
-	if (oflag) wdump(words, k, 8);
-	if (dflag) wdump(words, k, 10);
-	if (xflag) wdump(words, k, 16);
-	if (cflag) bdump((char *)words, k, (int)'c');
-	if (bflag) bdump((char *)words, k, (int)'b');
-	if (hd)    bdump((char *)words, k, (int)'h');
-	for (k = 0; k < 8; k++) prevwds[k] = words[k];
-	for (k = 0; k < 8; k++) words[k] = 0;
+	    addrout(off);
+	    off += k;
+	    state = 0;
+	    ever = 1;
+	    linenr = 1;
+
+        /* Finish up if specified number of bytes have been read */
+        if((total_bytes) && (bytes_read >= total_bytes)) {
+            run = 0;
+            k -= (bytes_read - total_bytes);
+            off -= (bytes_read - total_bytes);
+        }
+
+	    if(word_length == 2) wdump(words, k, data_radix);
+        else if(word_length == 1) bdump((char *)words, k, data_radix);
+
+        if(print_ascii) {
+            if(!run || k < width) pad(width - k);
+            adump((unsigned char *)words, k);
+        }
+        printf("\n");
+
+        /* Cast to char to handle different widths */
+        dst = (char *)prevwds;
+        src = (char *)words;
+	    for (k = 0; k < width; k++) dst[k] = src[k];
+	    for (k = 0; k < width; k++) src[k] = 0;
     }
+}
+
+/* Pad with spaces to ensure that the ascii output lines up on the last
+ * line
+ */
+void pad(int k) {
+    int i,j;
+    int pad_len;
+
+    if(data_radix == RADIX_HEX) pad_len = 2*word_length + 1;
+    else if(data_radix == RADIX_OCT) pad_len = 3*word_length + 1;
+    else if(data_radix == RADIX_DEC) pad_len = 3*word_length +
+                                               (2 - word_length);
+
+    for(i=0; i<k; i++) {
+        for(j=0; j<pad_len; j++) printf(" ");
+    }
+}
+
+void adump(unsigned char bytes[16], int k) {
+    int i;
+    printf(" >");
+    for(i=0; i<k; i++) {
+        if(bytes[i] > 0x1f && bytes[i] < 0x7F) printf("%c", bytes[i]);
+        else printf(".");
+    }
+    printf("<");
+
 }
 
 
@@ -140,7 +201,6 @@ void wdump(short *words, int k, int radix)
     if (linenr++ != 1) printf("       ");
     for (i = 0; i < (k + 1) / 2; i++)
     	outword(words[i] & 0xFFFF, radix);
-    printf("\n");
 }
 
 
@@ -151,18 +211,20 @@ void bdump(char bytes[16], int k, int c)
     if (linenr++ != 1) printf("       ");
     for (i = 0; i < k; i++)
 	byte(bytes[i] & 0377, c);
-    printf("\n");
 }
 
 void byte(int val, int c)
 {
-    if (c == 'b') {
+    if (c == RADIX_OCT) {
 	printf(" ");
 	outnum(val, 7);
 	return;
-    } else if (c == 'h') {
+    } else if (c == RADIX_HEX) {
 	printf(" %02x", val);
 	return;
+    } else if (c == RADIX_DEC) {
+    printf(" %03d", val);
+    return;
     }
     if (val == 0)
 	printf("  \\0");
@@ -195,8 +257,8 @@ int getwords(short **words)
     }
     if (next >= bytespresent) return(0);
     *words = (short *) &buf[next];
-    if (next + 16 <= bytespresent)
-	count = 16;
+    if (next + width <= bytespresent)
+	count = width;
     else
 	count = bytespresent - next;
 
@@ -205,11 +267,11 @@ int getwords(short **words)
     return(count);
 }
 
-int same(short *w1, int *w2)
+int same(char *w1, char *w2)
 {
     int i;
 
-    i = 8;
+    i = width;
     while (i--)
 	if (*w1++ != *w2++) return(0);
 
@@ -218,23 +280,7 @@ int same(short *w1, int *w2)
 
 void outword(int val, int radix)
 {
-    /* Output 'val' in 'radix' in a field of total size 'width'. */
-
-    int i = 4;
-
-    if (radix == 16) i = width - 4;
-    if (radix == 10) i = width - 5;
-    if (radix == 8)  i = width - 6;
-
-    if (i == 1)
-	printf(" ");
-    else if (i == 2)
-	printf("  ");
-    else if (i == 3)
-	printf("   ");
-    else if (i == 4)
-	printf("    ");
-
+    printf(" ");
     outnum(val, radix);
 }
 
@@ -247,11 +293,11 @@ void outnum(int num, int radix)
     unsigned val;
 
     val = (unsigned) num;
-    if (radix == 8)
+    if (radix == RADIX_OCT)
 	printf ("%06o", val);
-    else if (radix == 10)
+    else if (radix == RADIX_DEC)
 	printf ("%05u", val);
-    else if (radix == 16)
+    else if (radix == RADIX_HEX)
 	printf ("%04x", val);
     else if (radix == 7) {
   	/* special case */
@@ -262,87 +308,195 @@ void outnum(int num, int radix)
 
 void addrout(long l)
 {
-    if (hflag == 0) {
-	printf("%07lo", l);
-    } else {
-	printf("%07lx", l);
+    switch(addr_radix) {
+        case RADIX_OCT:
+            printf("%07lo", l);
+            break;
+        case RADIX_DEC:
+            printf("%07ld", l);
+            break;
+        case RADIX_HEX:
+            printf("%07lx", l);
+            break;
+        default:
+            break;
     }
 }
 
 
 void usage(void)
 {
-    fprintf(stderr, "Usage: od [-bcdhovx] [file] [ [+] offset [.] [b] ]\n");
+    fprintf(stderr, "Usage: od [OPTION]... [FILE]...\n");
+    fprintf(stderr, "  or: od [-bcdhovx] [file] [ [+] offset [.] [b] ]\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr,
+            "-A RADIX  Output format for file offset. RADIX is one of\n");
+    fprintf(stderr, "          [doxn] for Decimal, Octal, Hex or None\n");
+    fprintf(stderr, "-j BYTES  Skip BYTES input bytes first\n");
+    fprintf(stderr, "-N BYTES  Limit dump to BYTES input bytes\n");
+    fprintf(stderr, "-t TYPE   Select output format\n");
+    fprintf(stderr, "-w BYTES  output BYTES bytes per output line, can be 1,2,4,8 or 16.\n");
+    fprintf(stderr, "-v        do not use * to mark line supression\n\n");
+
+    fprintf(stderr, "TYPE is made up of one of these specifications:\n");
+    fprintf(stderr, "c         Printable character or backslash escape\n");
+    fprintf(stderr, "o[SIZE]   Octal, SIZE bytes per integer\n");
+    fprintf(stderr, "u[SIZE]   Unsigned decimal, SIZE bytes per integer\n");
+    fprintf(stderr, "x[SIZE]   Hexadecimal, SIZE bytes per integer\n");
+    fprintf(stderr, "SIZE can be 1 or 2\n");
+    fprintf(stderr, "Add a z suffix to any type displays printable ");
+    fprintf(stderr, "characters at the end of each output line\n");
     exit(1);
 }
 
 int main(int argc, char *argv[])
 {
-    int k, flags;
+    int k;
+    int opt;
     char *p;
+
+    /* Default values */
+    data_radix = RADIX_OCT;
+    addr_radix = RADIX_OCT;
+    word_length = 2;
+    print_ascii = 0;
+    width = 16;
 
     /* single-byte hex dump */
     if (!strcmp(argv[0], "hd")) {
-        hd = 1;
-        hflag = 1;
+        data_radix = RADIX_HEX;
+        addr_radix = RADIX_HEX;
+        word_length = 1;
+        print_ascii = 1;
     }
 
     /* Process flags */
     setbuf(stdout, buffer);
-    flags = 0;
-    p = argv[1];
-    if (argc > 1 && *p == '-') {
-	/* Flags present. */
-	flags++;
-	p++;
-	while (*p) {
-	    switch (*p) {
-		case 'b': bflag++; break;
-		case 'c': cflag++; break;
-		case 'd': dflag++; break;
-		case 'h': hflag++; break;
-		case 'o': oflag++; break;
-		case 'v': vflag++; break;	
-		case 'x': xflag++; break;
-		default:  usage();
-	    }
-	    p++;
-	}
-    } else {
-	oflag = 1;
-    }
 
-    if ((bflag | cflag | dflag | oflag | xflag) == 0) oflag = 1;
-    if (hd) oflag = 0;
-    k = (flags ? 2 : 1);
-    if (bflag | cflag) {
-	width = 8;
-    } else if (oflag) {
-	width = 7;
-    } else if (dflag) {
-	width = 6;
-    } else {
-	width = 5;
+    while((opt = getopt(argc, argv, "A:t:j:N:w:bcdhovxq")) != -1) {
+        switch(opt) {
+            case 'A':
+                switch(optarg[0]) {
+                    case 'o':
+                        addr_radix = RADIX_OCT;
+                        break;
+                    case 'd':
+                        addr_radix = RADIX_DEC;
+                        break;
+                    case 'x':
+                        addr_radix = RADIX_HEX;
+                        break;
+                    case 'n':
+                        addr_radix = RADIX_NONE;
+                        break;
+                    default:
+                        usage();
+                        break;
+                }
+                break;
+            case 't':
+                switch(optarg[0]) {
+                    case 'c':
+                        data_radix = RADIX_ASC;
+                        word_length = 1;
+                        break;
+                    case 'o':
+                        data_radix = RADIX_OCT;
+                        break;
+                    case 'u':
+                        data_radix = RADIX_DEC;
+                        break;
+                    case 'x':
+                        data_radix = RADIX_HEX;
+                        break;
+                    default:
+                        usage();
+                        break;
+                }
+                k=1;
+                if(optarg[k]) {
+                    if(optarg[k] == '1' || optarg[k] == '2') {
+                        word_length = optarg[1]-0x30;
+                        k++;
+                    } else {
+                        fprintf(stderr,
+                            "Error - only 1 or 2 byte words supported\n");
+                    }
+                }
+
+                if(optarg[k]) {
+                    if(optarg[k] == 'z') print_ascii = 1;
+                    else usage();
+                }
+
+                break;
+            case 'j':
+    	        off = offset(1, &optarg, 0);
+                break;
+            case 'N':
+                total_bytes = offset(1, &optarg, 0);
+                break;
+            case 'w':
+                width = atoi(optarg);
+                /* Only support powers of two to avoid issues
+                 * with always reading 512 bytes from disk
+                 */
+                if(width != 1 && width !=2 && width !=4 &&
+                   width != 8 && width !=16) {
+                    fprintf(stderr,
+                       "Error - only width 1,2,4,8 and 16 are supported\n");
+                    exit(1);
+                }
+                break;
+            case 'b':
+                word_length = 1;
+                break;
+            case 'c':
+                data_radix = RADIX_ASC;
+                word_length = 1;
+                break;
+            case 'd':
+                data_radix = RADIX_DEC;
+                break;
+            case 'h':
+                data_radix = RADIX_HEX;
+                word_length = 1;
+                break;
+            case 'o':
+                /* Default values */
+                break;
+            case 'v':
+                vflag++;
+                break;
+            case 'x':
+                data_radix = RADIX_HEX;
+                break;
+            default:
+                usage();
+                break;
+        }
     }
 
     /* Process file name, if any. */
-    p = argv[k];
-    if (k < argc && *p != '+') {
+    if(optind < argc)
+        p = argv[optind];
+
+    if (optind < argc && *p != '+') {
 	/* Explicit file name given. */
-	close(0);
-	if (open(argv[k], O_RDONLY) != 0) {
+    close(0);
+	if (open(argv[optind], O_RDONLY) != 0) {
 	    fprintf(stderr, "od: cannot open %s\n", argv[k]);
 	    exit(1);
 	}
-	k++;
+	optind++;
     }
 
     /* Process offset, if any. */
-    if (k < argc) {
+    if (optind < argc) {
 	/* Offset present. */
-	off = offset(argc, argv, k);
-	lseek(0, off, SEEK_SET);
+	off = offset(argc, argv, optind);
     }
+    lseek(0, off, SEEK_SET);
 
     dumpfile();
     addrout(off);

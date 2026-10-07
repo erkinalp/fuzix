@@ -168,7 +168,7 @@ int main(int argc, const char *argv[])
 			error("cannot open ", argv[1]);
 	}
 	for (;;) {
-		x = fscanf(input, "%s%s", precedes, follows);
+		x = fscanf(input, "%50s%50s", precedes, follows);
 		if (x == EOF)
 			break;
 		if (x != 2)

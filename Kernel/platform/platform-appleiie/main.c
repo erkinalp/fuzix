@@ -138,7 +138,7 @@ void scan_slots(void)
 {
     uint8_t i = 1;	/* slot 0 is the motherboard */
     volatile uint8_t *card = (volatile uint8_t *)0xC100;
-    
+
     for (i = 1; i < 8; i++, card += 0x100) {
         kprintf("\n%c - ", '0' + i);
         if (!(card_present & (1 << i))) {
@@ -222,3 +222,43 @@ void breadcrumbs(void)
     if (model == APPLE_UNKNOWN)
         panic("Apple IIe or IIc required");
 }
+
+/* TODO: put these into the asm bits */
+unsigned strlen(const char *p)
+{
+	unsigned n = 0;
+	while(*p++)
+		n++;
+	return n;
+}
+
+void *memcpy(void *to, const void *from, unsigned len)
+{
+	const uint8_t *f = from;
+	uint8_t *t = to;
+	while(len--)
+		*t++ = *f++;
+	return to;
+}
+
+void *memset(void *to, int v, unsigned len)
+{
+	uint8_t *t = to;
+	while(len--)
+		*t++ = v;
+	return to;
+}
+
+int strcmp(const char *a, const char *b)
+{
+    while(*a == *b) {
+        if (*a == 0)
+            return 0;
+        a++;
+        b++;
+    }
+    if (*a < *b)
+        return -1;
+    return 1;
+}
+

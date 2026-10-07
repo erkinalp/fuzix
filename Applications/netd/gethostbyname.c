@@ -54,15 +54,14 @@ static char buf[512];   /* packet buffer */
 /* formulate and send a DNS query packet */
 static int send_question( char *name ){
     struct header *p=( struct header *)buf;
-    struct RRtail *t;
     char *i = name;
     char *o = buf + sizeof(struct header);
     char *l = o++;
 
     memset( p, 0, sizeof(buf) );
-    p->id = 42;     /* "random" query ID */
-    p->cntl = 0x1;  /* request a recursive query */
-    p->qdcount = 1; /* one question */
+    p->id = htons(42);     /* "random" query ID */
+    p->cntl = 0x1;         /* request a recursive query */
+    p->qdcount = htons(1); /* one question */
     /* fill out name string */
 
     while(1){
@@ -78,14 +77,21 @@ static int send_question( char *name ){
     }
     *l = o - l - 1;
     *o++ = 0;
-    /* fill out rest of RR */
-    t = (struct RRtail *)o;
-    /* type: A record */
-    t->type = htons(1);
-    /* class: inet */
-    t->class = htons(1);
-    o += 4;
-    
+    /*
+     * DNS fields are byte packed and may not be naturally aligned.
+     * Avoid uint16_t structure accesses here as they fault on CPUs
+     * such as ARM M0 when the encoded name has an odd length.
+     */
+    {
+        uint16_t v = htons(1);
+        /* type: A record */
+        memcpy(o, &v, sizeof(v));
+        o += sizeof(v);
+        /* class: inet */
+        memcpy(o, &v, sizeof(v));
+        o += sizeof(v);
+    }
+
     write( fd, buf, (int)(o - buf) );
     return 0;    
 }
@@ -183,10 +189,18 @@ struct hostent *gethostbyname( char *name ){
     alarm(0);
     {
 	struct header *h = (struct header *)buf;
-	struct RRtail *t;
-	int i,j;
+        int i;
+        uint16_t qdcount;
+        uint16_t ancount;
+        uint16_t rdlen;
+        uint16_t type;
+        uint16_t class;
 
-	if( h->id != 42 )  /* correct session ID ? */
+        /* Convert the wire values once and use ordinary host-order values */
+        qdcount = ntohs(h->qdcount);
+        ancount = ntohs(h->ancount);
+
+        if( ntohs(h->id) != 42 )  /* correct session ID ? */
 	    goto error;
 
 	if( ! (h->cntl & 0x80) )  /* is an answer packet? */
@@ -195,12 +209,12 @@ struct hostent *gethostbyname( char *name ){
 	if( ! (h->ret & 0x80) )  /* is a recursive answer? */
 	    goto error;
 
-	if( ! h->ancount ) /* is there any answers? */
+        if( ! ancount ) /* is there any answers? */
 	    goto error;
 
 	/* skip over our question(s) */
 	ptr = buf + sizeof( struct header );
-	for( i = 0; i < h->qdcount && i < 4; i++ ){
+        for( i = 0; i < qdcount && i < 4; i++ ){
 	    while(1){
 		if( *ptr == 0 ){
 		    ptr++;
@@ -215,10 +229,10 @@ struct hostent *gethostbyname( char *name ){
 	    ptr +=4;
 	}
 	/* cap answers at MAXADDRS */
-	if( h->ancount > MAXADDRS )
-	    h->ancount = MAXADDRS;
+	if( ancount > MAXADDRS )
+	    ancount = MAXADDRS;
 	/* Iterate over answers */
-	for( i = 0; i < h->ancount; i++ ){
+        for( i = 0; i < ancount; i++ ){
 	    /* parse off name */
 	    while(1){
 		if( *ptr == 0 ){
@@ -232,17 +246,28 @@ struct hostent *gethostbyname( char *name ){
 		ptr += *ptr + 1;
 	    }
 	    /* point to rest of RR structure */
-	    t = (struct RRtail *)ptr;
-	    ptr += sizeof( struct RRtail);
-	    if( t->type == 0x01 ){
-		for( j=0; j<t->rdlen; j++ )
-		    addrs[lno][j] = *ptr++;
-		list[lno] = &addrs[lno][0];
-		lno++;
-	    }
-	    else{
-		ptr += t->rdlen;
-	    }
+             /* DNS resource records are byte packed and may not be naturally
+             * aligned. Do not access them through a C structure: unaligned
+             * accesses fault on CPUs such as ARM M0 and structure padding may
+             * make sizeof(struct RRtail) differ from the 10-byte wire format.
+             */
+            memcpy(&type, ptr, sizeof(type));
+            ptr += sizeof(type);
+            memcpy(&class, ptr, sizeof(class));
+            ptr += sizeof(class);
+            /* skip TTL */
+            ptr += 4;
+            memcpy(&rdlen, ptr, sizeof(rdlen));
+            ptr += sizeof(rdlen);
+            type = ntohs(type);
+            class = ntohs(class);
+            rdlen = ntohs(rdlen);
+            if (type == 1 && class == 1 && rdlen == 4) {
+                memcpy(addrs[lno], ptr, 4);
+                list[lno] = &addrs[lno][0];
+                lno++;
+            }
+            ptr += rdlen;
 	}
 	list[lno] = NULL;
     }

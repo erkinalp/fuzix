@@ -1,37 +1,57 @@
+# 1 "monitor.S"
 ; 2015-01-17 William R Sowerbutts
+# 1 "kernelu.def"
+; FUZIX mnemonics for memory addresses etc
 
-                .module monitor
-                .include "kernel.def"
-                .globl _plt_monitor
-                .globl map_kernel
+U_DATA__TOTALSIZE	.equ	0x200	; 256+256 bytes @ D000
+Z80_TYPE		.equ	0	; just a old good Z80
+USE_FANCY_MONITOR	.equ	1	; disabling this saves around approx 0.5KB
 
-; -----------------------------------------------------------------------------
-.ifne USE_FANCY_MONITOR ; -----------------------------------------------------
-                .area _CODE ; actual monitor lives in kernel bank
-                .include "../../lib/monitor-z80.s"
+Z80_MMU_HOOKS		.equ 0
 
-                .area _COMMONMEM ; just a stub goes in common memory
+
+
+PROGBASE		.equ	0x0000
+PROGLOAD		.equ	0x0100
+
+; Mnemonics for I/O ports etc
+
+CONSOLE_RATE		.equ	115200
+
+CPU_CLOCK_KHZ		.equ	10000
+
+; Z80 CTC ports
+CTC_CH0		.equ	0x88	; CTC channel 0 and interrupt vector
+CTC_CH1		.equ	0x89	; CTC channel 1 (periodic interrupts)
+CTC_CH2		.equ	0x8A	; CTC channel 2
+CTC_CH3		.equ	0x8B	; CTC channel 3
+
+; 37C65 FDC ports
+FDC_CCR		.equ	0x48	; Configuration Control Register (W/O)
+FDC_MSR		.equ	0x50	; 8272 Main Status Register (R/O)
+FDC_DATA	.equ	0x51	; 8272 Data Port (R/W)
+FDC_DOR		.equ	0x58	; Digital Output Register (W/O)
+FDC_TC		.equ	0x58	; Pulse terminal count (R/O)
+
+; MMU Ports
+MPGSEL_0	.equ	0x78	; Bank_0 page select register (W/O)
+MPGSEL_1	.equ	0x79	; Bank_1 page select register (W/O)
+MPGSEL_2	.equ	0x7A	; Bank_2 page select register (W/O)
+MPGSEL_3	.equ	0x7B	; Bank_3 page select register (W/O)
+MPGENA		.equ	0x7C	; memory paging enable register, bit 0 (W/O)
+# 5 "monitor.S"
+	.export _plt_monitor
+# 18
+	.common
 _plt_monitor:
-                di
-                call map_kernel
-                jp monitor_entry
-
-
-; -----------------------------------------------------------------------------
-.else ; MICRO MONITOR ---------------------------------------------------------
-                .globl outchar
-                .globl outnewline
-                .globl outhl
-
-                .area _COMMONMEM
-_plt_monitor:  di
-                call outnewline
-                ; just dump a few words from the stack
-                ld b, #50
-stacknext:      pop hl
-                call outhl
-                ld a, #' '
-                call outchar
-                djnz stacknext
-                halt
-.endif
+	di
+	call outnewline
+	; just dump a few words from the stack
+	ld b, #50
+stacknext:
+	pop hl
+	call outhl
+	ld a, #' '
+	call outchar
+	djnz stacknext
+	halt

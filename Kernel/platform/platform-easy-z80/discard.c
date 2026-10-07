@@ -52,17 +52,15 @@ void map_init(void)
 	bufptr bp = bufpool;
 	uint8_t *p = (uint8_t *) 0x4000;
 	while (bp < bufpool_end) {
-		bp++->__bf_data = p;
+		(bp++)->__bf_data = p;
 		p += BLKSIZE;
 	}
 }
 
 void device_init(void)
 {
-#ifdef CONFIG_IDE
-	devide_init();
+	ide_probe();
 #ifdef CONFIG_PPIDE
 	ppide_init();
-#endif
 #endif
 }

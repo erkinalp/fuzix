@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-size_t strcspn(const char *string, const char *set)
+size_t strcspn(register const char *string, const char *set)
 /*
  *	Return the length of the sub-string of <string> that consists
  *	entirely of characters not found in <set>.  The terminating '\0'

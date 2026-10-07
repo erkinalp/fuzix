@@ -21,8 +21,6 @@ tools/bin2z80: tools/bin2z80.c
 
 tools/flat2z80: tools/flat2z80.c
 
-tools/makedck: tools/makedck.c
-
 tools/plus3boot: tools/plus3boot.c
 
 tools/raw2dsk: tools/raw2dsk.c
@@ -63,7 +61,7 @@ modlib.rel: modlib.s kmod-z80.rel
 kmod-z80.rel: cpu-z80/kmod-z80.s
 	$(CROSS_AS) $(ASOPTS) cpu-z80/kmod-z80.s
 
-fuzix.bin: fuzix.ihx tools/bihx tools/analysemap tools/memhogs tools/binman tools/bintomdv tools/binmunge tools/bin2sna tools/bin2z80 cpm-loader/cpmload.bin tools/flat2z80 tools/makejv3 tools/trslabel tools/visualize tools/raw2dsk tools/raw2dskcpc tools/raw2mgt tools/cartman tools/makedck tools/plus3boot tools/maketap tools/trdify tools/doubleup modlib.rel kmod-z80.rel
+fuzix.bin: fuzix.ihx tools/bihx tools/analysemap tools/memhogs tools/binman tools/bintomdv tools/binmunge tools/bin2sna tools/bin2z80 cpm-loader/cpmload.bin tools/flat2z80 tools/makejv3 tools/trslabel tools/visualize tools/raw2dsk tools/raw2dskcpc tools/raw2mgt tools/cartman tools/plus3boot tools/maketap tools/trdify tools/doubleup modlib.rel kmod-z80.rel
 	-cp hogs.txt hogs.txt.old
 	tools/memhogs <fuzix.map |sort -nr >hogs.txt
 	head -5 hogs.txt

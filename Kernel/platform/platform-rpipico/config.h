@@ -1,6 +1,8 @@
 #ifndef CONFIG_H
 #define CONFIG_H
-#include "tusb_config.h"
+/* NOTE: tusb_config.h is included further down, after the board block:
+ * its host/device mode choice tests CONFIG_PC3_DISPLAY, which must be
+ * defined first. */
 /*
  * Set this according to your SD card pins
  *  CONFIG_RC2040
@@ -18,6 +20,11 @@
  *	    TX  GPIO 19
  *	    RX  GPIO 16
  *	    CS  GPIO 17
+ *  CONFIG_PICO_COMPUTER_3
+ *	    SCK GPIO 30
+ *	    TX  GPIO 31
+ *	    RX  GPIO 28
+ *	    CS  GPIO 33
  *  If Undefined
  *      SCK GPIO 2
  *      TX  GPIO 3
@@ -25,16 +32,133 @@
  *      CS  GPIO 5
  */
 
-#define CONFIG_RC2040
+#define CONFIG_PICO_COMPUTER_3
+
+/* Pico Computer 3 clocking: 315 MHz (DVDD comes from the board's external
+ * 1.3 V regulator, so no vreg change; clk_peri follows clk_sys as in the
+ * PC3 MicroPython/MMBasic firmwares). The flash QMI clock is capped at
+ * 63 MHz so the divisor (= RXDELAY, a 3-bit field) stays valid: 315/63 ->
+ * div 5. PSRAM is 8 MiB on QMI CS1, GP47. */
+#ifdef CONFIG_PICO_COMPUTER_3
+/* 375 MHz: MMBasic's FreqXGA, the PC3-proven XGA clock.  Graphics
+ * modes run HSTX at clk_sys (full-rate DDR): pixel clock 75 MHz =
+ * VESA 1024x768 at 70.07 Hz on the 1328x806 frame.  The text console
+ * runs clk_hstx = clk_sys/3: 25 MHz pixel = 640x480 at 59.5 Hz.
+ * Flash QMI 62.5 MHz (div 6), PSRAM 125 MHz (div 3), UART/SD divisors
+ * all derived at runtime from the actual clk_sys. */
+#define PC3_SYS_CLOCK_KHZ 378000
+#define PC3_FLASH_MAX_HZ (63 * 1000 * 1000)
+#define PC3_PSRAM_CS_PIN 47
+
+/* DS3231 RTC on I2C0 (GP20/21): time loads at boot via setdate in rc;
+ * resync the tick clock from it every 5s (interval is in deciseconds). */
+#define CONFIG_RTC
+#define CONFIG_RTC_FULL
+#define CONFIG_RTC_INTERVAL 50
+
+/* 64 processes.
+ *
+ * This was 30, chosen when swap was a fixed slot and MAX_SWAPS bounded
+ * how many processes could be out at once.  Neither is true now: a
+ * swapped process gets a PSRAM arena allocation of exactly its own
+ * size (swapper.c), and resident memory is packed in 4K chunks at
+ * actual size, so the table no longer reserves anything on behalf of a
+ * process that does not exist.  swapmap/MAX_SWAPS in Kernel/swap.c is
+ * a free list of fixed slots this platform stopped using.
+ *
+ * What it does cost is the table itself: p_tab is 96 bytes, so 64
+ * entries are 6,144 against 30's 2,880, plus 4 bytes each of swapaddr.
+ * About 3.4K of the kernel's headroom, which is affordable now that
+ * most of the kernel executes from flash.
+ *
+ * The companion tables scale with it - every background job holds
+ * open-file and inode slots, and the stock 15/20 ran dry a few
+ * processes past the old limit. */
+#define PTABSIZE 64
+/* Sized for 64 processes, not guessed: the shell gives every background
+ * job its own /dev/null on stdin, so the open-file table needs an entry
+ * per process before anything opens a real file.  At 48 it ran out at
+ * about 45 jobs - "cannot open /dev/null" and then ENFILE - which is
+ * what the old comment about companion tables was describing.  12 bytes
+ * an entry here and 80 an inode, so this costs under 3K. */
+#define OFTSIZE 128
+#define ITABSIZE 64
+
+/* HDMI display on HSTX: core1 is owned by the scanout, so the USB-device
+ * console loop it used to run is disabled (the PC3's USB port faces the
+ * on-board hub and is destined for host mode anyway). console.c renders
+ * an 80x40 ANSI console onto it (the kernel vt layer is VT52 and stays
+ * out of the build). */
+#define CONFIG_PC3_DISPLAY
+
+/* USB host keyboard.  (To bisect TinyUSB out entirely - no init, no
+ * pump, serial-only input with the PendSV machinery still running -
+ * undefine CONFIG_PC3_USB_KBD.)
+ *
+ * The SE0 bus reset at usbkbd_init is ENABLED.  The PC3's CH334 hub is
+ * externally powered: it keeps its USB address and configured state
+ * across a warm reboot and then ignores re-enumeration from address 0,
+ * so without the reset the keyboard only ever works after a full power
+ * cycle - the exact field report that got it turned back on.  It had
+ * been disabled by PC3_NO_USB_BUS_RESET from v0.5 to v0.14, by a
+ * commit whose stated reason was lost to a truncated message; if a
+ * problem reappears, suspect booting with the DPDT switch in the PROG
+ * position (the SE0 is then driven at the attached PC, not the hub)
+ * and record the finding HERE before defining it again. */
+#define CONFIG_PC3_USB_KBD
+
+/* BBC 4-channel sound on the PCM5102 I2S DAC (GP10/11/22) */
+#define CONFIG_PC3_SOUND
+#endif
+
+/* For the CFG_ values.  The marker keeps tusb_config.h's panic hook out
+ * of kernel files - see the comment there. */
+#define PC3_CONFIG_H_INCLUDES_TUSB
+#include "tusb_config.h"
+#undef PC3_CONFIG_H_INCLUDES_TUSB
 
 /* We have a GPIO interface */
 #define CONFIG_DEV_GPIO
+/* /dev/i2c, minor 7 of the sys device: userland on I2C0, which is the
+   QWIIC socket.  i2cuser.c has the sharing argument; the short form is
+   that a non-preemptive kernel makes a transaction atomic for free, and
+   the hourly RTC poll in interrupt context skips rather than waits. */
+#define CONFIG_DEV_I2C
+/* Ownership of the I/O header's pins and the peripheral blocks behind
+   them, so userland can drive them DIRECTLY (there is no MMU here) with
+   the kernel keeping only the arbitration and the cleanup.  pinlock.c
+   has the argument; PC3-IO-PLAN.md has the plan it belongs to. */
+#define CONFIG_PC3_PINLOCK
+/* SPI0 for userland - MMBasic's SPI, on header pins.  SPI1 is NOT
+   offered: it is the SD card's, and a program that could take it could
+   take the filesystem out from under itself.  spiuser.c. */
+#define CONFIG_PC3_SPI0
 /* Enable to make ^Z dump the inode table for debug */
 #undef CONFIG_IDUMP
 /* Enable to make ^A drop back into the monitor */
 #undef CONFIG_MONITOR
-/* Enable to support network stack */
-#undef CONFIG_NET
+/* Enable to support network stack.
+ *
+ * CONFIG_NET brings in syscall_net.c and network.c - the BSD-ish
+ * socket layer that has been compiled and disabled in this port since
+ * it was written - and CONFIG_NET_LWIP selects dev/net/net_lwip.c as
+ * the backend under it.  Both follow PC3_NET, because the sockets are
+ * useless without the radio and the radio is optional. */
+#ifdef CONFIG_PC3_NET
+#define CONFIG_NET
+#define CONFIG_NET_LWIP
+/* CONFIG_NET_TRACE prints every socket call's socket, command and
+ * state, plus each netproto_free.  Off; define it here when a socket
+ * misbehaves.  It is what found IN2SOCK never being set - the trace
+ * showed a close() on the accepted child freeing socket 0, which was
+ * the listener. */
+#endif
+/* Alternative: W5x00 (WIZnet) networking over SPI instead of the
+ * on-board radio - enable manually and leave CONFIG_PC3_NET off. */
+/* #define CONFIG_NET          */
+/* #define CONFIG_NET_WIZNET   */
+/* #define CONFIG_NET_W5500    */
+
 #undef CONFIG_NET_NATIVE
 /* Profil syscall support (not yet complete) */
 #undef CONFIG_PROFIL
@@ -42,6 +166,18 @@
 #define CONFIG_MULTI
 /* 32bit with flat memory */
 #undef CONFIG_FLAT
+/* The platform validates syscall buffer addresses itself (arena.c):
+ * the stock valaddr accepts only the process image, and a buffer in a
+ * PSRAM arena the process owns is equally legitimate - without this,
+ * read() into an arena is EFAULT and the facility cannot do I/O. */
+#define CONFIG_CUSTOM_VALADDR
+/* "#!" scripts exec the platform's fixed interpreter (misc.c: bcrun),
+ * which is how the C compiler's output runs as ./prog */
+#define CONFIG_SCRIPT_INTERP
+/* exec calls plt_exec_cleanup() once committed: PSRAM arenas do not
+ * survive into the new image (exec's pagemap_realloc gets a NULL hdr
+ * on this port, so the release cannot key off that) */
+#define CONFIG_PLT_EXEC_CLEANUP
 /* Pure swap */
 #define CONFIG_BANKS 1
 /* brk() calls pagemap_realloc() to get more memory. */
@@ -65,36 +201,127 @@
 
 #define CONFIG_32BIT
 #define CONFIG_USERMEM_DIRECT
-/* Serial TTY, no VT or font */
+/* Serial TTY, no VT or font (the PC3 console is its own ANSI engine) */
 #undef CONFIG_VT
 #undef CONFIG_FONT8X8
 
-/* Built in NAND flash. Warning, it's unstable. */
-#define CONFIG_PICO_FLASH
+/*
+ * There is NO on-board flash filesystem, and the absence is worth as
+ * much as the device was.
+ *
+ * It was a dhara FTL over the XIP flash, mounted /dev/hda, and it was
+ * never a release asset: root has always been the SD card and swap is
+ * a PSRAM allocation.  What it cost was out of all proportion to that:
+ *
+ *  - 7,912 bytes of SRAM, measured.  dhara's journal and map, devflash,
+ *    rawflash and the SDK's hardware_flash all had to be RAM-RESIDENT,
+ *    because code cannot execute from a device it is erasing.  That is
+ *    two 4K blocks of the process pool.
+ *
+ *  - a standing rule over every future placement decision.  "Must not
+ *    be reached while the flash is busy" is the constraint that made
+ *    linker_overrides/ dangerous to edit, and it existed only for this.
+ *
+ *  - four numbers that had to agree - FLASH_OFFSET, the Makefile's uf2
+ *    offset, mkftl's -s, and PICO_FLASH_SIZE_BYTES - where a stale one
+ *    wrote the disk over the kernel image.  That had already bricked a
+ *    board once.
+ *
+ * So the SD card is now hda and the PSRAM swap disc is hdb.  The boot
+ * prompt wants "hda2" where it used to want "hdb2".  Nothing else in
+ * the system moved: rc has had no swapon since swap stopped being a
+ * device, which was the other half of the old argument for keeping it.
+ */
 
 /* Program layout */
 
-#define UDATA_BLKS  3
+/*
+ * The udata block: struct u_data at the bottom, the kernel stack
+ * growing down onto it from the top, and PROGLOAD immediately above.
+ * 3 blocks (1.5K) was the figure for a system whose deepest kernel
+ * call was a filesystem one.
+ *
+ * TLS changed that.  mbedtls runs inside the network pump, which is
+ * reached from plt_idle - so it is NESTED on top of whichever syscall
+ * just went to sleep, on that process's kernel stack.  A handshake
+ * took a 1.5K stack down through udata and 176 bytes out of the bottom
+ * of progbase (sp=0x2002bf50 against a progbase of 0x2002c000), which
+ * corrupted the process table and killed the machine.
+ *
+ * MEASURED, not guessed: net_cyw43.c painted the region and watched it
+ * during a real handshake to example.com.  Peak 2,460 bytes.  That is
+ * also exactly consistent with the crash - sp reached 1,712 bytes down
+ * a stack that only had 1,156 usable - and it is far less than the 6.5K
+ * and 16K that two earlier guesses spent.
+ *
+ * 12 blocks is 6,144, less struct u_data's 328 = 5,816 of stack: 2.4x
+ * the measured peak.  The margin is there because certificate
+ * VERIFICATION has not been measured - the handshake above had no CA
+ * bundle loaded, and chain walking is the deeper path.  net_cyw43.c
+ * keeps a canary just above udata that says so if this is ever wrong.
+ *
+ * The cost is per RESIDENT PROCESS: udata lives inside the process
+ * image, so every resident process pays the extra 4,608 bytes, which is
+ * one more 4K pool block each.  That is what buys TLS.
+ *
+ * UDATA_SIZE_ASM in cpu-armm0/kernel-armm0.def must match; main.c
+ * panics "bad offsets" at boot if it does not.
+ */
+#define UDATA_BLKS  12
 #define UDATA_SIZE  (UDATA_BLKS << BLKSHIFT)
 
+#ifndef TOTALMEM
 #define TOTALMEM 160
+#endif
 #if TOTALMEM == 0
 #error TOTALMEM should have been defined via cmake
 #endif
+/* NETMEM stays 0 even with CONFIG_NET on, unlike every other port.
+ *
+ * It is the slice of the process pool a network stack takes for its
+ * buffers, and 10K is the usual figure.  Here the buffers are not in
+ * the pool at all - lwIP's heap and every one of its pools live in
+ * PSRAM (lwipopts.h) - so taking 10K would be taking it twice.  What
+ * networking really costs this pool is one 4K block, and that is paid
+ * once in TOTALMEM (332 rather than 336) and in the matching
+ * linker_overrides_net/memory_ram.incl.
+ *
+ * If this ever becomes non-zero, USERMEM stops matching the PROGPOOL
+ * region and progbase[] ends up smaller than the memory reserved for
+ * it.  Nothing checks that. */
 #define NETMEM 0
-
-#ifdef CONFIG_NET
-#undef NETMEM
-#define NETMEM 10
-#endif
 
 #define USERMEM ((TOTALMEM-NETMEM)*1024)
 
-#define PROGSIZE (65536 - UDATA_SIZE)
+/* The process ceiling is now all of user memory (Pico Computer 3).
+ * Resident memory is packed at actual size in 4K chunks, so small
+ * processes still cost what they always did; what changed is that swap
+ * is a PSRAM allocation the size of the process rather than a fixed
+ * slot, so nothing forces a limit below the address space a process can
+ * actually be resident in.  The old 262144 was the slot size - an
+ * 8-bit machine's decision - and it stopped bcrun loading a 140K
+ * translated BASIC program on a 312K machine with 8 MiB of PSRAM.
+ *
+ * A process this big leaves nothing else resident.  That is fine: the
+ * others swap, and fork stages the parent into PSRAM rather than
+ * needing two copies in RAM at once (see swapper.c). */
+#define PROGSIZE (USERMEM - UDATA_SIZE)
 extern uint8_t progbase[USERMEM];
 #define udata (*(struct u_data*)progbase)
 
-#define USERSTACK (4*1024) /* 4kB */
+/* 8K: the C stack is a fixed window between BSS and heap; BBC BASIC's
+ * recursive expression evaluator needs the headroom (it guards its own
+ * depth against this figure minus a margin). */
+#define USERSTACK (8*1024)
+
+/* A program may ask for more with ld -z stack-size=N, recorded in its
+ * PT_GNU_STACK header and honoured by the ELF loader; this caps what
+ * it can take out of its own 256K.  The compiler passes need it: cc1
+ * and cc2 are recursive-descent over expression trees, and a large
+ * generated program (a 3000-line BASIC translation) drives them deeper
+ * than 8K of frames.  Overflowing the window runs into BSS silently,
+ * which is how it presented - a wild pointer and a dead machine. */
+#define USERSTACK_MAX (64*1024)
 
 #define CONFIG_CUSTOM_VALADDR
 #define PROGBASE ((uaddr_t)&progbase[0])
@@ -103,7 +330,7 @@ extern uint8_t progbase[USERMEM];
 #define SWAPBASE PROGBASE
 #define SWAPTOP (PROGBASE + (uaddr_t)alignup(udata.u_break - PROGBASE, 1<<BLKSHIFT)) /* never swap in/out data above break */
 #define SWAP_SIZE   ((PROGSIZE >> BLKSHIFT) + UDATA_BLKS)
-#define MAX_SWAPS   (2048*2 / SWAP_SIZE) /* for a 2MB swap partition */
+#define MAX_SWAPS   (16384 / SWAP_SIZE) /* for the 8MB PSRAM swap disc */
 
 #define BOOT_TTY (512 + 1)   /* Set this to default device for stdio, stderr */
                           /* In this case, the default is the first TTY device */
@@ -113,7 +340,8 @@ extern uint8_t progbase[USERMEM];
  * Boot cmd line.
  * [BOOTDEVICE] [tty=<TTYLIST>]
  * 
- * <BOOTDEVICE> - use `hda` for built-in flash or `hdbX` for SD card, where X is partition number
+ * <BOOTDEVICE> - `hdaX` for the SD card, where X is the partition
+ *      number.  The root partition is 2, so: hda2
  * <TTYLIST> - list of TTY devices in order. If not specified system will
  *      map USB devices to tty1-4 and UART0 to tty5 if USB is connected. Or UART0 to tty1 etc if not.
  *      Example: `tty=usb1,uart1,usb2`
@@ -124,27 +352,78 @@ extern uint8_t progbase[USERMEM];
 #define SWAPDEV    (swap_dev) /* dynamic swap */
 
 /* Device parameters */
-#define NUM_DEV_TTY_UART 1 /* min 1 max 2*/
-#define DEV_UART_0_TX_PIN PICO_DEFAULT_UART_TX_PIN
-#define DEV_UART_0_RX_PIN PICO_DEFAULT_UART_RX_PIN
-#define DEV_UART_1_TX_PIN 6
-#define DEV_UART_1_RX_PIN 7
-#define DEV_UART_1_CTS_PIN 8
-#define DEV_UART_1_RTS_PIN 9
+#define NUM_DEV_TTY_UART 2 /* min 1 max 2*/
+/* Pico Computer 3: the console is the CH340 (USB-C serial) wired to the
+ * uart1 peripheral, GP8=TX / GP9=RX. 115200 like the other PC3 firmwares
+ * (the kernel default termios would drop the port to 9600 at tty open). */
+#define TTY_INIT_BAUD B115200
+#define DEV_UART_0_INSTANCE 1
+#define DEV_UART_0_TX_PIN 8
+#define DEV_UART_0_RX_PIN 9
+/* Second serial port on the I/O header: /dev/tty2 = uart0, GP0=TX /
+ * GP1=RX, no flow control.  BBC BASIC reaches it as a port channel:
+ * ch% = OPENUP("/dev/tty2") then BGET#/BPUT#; baud via *stty. */
+#define DEV_UART_1_INSTANCE 0
+#define DEV_UART_1_TX_PIN 0
+#define DEV_UART_1_RX_PIN 1
+#define DEV_UART_1_CTS_PIN -1
+#define DEV_UART_1_RTS_PIN -1
 #define NUM_DEV_TTY_USB 4 /* min 1 max 4. */
 #define NUM_DEV_TTY (NUM_DEV_TTY_UART + NUM_DEV_TTY_USB)
+#ifdef CONFIG_PC3_DISPLAY
+#define DEV_USB_DETECT_TIMEOUT 0 /* USB device stack never runs: don't wait */
+#else
 #define DEV_USB_DETECT_TIMEOUT 5000 /* (ms) Total timeout time to detect USB host connection*/
+#endif
 #define DEV_USB_INIT_TIMEOUT 2000 /* (ms) Total timeout to try not swallow messages */
 
 #define TTYDEV   BOOT_TTY /* Device used by kernel for messages, panics */
 #define NBUFS    20       /* Number of block buffers */
 #define NMOUNTS	 4	  /* Number of mounts at a time */
 
+/* Check the superblock's invariants at every filesystem operation and
+ * panic naming the field that is wrong.  Filesystem corruption here has
+ * twice been found only by fsck afterwards, with nothing left to say
+ * what did it; this stops the machine at the first operation after the
+ * damage instead.  Costs a scan of two 50 entry arrays per operation
+ * and no memory.  See sb_validate() in filesys.c. */
+#define CONFIG_SB_TRIPWIRE
+
+/* Assert the two things blk_op's single global cannot survive: a
+ * transfer starting inside another one, and swap I/O aimed anywhere but
+ * the swap device.  See the tripwire note in dev/blkdev.c. */
+#define CONFIG_BLK_TRIPWIRE
+
 #define MAX_BLKDEV	4
 
 #define CONFIG_SMALL
 
-#define plt_copyright() /* */
+/*
+ * The Pico Computer 3 release, which is NOT the same number as FUZIX's.
+ *
+ * start.c prints "FUZIX version 0.5" from Kernel/version.c - upstream's
+ * own version, and correct - so a user who downloaded pc3-v0.6 and
+ * booted it saw 0.5 and reasonably concluded the wrong file had been
+ * published.  Both numbers are right; only one of them was on screen.
+ *
+ * Bump this when tagging a release; BUILDING-PC3.md says so too.
+ * It is not the only place the release number is written down -
+ * MM_RELEASE in mmb_runtime.h is what a BASIC program's MM.VER
+ * answers, and it sat three releases behind this one without anything
+ * noticing.  `sh relcheck.sh` now compares the two and the manual.
+ */
+#define PC3_RELEASE "0.28"
+
+/*
+ * The port's own copyright line.  It goes here rather than in start.c's
+ * list because that list is printed by every platform, and this work is
+ * in one of them; keeping it in the platform hook also keeps it out of
+ * the way of merges from upstream.
+ */
+#define plt_copyright() \
+	kprintf("Pico Computer 3, release %s (on FUZIX %s)\n" \
+		"Copyright (c) 2026 Peter Mather\n", \
+		PC3_RELEASE, sysinfo.uname)
 #define swap_map(x) ((uint8_t*)(x))
 
 /* Prevent name clashes wish the Pico SDK */

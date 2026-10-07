@@ -1,0 +1,33 @@
+# NOTE: this copy is NOT the one that ships.  fuzix-basefs.pkg installs
+# /etc/rc from Standalone/filesystem-src/etc-files/rc, and the two have
+# drifted; edit that one for anything that must reach a card.
+umask 022
+fsck -a -y /
+setdate
+remount -n / rw
+prtroot >/etc/mtab
+# No swapon. Swap is not a device any more: the kernel allocates a
+# region the size of the process out of the PSRAM heap and memcpy's
+# into it. Nothing here has to know a size, which is just as well - the
+# 14208 that used to be on this line had to agree with a split computed
+# in three other files, and a stale value would have had swap writing
+# through whatever came next.
+# USB keyboard layout: us uk de fr es be
+picoctl keymap uk
+# Num lock is a property of the KEYBOARD: one with no numeric keypad (a
+# Raspberry Pi keyboard, most laptop-style boards) overlays one onto
+# 7890/uiop/jkl;/m while num lock is on.  The kernel turns it off by
+# itself for a keyboard that declares no num lock LED, but plenty of
+# keypad-less keyboards declare one anyway - so "picoctl numlock off"
+# records the answer per keyboard in /etc/numlock and this replays it.
+# The kernel does not write files; that file is the whole of the memory.
+picoctl numlock --load
+# NOTE: keyboard auto-repeat (kbdrate) does NOT belong here - rc runs
+# before init has given it a controlling terminal, and kbdrate opens
+# /dev/tty, so it fails with "failed ioctl".  It lives in /etc/profile
+# instead.  The compiled-in default (600ms then 100ms) already matches,
+# so this is only for retuning.
+#Uncomment if you have multiple file systems
+#fsck -a
+#mount -a
+>/var/run/utmp

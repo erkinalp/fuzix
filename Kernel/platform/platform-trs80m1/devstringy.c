@@ -5,7 +5,7 @@
 #include <devlpr.h>
 #include <printf.h>
 #include <trs80.h>
-#include <devstringy.h> 
+#include <devstringy.h>
 
 /*
  *	Stringy tape wrapper. Note that the asm code uses the ROM which
@@ -30,7 +30,7 @@ static int tape_error(void)
     /* Write protected */
     if (a & 0x01)
         udata.u_error = EROFS;
-    /* BREAK */        
+    /* BREAK */
     if (a & 0x02)
         udata.u_error = EINTR;
     /* End of tape while writing */
@@ -57,9 +57,8 @@ static int tape_rewind(void)
     return tape_error();
 }
 
-int tape_open(uint8_t minor, uint16_t flag)
+int tape_open(uint_fast8_t minor, uint16_t flag)
 {
-    minor; flag;
     uint8_t unit;
 
     /* Check for the floppy tape ROM */
@@ -100,7 +99,7 @@ int tape_open(uint8_t minor, uint16_t flag)
     return 0;
 }
 
-int tape_close(uint8_t minor)
+int tape_close(uint_fast8_t minor)
 {
     minor;
     busy = 0;
@@ -114,7 +113,7 @@ int tape_close(uint8_t minor)
     return 0;
 }
 
-static int tape_rw(uint8_t op)
+static int tape_rw(uint_fast8_t op)
 {
     uint8_t pos = fileid;
 
@@ -131,19 +130,13 @@ static int tape_rw(uint8_t op)
     return udata.u_done;
 }
 
-int tape_read(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int tape_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
-    used(minor);
-    used(rawflag);
-    used(flag);
     return tape_rw(TAPE_READ);
 }
 
-int tape_write(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int tape_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
-    used(minor);
-    used(rawflag);
-    used(flag);
     return tape_rw(TAPE_WRITE);
 }
 
@@ -153,10 +146,8 @@ static struct mtstatus tapei = {
     ~0UL
 };
 
-int tape_ioctl(uint8_t minor, uarg_t op, char *ptr)
+int tape_ioctl(uint_fast8_t minor, uarg_t op, char *ptr)
 {
-    used(minor);
-
     switch(op) {
         case MTSTATUS:
             if (inpos)

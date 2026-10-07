@@ -8,25 +8,15 @@
 uint16_t ramtop = PROGTOP;
 uint16_t swap_dev = 0xFFFF;
 
-/* On idle we spin checking for the terminals. Gives us more responsiveness
-   for the polled ports */
-void plt_idle(void)
-{
-  /* We don't want an idle poll and IRQ driven tty poll at the same moment */
-  __asm
-   halt
-  __endasm;
-}
-
 uint8_t timer_wait;
 
 void plt_interrupt(void)
 {
- tty_pollirq();
- timer_interrupt();
- poll_input();
- if (timer_wait)
-   wakeup(&timer_interrupt);
+	tty_pollirq();
+	timer_interrupt();
+	poll_input();
+	if (timer_wait)
+		wakeup(&timer_interrupt);
 }
 
 /* This points to the last buffer in the disk buffers. There must be at least
@@ -43,7 +33,7 @@ struct blkbuf *bufpool_end = bufpool + NBUFS;
  */
 void plt_discard(void)
 {
-	uint16_t discard_size = 0x8000 - (uint16_t)bufpool_end;
+	uint16_t discard_size = 0x8000 - (uint16_t) bufpool_end;
 	bufptr bp = bufpool_end;
 
 	discard_size /= sizeof(struct blkbuf);
@@ -52,9 +42,9 @@ void plt_discard(void)
 
 	bufpool_end += discard_size;
 
-	memset( bp, 0, discard_size * sizeof(struct blkbuf) );
+	memset(bp, 0, discard_size * sizeof(struct blkbuf));
 
-	for( bp = bufpool + NBUFS; bp < bufpool_end; ++bp ){
+	for (bp = bufpool + NBUFS; bp < bufpool_end; ++bp) {
 		bp->bf_dev = NO_DEVICE;
 		bp->bf_busy = BF_FREE;
 	}
@@ -64,6 +54,6 @@ void plt_discard(void)
 /* Adding dummy swapper since it is referenced by tricks.s */
 void swapper(ptptr p)
 {
-  p;
+	p;
 }
 #endif

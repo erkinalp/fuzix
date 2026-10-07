@@ -8,7 +8,7 @@
 
 #include "stdio-l.h"
 
-int fclose(FILE * fp)
+int fclose(register FILE * fp)
 {
 	int rv = 0;
 
@@ -27,7 +27,7 @@ int fclose(FILE * fp)
 		fp->bufstart = fp->bufend = 0;
 	}
 	if (fp->mode & __MODE_FREEFIL) {
-		FILE *ptr = __IO_list, *prev = 0;
+		register FILE *ptr = __IO_list, *prev = 0;
 
 		fp->mode = 0;
 		while (ptr && ptr != fp)

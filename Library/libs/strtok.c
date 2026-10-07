@@ -30,7 +30,7 @@ static char *olds = 0;
 	x = strtok(NULL, "=");		// x = NULL
 		// s = "abc\0-def\0"
 */
-char *strtok(char *s, const char *delim)
+char *strtok(register char *s, const char *delim)
 {
   char *token;
 

@@ -9,10 +9,10 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-int atoi(const char *str)
+int atoi(register const char *str)
 {
-	uint8_t neg = 0;
-	int sum = 0;
+	register int sum = 0;
+	register uint8_t neg = 0;
 
 	while(isspace(*str))
 		str++;

@@ -104,6 +104,8 @@ JUNK = $(CSRCS:.c=.lst) $(CSRCS:.c=.s) $(CSRCS:.c=.asm) $(CSRCS:.c=.sym) $(ASRCS
 .SUFFIXES: .c .s .rel .S
 
 
+.PHONY: build
+
 build:
 	ln -sf platform/platform-$(TARGET) build
 
@@ -112,11 +114,20 @@ target: include/kernel.h $(OBJS) | build
 
 $(OBJS): | build
 
+# makeversion writes BOTH include/sysinfoblk.h (read via kernel.h by
+# every compile) and version.c in a single process. The grouped target
+# keeps make to a single invocation (two independent rules could run
+# concurrently under -j), and the order-only prerequisite below makes
+# every object wait for it: a compile that reads sysinfoblk.h mid-write
+# dies with nonsense parse errors.
+# Do NOT add "include/kernel.h: include/sysinfoblk.h" — version.c is
+# in CSRCS, so $(CSRCS): include/kernel.h would close a cycle and
+# make silently drops the ordering edge.
+$(OBJS): | include/sysinfoblk.h version.c
+
 $(CSRCS): include/kernel.h
 
-include/kernel.h: include/sysinfoblk.h
-
-include/sysinfoblk.h: tools/makeversion
+include/sysinfoblk.h version.c &: tools/makeversion
 	$(QUIET_GEN)tools/makeversion $(VERSION) $(SUBVERSION) $(TARGET)
 
 $(C1OBJS): %$(BINEXT): %.c
@@ -161,9 +172,6 @@ $(CNETOBJS): %$(BINEXT): %.c
 $(AOBJS): %$(BINEXT): %$(ASMEXT)
 	$(QUIET_AS)$(CROSS_AS) $(ASOPTS) -o $*$(BINEXT) $<
 
-version.c: tools/makeversion
-	$(QUIET_GEN)tools/makeversion $(VERSION) $(SUBVERSION) $(TARGET)
-
 font/font8x8_exp2.c: font/font8x8.c tools/fontexpand
 	$(QUIET_GEN)tools/fontexpand <font/font8x8.c >font/font8x8_exp2.c
 
@@ -197,9 +205,12 @@ clean:
 	rm -f hogs.txt.old tools/*~ version.c include/sysinfoblk.h tools/makeversion tools/trslabel
 	rm -f tools/atariboot tools/fontexpand font/font8x8_exp2.c tools/diskpad tools/visualize6809
 	rm -f *.rel *.lst *.sym *.o *.bin
+	rm -f fuzix.hogs
 	+$(MAKE) -C platform/platform-$(TARGET) clean
 	+$(MAKE) -C tools/bankld clean
 	+$(MAKE) -C cpm-loader clean
+	+$(MAKE) -C cpm-loader-fcc clean
+	+$(MAKE) -C cpu-$(CPU) clean
 
 clean-all: clean
 	(cd tools/bankld; $(MAKE) clean)

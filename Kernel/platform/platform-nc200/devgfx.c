@@ -8,7 +8,6 @@
 #include <graphics.h>
 #include <devgfx.h>
 
-#ifdef CONFIG_NC200
 static struct display ncdisplay = {
   0,
   480, 128,
@@ -32,33 +31,6 @@ static struct videomap ncmap = {
   0,
   MAP_FBMEM|MAP_FBMEM_SIMPLE
 };
-
-#else
-static struct display ncdisplay = {
-  0,
-  480, 64,
-  512, 64,
-  0xFF, 0xFF,		/* For now */
-  FMT_MONO_WB,
-  HW_UNACCEL,
-  GFX_TEXT|GFX_MAPPABLE,
-  0,
-  GFX_DRAW,
-  80,8
-};
-
-static struct videomap ncmap = {
-  0,
-  0,
-  0xB000,
-  0x1000,
-  0,
-  0,
-  0,
-  MAP_FBMEM|MAP_FBMEM_SIMPLE
-};
-
-#endif
 
 int gfx_ioctl(uint_fast8_t minor, uarg_t arg, char *ptr)
 {

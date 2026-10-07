@@ -47,39 +47,6 @@ uint8_t shiftkeyboard[8][5] = {
 
 static uint8_t shiftmask[8] = { 0x02, 0, 0, 0, 0, 0, 0, 0x01 };
 
-static uint8_t update_keyboard(void) __naked
-{
-	/*
-	 *	This is run 50 time a second so we do it in asm and also return
-	 *	0 if nothing changed. That allows us to avoid the main tty
-	 *	processing on most interrupt events which saves us a lot of
-	 *	clocks.
-	 *
-	 *	FIXME: optimise out use of e in favour of rrc b c flag clear
-	 */
-	__asm
-		ld hl,#_keybuf
-		ld c, #0xFE
-		ld b, #0x7f
-		ld de, #8        ; 8 keyboard ports, 7FFE, BFFE, DFFE and so on
-				 ; D to 0 for no change found
-	read_halfrow:
-		in a, (c)
-		cpl
-		cp (hl)
-		jr z,nochange
-		inc d		; there 8 ports so we cannot overflow
-		ld (hl), a
-	nochange:
-		rrc b
-		inc hl
-		dec e
-		jr nz, read_halfrow
-		ld l,d
-		ret
-	__endasm;
-}
-
 static uint8_t cursor[4] = { KEY_LEFT, KEY_DOWN, KEY_UP, KEY_RIGHT };
 
 static void keydecode(void)
@@ -135,6 +102,7 @@ static void keydecode(void)
 	}
 }
 
+extern uint8_t update_keyboard(void);
 
 void tty_pollirq(void)
 {

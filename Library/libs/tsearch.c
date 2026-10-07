@@ -24,8 +24,8 @@ node;
 void *tsearch(void *key, void **_rootp, __compar_fn_t compar)
 /* find or insert datum into search tree */
 {
-node **rootp = _rootp;
-    node *q;
+register node **rootp = _rootp;
+register node *q;
 
     if (rootp == NULL)
 	return NULL;
@@ -52,10 +52,10 @@ node **rootp = _rootp;
 void *tdelete(void *key, void **_rootp, __compar_fn_t compar)
 /* delete node with given key */
 {
-node **rootp = _rootp;
+register node **rootp = _rootp;
     node *p;
-    node *q;
-    node *r;
+register node *q;
+register node *r;
     int cmp;
 
     if (rootp == NULL || (p = *rootp) == NULL)
@@ -90,7 +90,7 @@ node **rootp = _rootp;
     return(p);
 }
 
-static void trecurse(node *root, __action_fn_t action, int level)
+static void trecurse(register node *root, __action_fn_t action, int level)
 /* Walk the nodes of a tree */
 {
     if (root->left == (struct node_t *)0 && root->right == (struct node_t *)0)

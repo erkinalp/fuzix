@@ -135,9 +135,7 @@ struct dw_in *dw_gettab( uint8_t minor ){
 /* Translates a DW port no. to a proper minor no */
 int dw_minor( uint8_t port ){
 	if( port >= 16 ) return port - 16 + DW_NS_OFF  ;
-	int ret = port + DW_MIN_OFF - 1 ;
-	return ret;
-					
+	return port + DW_MIN_OFF - 1 ;
 }
 
 
@@ -235,7 +233,7 @@ void dw_vpoll( ){
 		}
 		/* VSER channel multiple data */
 		if( buf[0] < 32 ){
-			int i;
+			int j;
 			unsigned char b[3];
 			int min;
 			int minor=dw_minor( buf[0]-17 );
@@ -248,8 +246,8 @@ void dw_vpoll( ){
 				break;
 			}
 			dw_transaction( b,3,tbuf, min, 0 );
-			for( i=0; i<min; i++){
-				tty_inproc( minor, tbuf[i] );
+			for( j=0; j<min; j++){
+				tty_inproc( minor, tbuf[j] );
 			}
 			wait=1;
 			break;

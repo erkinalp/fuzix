@@ -1,70 +1,79 @@
-ASRCS = crt0.s z180.s commonmem.s rph.s ds1302-rph.s monitor.s
+ASRCS = crt0.S z180.S commonmem.S rph.S monitor.S
 CSRCS += devices.c main.c devtty.c ps2.c devinput.c 7220.c
 DISCARD_CSRCS = discard.c
 DISCARD_DSRCS = ../../dev/ds1302_discard.c ../../dev/tinyide_discard.c
 DISCARD_DSRCS += ../../dev/tinydisk_discard.c
 DSRCS = ../../dev/tinydisk.c
-DSRCS += ../../dev/tinyide_ppide_rbc.c ../../dev/tinyide.c
+DSRCS +=  ../../dev/tinyide.c
 DSRCS += ../../dev/ds1302.c ../../dev/ps2kbd.c ../../dev/ps2mouse.c
-DASRCS = ../../dev/devrd_hw.s ../../dev/devrd_z180_hw.s
+DASRCS = ../../dev/devrd_hwu.S ../../dev/devrd_z180_hw.S
+DASRCS += ../../dev/tinyide_ppide_rbc.S ../../dev/ds1302_rcbusu.S
 
-AOBJS = $(ASRCS:.s=.rel)
-COBJS = $(CSRCS:.c=.rel)
-DISCARD_COBJS = $(DISCARD_CSRCS:.c=.rel)
-DISCARD_DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DISCARD_DSRCS))
-DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DSRCS))
-DAOBJS = $(patsubst ../../dev/%.s,%.rel, $(DASRCS))
+
+AOBJS = $(ASRCS:.S=.o)
+COBJS = $(CSRCS:.c=.o)
+DISCARD_COBJS = $(DISCARD_CSRCS:.c=.o)
+DISCARD_DOBJS = $(patsubst ../../dev/%.c,%.o, $(DISCARD_DSRCS))
+DOBJS = $(patsubst ../../dev/%.c,%.o, $(DSRCS))
+DAOBJS = $(patsubst ../../dev/%.S,%.o, $(DASRCS))
 
 OBJS  = $(AOBJS) $(COBJS) $(DOBJS) $(DISCARD_DOBJS) $(DISCARD_COBJS) $(DAOBJS)
 
 CROSS_CCOPTS += -I../../dev/
 
-JUNK = *.rel *.lst *.asm *.sym *.rst *.map *.ihx *.bin
-
 all:	$(OBJS)
 
-$(AOBJS): %.rel: %.s
+$(AOBJS): %.o: %.S
 	$(CROSS_AS) $(ASOPTS) $<
 
-$(COBJS): %.rel: %.c
+$(COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DOBJS): %.rel: ../../dev/%.c
+$(DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DAOBJS): %.rel: ../../dev/%.s
-	$(CROSS_AS) $(ASOPTS) $@ $<
+$(DAOBJS): %.o: ../../dev/%.S
+	$(CROSS_AS) $(ASOPTS) $<
 
-$(DISCARD_COBJS): %.rel: %.c
+$(DISCARD_COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(DISCARD_DOBJS): %.rel: ../../dev/%.c
+$(DISCARD_DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
 clean:
-	rm -f $(OBJS) $(JUNK)  core *~ fuzix.com makecpmloader
+	rm -f $(OBJS) core *~ fuzix.com makecpmloader
 
-z180.rel: z180.s kernel.def ../../cpu-z180/z180.s
+z180.o: z180.S kernelu.def ../../cpu-z180/z180.S
 
-bootblock:
-	sdasz80 -o boot-romwbw.s
-	sdldz80 -i boot-romwbw.rel
+boot-romwbw.bin:
+	fcc -mz80 -c boot-romwbw.S
 	# This makes us a binary from physical 0
-	makebin -s 62464 boot-romwbw.ihx boot-romwbw.tmp
+	ldz80 -b boot-romwbw.o -o boot-romwbw.tmp
 	# Chop off the leading 61440 bytes we don't want
-	dd if=boot-romwbw.tmp of=boot-romwbw.bin bs=512 count=2 skip=120
+	dd if=boot-romwbw.tmp of=boot-romwbw.bin bs=512 conv=sync count=2 skip=120
 
 #
 #	Compile up the boot block
 #
-image: bootblock
+image: boot-romwbw.bin
+	$(CROSS_LD) -b -C 0x0100 -S 0xF600 -f CLDBbXSs -o ../../fuzix.bin \
+	crt0.o commonmem.o z180.o rph.o main.o devices.o discard.o \
+	devtty.o ../../dev/tinyide.o ../../dev/tinyide_discard.o \
+	../../dev/tinydisk.o ../../dev/tinydisk_discard.o \
+	../../dev/tinyide_ppide_rbc.o ../../dev/ds1302.o \
+	../../dev/ds1302_discard.o ../../dev/ds1302_rcbusu.o ps2.o \
+	../../dev/ps2kbd.o ../../dev/ps2mouse.o devinput.o 7220.o monitor.o \
+	../../libfuzix.a /opt/fcc/lib/z80/libz80.a -m fuzix.tmpmap
+	perl -lpe '$$_=hex' fuzix.tmpmap | paste -d" " - fuzix.tmpmap  |  sort -n |  cut -d" " -f 2- >../../fuzix.map
+	../../tools/pack85 ../../fuzix.bin fuzix.bin <../../fuzix.map
 	cat boot-romwbw.bin >fuzix.romwbw
 	dd if=/dev/zero bs=256 count=1 >>fuzix.romwbw
-	cat ../../fuzix.bin >>fuzix.romwbw
+	dd if=fuzix.bin bs=256 skip=1  >>fuzix.romwbw
 
 IMAGES = $(FUZIX_ROOT)/Images/$(TARGET)
 
-diskimage: image
+diskimage:
 	# Make a blank disk image with partition
 	dd if=$(FUZIX_ROOT)/Standalone/filesystem-src/parttab.40M of=$(IMAGES)/disk.img bs=40017920 conv=sync
 	# Add the file system

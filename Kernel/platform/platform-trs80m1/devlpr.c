@@ -6,15 +6,15 @@
 
 #define lp	*((volatile uint8_t *)0x37E8)
 
-__sfr __at 0xFD vg_lp;
+#define VG_LP	0xFD
 
-int lpr_open(uint8_t minor, uint16_t flag)
+int lpr_open(uint_fast8_t minor, uint16_t flag)
 {
     minor; flag; // shut up compiler
     return 0;
 }
 
-int lpr_close(uint8_t minor)
+int lpr_close(uint_fast8_t minor)
 {
     minor; // shut up compiler
     return 0;
@@ -35,19 +35,19 @@ static uint8_t iopoll(void)
 	return 0;
 }
 
-int lpr_write(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int lpr_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     char *p = udata.u_base;
     minor; rawflag; flag; // shut up compiler
 
     while(udata.u_done < udata.u_count) {
         if (trs80_model == VIDEOGENIE) {
-            while (vg_lp & 0x80) {
+            while (in(VG_LP) & 0x80) {
                 if (iopoll())
                     return udata.u_done;
             }
             /* FIXME: tidy up ugetc and sysio checks globally */
-            vg_lp = ugetc(p++);
+            out(VG_LP, ugetc(p++));
         } else {
             while (lp & 0x80) {
                 if (iopoll())

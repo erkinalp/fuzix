@@ -1,11 +1,10 @@
 	.code
 
-PIN_CE          .equ 0x10
-PIN_DATA_HIZ    .equ 0x20
-PIN_CLK         .equ 0x40
-PIN_DATA_OUT    .equ 0x80
-PIN_DATA_IN     .equ 0x01
-PIN_OTHER	.equ 0x00
+#define PIN_CE          0xEF10
+#define PIN_DATA_HIZ    0xDF20
+#define PIN_CLK         0xBF40
+#define PIN_DATA_OUT    0x7F80
+#define PIN_DATA_IN     0x01
+#define PIN_OTHER	0x00
 
-
-#include "ds1302_commonu.s"
+#include "ds1302_commonu.S"

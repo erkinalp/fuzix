@@ -253,6 +253,7 @@ plot_char:
 	    move.l d2,-(sp)
 	    move.l d3,-(sp)
 
+; FIXME: vtattr ALTCHAR
 
 plot_char_1:
 	    ; Save Regs

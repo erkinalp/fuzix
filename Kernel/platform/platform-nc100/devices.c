@@ -49,7 +49,9 @@ void device_init(void)
   nc100_tty_init();
 }
 
-__sfr __at 0x30 control;
+#define CONTROL	0x30
+#define IRQEN 0x60
+
 static uint8_t control_shadow = 0xb8; // card common, floppy motor off, uPD4711 off, UART reset
 
 /* We need to track the state of the control port */
@@ -57,15 +59,14 @@ void mod_control(uint8_t set, uint8_t clr)
 {
   control_shadow &= ~clr;
   control_shadow |= set;
-  control = control_shadow;
+  out(CONTROL, control_shadow);
 }
 
-__sfr __at 0x60 irqen;
 static uint8_t irqen_shadow = 0x08; // keyboard IRQ only
 
 void mod_irqen(uint8_t set, uint8_t clr)
 {
   irqen_shadow &= ~clr;
   irqen_shadow |= set;
-  irqen = irqen_shadow;
+  out(IRQEN, irqen_shadow);
 }

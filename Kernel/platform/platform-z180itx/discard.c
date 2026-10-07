@@ -15,24 +15,17 @@ uint16_t romwbw_cpu;	/* Updated by bootstram asm */
 uint16_t romwbw_speed;
 uint16_t romwbw_type;
 
-
-/* Mini-ITX 82C55 */
-__sfr __at 0x40 ppi_a;
-__sfr __at 0x41 ppi_b;
-__sfr __at 0x42 ppi_c;
-__sfr __at 0x43 ppi_ctrl;
-
 void init_hardware_c(void)
 {
 	/* Set up so that when we flip the control bits we stay in the
 	   right addressing etc */
-	ppi_a = 0xFF;
-	ppi_c = 0x0F;
+	out(PPI_A, 0xFF);
+	out(PPI_C, 0x0F);
 	/* A is output, B is input, mode 0 C lower is output, C higher
 	   is input */
-	ppi_ctrl = 0x8A;
+	out(PPI_CTRL, 0x8A);
 	/* ROM off */
-	ppi_a = 0xF7;
+	out(PPI_A, 0xF7);
 
 	ramsize = 1024;
 	procmem = 1024 - 64;
@@ -83,7 +76,7 @@ void map_init(void)
 	/* kernel bank udata (0x300 bytes) is never used again -- could be reused? */
 }
 
-uint8_t plt_param(char *p)
+uint_fast8_t plt_param(char *p)
 {
 	used(p);
 	return 0;

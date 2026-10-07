@@ -132,7 +132,7 @@ void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
     /* Our baud codes almost match up but not quite so use a table */
     /* 7D0 / 7D4 minor 2 and 3 */
     lobo_io[0x7C8 + 4 * minor] = com8116[baud];
-    
+
     /* Set bits per character */
     sio_r[1] = 0x01 | ((t->termios.c_cflag & CSIZE) << 2);
 
@@ -149,7 +149,7 @@ void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 }
 
 int tty_carrier(uint_fast8_t minor)
-{	
+{
     irqflags_t irq;
     /* 2 = 7E5, 3 = 7E7 */
     volatile uint8_t *sio = lobo_io + 0x7E1 + 2 * minor;
@@ -394,6 +394,10 @@ void cursor_on(int8_t y, int8_t x)
 
 void plot_char(int8_t y, int8_t x, uint16_t c)
 {
+	if (vtattr & VTA_ALTCHAR)
+		c |= 0x80;
+	else
+		c &= 0x7F;
 	*char_addr(y, x) = c;
 }
 

@@ -1,71 +1,88 @@
-ASRCS = crt0.s tricks.s commonmem.s rcbus.s
+ASRCS = crt0.S tricks.S commonmem.S rcbus.S ide.S
 CSRCS = devices.c main.c devtty.c platform_ide.c
 DISCARD_CSRCS = discard.c
 DISCARD_DSRCS = ../../dev/tinyide_discard.c ../../dev/ds1302_discard.c ../../dev/tinydisk_discard.c
 DSRCS = ../../dev/tinyide.c ../../dev/tinydisk.c
 DSRCS +=  ../../dev/ds1302.c
-DASRCS = ../../dev/ds1302_rcbus.s
+DASRCS = ../../dev/ds1302_rcbusu.S
 NSRCS = 
 
-AOBJS = $(ASRCS:.s=.rel)
-COBJS = $(CSRCS:.c=.rel)
-DISCARD_COBJS = $(DISCARD_CSRCS:.c=.rel)
-DISCARD_DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DISCARD_DSRCS))
-DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DSRCS))
-DAOBJS = $(patsubst ../../dev/%.s,%.rel, $(DASRCS))
-NOBJS = $(patsubst ../../dev/net/%.c,%.rel, $(NSRCS))
+AOBJS = $(ASRCS:.S=.o)
+COBJS = $(CSRCS:.c=.o)
+DISCARD_COBJS = $(DISCARD_CSRCS:.c=.o)
+DISCARD_DOBJS = $(patsubst ../../dev/%.c,%.o, $(DISCARD_DSRCS))
+DOBJS = $(patsubst ../../dev/%.c,%.o, $(DSRCS))
+DAOBJS = $(patsubst ../../dev/%.S,%.o, $(DASRCS))
+NOBJS = $(patsubst ../../dev/net/%.c,%.o, $(NSRCS))
 
 OBJS  = $(AOBJS) $(COBJS) $(DOBJS) $(DAOBJS) $(DISCARD_DOBJS) $(DISCARD_COBJS) $(NOBJS)
 
 CROSS_CCOPTS += -I../../dev/ -I../../dev/net/
 
-CROSS_CC_HIGH = --codeseg COMMONMEM
-
-JUNK = *.rel *.lst *.asm *.sym *.rst *.map *.ihx *.bin
+CROSS_CC_HIGH = -Tcommon
 
 all:	$(OBJS)
 
-$(AOBJS): %.rel: %.s
+$(AOBJS): %.o: %.S
 	$(CROSS_AS) $(ASOPTS) $<
 
-$(COBJS): %.rel: %.c
+$(COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DOBJS): %.rel: ../../dev/%.c
+$(DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
-$(DAOBJS): %.rel: ../../dev/%.s
-	$(CROSS_AS) $(ASOPTS) $@ $<
+$(DAOBJS): %.o: ../../dev/%.S
+	$(CROSS_AS) $(ASOPTS) $<
 
-$(DISCARD_COBJS): %.rel: %.c
+$(DISCARD_COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(DISCARD_DOBJS): %.rel: ../../dev/%.c
+$(DISCARD_DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(NOBJS): %.rel: ../../dev/net/%.c
+$(NOBJS): %.o: ../../dev/net/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) -c $<
 
 clean:
-	rm -f $(OBJS) $(JUNK)  core *~ diskstrap fuzix.rom boot loader.inc
+	rm -f $(OBJS) core *~ *.tmp boot loader.inc boot-zrcc loader
 
 image:	boot loader boot-zrcc
+	$(CROSS_LD) -b -C 0x1000 -S 0xF400 -f CLDBbXSs -o ../../fuzix.bin \
+	crt0.o commonmem.o rcbus.o ../../start.o \
+	../../version.o ../../cpu-z80u/lowlevel-z80u.o \
+	../../usermem.o tricks.o main.o discard.o \
+	../../timer.o ../../kdata.o devices.o ../../devio.o \
+	../../filesys.o ../../blk512.o ../../process.o \
+	../../inode.o ../../syscall_exec.o ../../syscall_exec16.o \
+	../../syscall_fs.o ../../syscall_fs2.o ../../syscall_fs3.o \
+	../../syscall_proc.o ../../syscall_other.o ../../syscall_net.o \
+	../../network.o ../../tty.o ../../mm.o ../../mm/memalloc_none.o \
+	../../swap.o ../../mm/bankfixed.o ../../devsys.o \
+	devtty.o ../../dev/tinydisk.o ../../dev/tinydisk_discard.o \
+	../../dev/tinyide.o ../../dev/tinyide_discard.o platform_ide.o ide.o \
+	../../dev/ds1302_rcbusu.o ../../dev/ds1302.o ../../dev/ds1302_discard.o \
+	/opt/fcc/lib/z80/libz80.a -m fuzix.tmpmap
+	perl -lpe '$$_=hex' fuzix.tmpmap | paste -d" " - fuzix.tmpmap  |  sort -n |  cut -d" " -f 2- >../../fuzix.map
+	../../tools/pack85 ../../fuzix.bin fuzix.tmp <../../fuzix.map
+	dd if=fuzix.tmp of=fuzix.img bs=4096 skip=1
 
-boot:	boot.s
-	sdasz80 -o boot.s
-	sdldz80 -i boot.rel
-	makebin -s 4096 boot.ihx boot
+boot:	boot.S
+	fcc -mz80 -c boot.S
+	ldz80 -b boot.o -o boot
+	
+loader.inc: boot
 	od -v -w1 -tx1 boot | cut -b 9- | head -4096 | \
-		sed -e 's/^/        .db 0x/' >loader.inc
+		sed -e 's/^/        .byte 0x/' >loader.inc
 
-boot-zrcc: boot-zrcc.s
-	sdasz80 -o boot-zrcc.s
-	sdldz80 -i boot-zrcc.rel
-	makebin -s 512 boot-zrcc.ihx | dd bs=256 skip=1 | ../tools/doubleup > boot-zrcc
+boot-zrcc: boot-zrcc.S
+	fcc -mz80 -c boot-zrcc.S
+	ldz80 -b boot-zrcc.o -o boot-zrcc.tmp
+	dd if=boot-zrcc.tmp bs=256 skip=1 | ../../tools/doubleup > boot-zrcc
 
-loader:	loader.s loader.inc
-	sdasz80 -o loader.s
-	sdldz80 -i loader.rel
+loader:	loader.S loader.inc
+	fcc -mz80 -c loader.S
+	ldz80 -b loader.o
 
 loader.inc: boot boot-zrcc
 
@@ -77,7 +94,7 @@ diskimage: image
 	# Add the file system
 	dd if=$(IMAGES)/filesys8.img of=$(IMAGES)/disk.img bs=512 seek=2048 conv=notrunc
 	# Add the kernel
-	dd if=../../fuzix.bin of=$(IMAGES)/disk.img bs=512 seek=2 conv=notrunc
+	dd if=fuzix.img of=$(IMAGES)/disk.img bs=512 seek=2 conv=notrunc
 	# Add the zrcc bootstrap
 	dd if=boot-zrcc of=$(IMAGES)/disk.img bs=446 count=1 conv=notrunc
 	# Make an emulator image of it

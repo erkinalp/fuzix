@@ -1,4 +1,4 @@
-/* 
+/*
  * DivIDE Plus RAM bank ramdisc driver
  *
  */
@@ -8,7 +8,7 @@
 #include <printf.h>
 #include <divrd.h>
 
-static int rd_transfer(uint8_t is_read, uint8_t rawflag)
+static int rd_transfer(uint_fast8_t is_read, uint_fast8_t rawflag)
 {
     int ct = 0;
     uint16_t nblock = udata.u_nblock;
@@ -28,7 +28,7 @@ static int rd_transfer(uint8_t is_read, uint8_t rawflag)
     while (ct < nblock) {
         rd_page = (block >> 5);		/* 0-3 are kernel */
         rd_addr = (block & 31) << 9;
-        rd_io();        
+        rd_io();
         block++;
         rd_dptr += BLKSIZE;
         ct++;
@@ -36,9 +36,8 @@ static int rd_transfer(uint8_t is_read, uint8_t rawflag)
     return ct << BLKSHIFT;
 }
 
-int rd_open(uint8_t minor, uint16_t flag)
+int rd_open(uint_fast8_t minor, uint16_t flag)
 {
-    flag;
     if(minor != 0) {
         udata.u_error = ENODEV;
         return -1;
@@ -46,15 +45,13 @@ int rd_open(uint8_t minor, uint16_t flag)
     return 0;
 }
 
-int rd_read(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int rd_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
-    flag;minor;
     return rd_transfer(true, rawflag);
 }
 
-int rd_write(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int rd_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
-    flag;minor;
     return rd_transfer(false, rawflag);
 }
 

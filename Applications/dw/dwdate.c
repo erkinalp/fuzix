@@ -40,7 +40,7 @@ static int get_time( uint8_t *tbuf )
     d.sbufz = 1;
     d.rbuf = tbuf;
     d.rbufz = 6;
-    
+
     ret = ioctl( fd, DRIVEWIREC_TRANS, &d );
     if (ret)
         if (errno != EIO || !silent)
@@ -51,11 +51,10 @@ static int get_time( uint8_t *tbuf )
 
 
 int main( int argc, char *argv[] ){
-
+    register struct tm *tm;
+    time_t t;
     int i,x;
     unsigned char buf[6];
-    uint8_t year, month, day, hour, minute, second;
-    time_t ret;   /* accumulator for conversion */
     int setflg = 0;     /* set system time flag */
     int disflg = 0;     /* display retrieved time flag */
     int parbrk = 0;     /* parse break flag */
@@ -96,63 +95,33 @@ int main( int argc, char *argv[] ){
 	}
     }
 
+    /* get the static struct tm */
+    time(&t);
+    tm = localtime(&t);
+
+    /* fetch time from DW */
     if (get_time(buf))
 	exit(1);
 
-    /* figure out secs from epoc */
-     
-    year   = buf[0];
-    month  = buf[1];
-    day    = buf[2];
-    hour   = buf[3];
-    minute = buf[4];
-    second = buf[5];
-    
-    if(year < 70)
-	year += 100;
-    
-    /* following code is based on utc_mktime() from ELKS
-       https://github.com/jbruchon/elks/blob/master/elkscmd/sh_utils/date.c 
-    */
-    
-    /* uses zero-based month index */
-    month--;
-    
-    /* calculate days from years */
-    ret=365;
-    ret *= year - 70;
-    
-    /* count leap days in preceding years */
-    ret += (year - 69) >> 2;
-    
-    
-    /* calculate days from months */
-    ret += mktime_moffset[month];
-    
-    /* add in this year's leap day, if any */
-    if (((year & 3) == 0) && (month > 1)) 
-	ret++;
-    
-    /* add in days in this month */
-    ret += day - 1;
-    /* convert to hours */
-    ret *= 24;
-    ret += hour;
-    
-    /* convert to minutes */
-    ret *= 60;
-    ret += minute;
-    
-    /* convert to seconds */
-    ret *= 60;
-    ret += second;
+    /* populate the struct tm */
+    tm->tm_sec = buf[5];
+    tm->tm_min = buf[4];
+    tm->tm_hour = buf[3];
+    tm->tm_mday = buf[2];
+    tm->tm_mon = buf[1] - 1;
+    tm->tm_year = buf[0];
+    if (tm->tm_year < 70)
+	    tm->tm_year += 100;
+
+    /* convert to time_t */
+    t = mktime(tm);
 
     if( disflg || !setflg )
-	fputs(ctime(&ret),stdout);
+	fputs(ctime(&t),stdout);
 
     if( setflg ){
 	/* This is a sleezy cast */
-	x=stime(&ret);
+	x=stime(&t);
 	if( x ){
 	    perror( "stime" );
 	    exit(1);
@@ -160,5 +129,4 @@ int main( int argc, char *argv[] ){
     }
 
     exit(0);
-    
 }

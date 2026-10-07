@@ -30,7 +30,9 @@ struct vt_switch {
 #define VTA_FLASH	8
 #define VTA_BOLD	16
 #define VTA_OVERSTRIKE	32
-  /* 64 is set to ensure a valid normal character */
+#define VTA_ALTCHAR	64
+/* 64 is set to ensure a valid normal character and is managed separately to
+   the attribute ioctl by the VT52 akin F/G escape */
 #define VTA_NOCURSOR	128
   signed char cursorx;
   signed char cursory;

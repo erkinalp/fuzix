@@ -1,13 +1,35 @@
 #!/bin/sh
 set -e
 
-IMG=filesystem.img
-
-FSSIZE=2547
+# Parameterised so mksdimage.sh can build the SD root from the same
+# recipe: this is the only description of a working Fuzix root in the
+# tree, and the SD root was otherwise an artefact nobody could rebuild.
+# Defaults are the flash device; mksdimage.sh overrides all three.
+#
+# FS32: mkfs's second argument is an INODE COUNT, not a block count of
+# inodes.  256 matches what the old "32 blocks of 8" gave the flash
+# root.
+IMG=${IMG:-filesystem.img}
+# 8000 sectors (4M) of the 20549 mkftl can address once the disk is
+# given the whole chip above FLASH_OFFSET.
+#
+# It was 2547 of 2555, and the root outgrew that the moment printf
+# learned %ll and every static binary put on a couple of hundred bytes.
+# Two things were wrong behind that: FLASH_OFFSET gave the kernel 512K
+# it did not need, and PICO_FLASH_SIZE_BYTES was the pico2 default of
+# 4M when a PC2 or PC3 always carries 16M - so the disk had a quarter
+# of the chip and the rest was doing nothing.  See globals.h for the
+# numbers that must agree.
+#
+# The root needs about 2600 sectors, so this is room to grow rather
+# than a fit.  Inodes raised with it: 256 would have become the limit
+# long before the blocks did.
+FSSIZE=${FSSIZE:-8000}
+INODES=${INODES:-512}
 
 rm -f ${IMG}
-../../../Standalone/mkfs ${IMG} 32 $FSSIZE
-../../../Standalone/ucp ${IMG} <<EOF
+../../../Standalone/mkfs ${IMG} ${INODES} $FSSIZE
+../../../Standalone/ucp ${IMG} > /tmp/ucp-flash.log 2>&1 <<EOF
 cd /
 mkdir bin
 mkdir dev
@@ -33,6 +55,12 @@ mkdir /var/run
 cd /usr
 mkdir lib
 chmod 0755 lib
+# /usr/bin is empty on the flash device but MUST exist: mkccimage.sh
+# cd's into it to install the compiler, and ucp's cd failing is not
+# fatal - it carries on and drops every binary into whatever directory
+# it was already in, which looks like a successful build.
+mkdir bin
+chmod 0755 bin
 
 cd /
 cd /dev
@@ -64,6 +92,10 @@ mknod hda15 60660 15
 mknod hdb   60660 16
 mknod hdb1  60660 17
 mknod hdb2  60660 18
+mknod hdb3  60660 19
+# No hdc. The PSRAM swap disc is gone: the kernel allocates a region the
+# size of the process out of the PSRAM heap and memcpy's into it, so
+# there is no device to name and nothing to swapon.
 mknod null  20666 1024
 mknod kmem  20660 1025
 mknod zero  20444 1026
@@ -125,6 +157,7 @@ bget ../../../Applications/util/echo
 bget ../../../Applications/util/ed
 bget ../../../Applications/util/env
 bget ../../../Applications/util/false
+bget ../../../Applications/util/fat
 bget ../../../Applications/util/fdisk
 bget ../../../Applications/util/fforth
 bget ../../../Applications/util/fgrep
@@ -158,8 +191,25 @@ bget ../../../Applications/util/reboot
 bget ../../../Applications/util/remount
 bget ../../../Applications/util/rm
 bget ../../../Applications/util/rmdir
+bget ../../../Applications/util/rx
 bget ../../../Applications/util/setdate
 bget ../../../Applications/util/setboot
+# sed and seq were compiled all along and simply never listed here -
+# 23 of the 111 programs in Applications/util are in that position.
+# Most of the rest are period cruft or belong to other platforms; these
+# were picked because they work on THIS machine, checked on it.  size
+# is the example of why that matters: it builds, it runs, and then it
+# says "not a Fuzix binary format" because it predates the ELF layout
+# this port uses.
+#
+# NOTE this is inside an unquoted here-document, so a backtick or a $
+# in a comment is not a comment - the shell expands it and the build
+# dies with "EOF in backquote substitution".
+bget ../../../Applications/util/sed
+bget ../../../Applications/util/seq
+# awk - Lucent's one true awk, ported (Applications/awk/PORTING).  Not
+# in Applications/util, hence the different path.
+bget ../../../Applications/awk/awk
 bget ../../../Applications/util/sleep
 bget ../../../Applications/util/ssh
 bget ../../../Applications/util/sort
@@ -168,6 +218,7 @@ bget ../../../Applications/util/substroot
 bget ../../../Applications/util/sum
 bget ../../../Applications/util/su
 bget ../../../Applications/util/swapon
+bget ../../../Applications/util/sx
 bget ../../../Applications/util/sync
 bget ../../../Applications/util/tar
 bget ../../../Applications/util/tee
@@ -177,6 +228,7 @@ bget ../../../Applications/util/touch
 bget ../../../Applications/util/tr
 bget ../../../Applications/util/true
 bget ../../../Applications/util/umount
+bget ../../../Applications/util/uname
 bget ../../../Applications/util/uniq
 bget ../../../Applications/util/uptime
 bget ../../../Applications/util/uud
@@ -214,6 +266,7 @@ chmod 0755 echo
 chmod 0755 ed
 chmod 0755 env
 chmod 0755 false
+chmod 0755 fat
 chmod 0755 fdisk
 chmod 0755 fforth
 chmod 0755 fgrep
@@ -247,8 +300,12 @@ chmod 0755 reboot
 chmod 0755 remount
 chmod 0755 rm
 chmod 0755 rmdir
+chmod 0755 rx
 chmod 0755 setdate
 chmod 0775 setboot
+chmod 0755 sed
+chmod 0755 seq
+chmod 0755 awk
 chmod 0755 sleep
 chmod 0755 ssh
 chmod 0755 sort
@@ -257,6 +314,7 @@ chmod 0755 substroot
 chmod 0755 sum
 chmod 0755 su
 chmod 0755 swapon
+chmod 0755 sx
 chmod 0755 sync
 chmod 0755 tar
 chmod 0755 tee
@@ -266,6 +324,7 @@ chmod 0755 touch
 chmod 0755 tr
 chmod 0755 true
 chmod 0755 umount
+chmod 0755 uname
 chmod 0755 uniq
 chmod 0755 uptime
 chmod 0755 uud
@@ -313,7 +372,25 @@ bget ../../../Applications/V7/cmd/rev
 bget ../../../Applications/V7/cmd/split
 bget ../../../Applications/V7/cmd/su
 bget ../../../Applications/V7/cmd/sum
-bget ../../../Applications/V7/cmd/test
+# MWC's test, not V7's, and the same binary again under its second
+# name.  Two things going on here:
+#
+# /bin/[ did not exist at all, so every bracket test in every shell
+# script failed with "[: not found" - which is most shell scripts ever
+# written.  Both these programs check argv[0] for the bracket and for
+# the closing one, so it needs no code, only the second name.
+#
+# And V7's test has no -x and no -e, which are the two file tests
+# scripts reach for most.  MWC's has -a -b -c -d -e -f -g -n -o -p -r
+# -s -t -u -w -x -z against V7's -a -d -f -l -n -o -r -s -t -w -z; the
+# only thing lost is -l, a string-length operator nothing uses.  1,128
+# bytes more, checked on the board both ways.
+bget ../../../Applications/MWC/cmd/test
+# find and expr build in Applications/MWC/cmd, from which NOTHING was
+# installed - the recipe takes 33 programs from V7/cmd and none at all
+# from there.  Both checked on the board.
+bget ../../../Applications/MWC/cmd/find
+bget ../../../Applications/MWC/cmd/expr
 bget ../../../Applications/V7/cmd/time
 bget ../../../Applications/V7/cmd/tsort
 bget ../../../Applications/V7/cmd/tty
@@ -346,6 +423,18 @@ chmod 0755 split
 chmod 0755 su
 chmod 0755 sum
 chmod 0755 test
+# test under its other name, the way mv and ln are done further up
+# rather than as a second copy: MWC/cmd/test.c checks argv[0] for the
+# bracket and for the closing one, so the same inode answers to both.
+# Without it every bracket test in every shell script fails with
+# "not found".
+#
+# It has to come AFTER the bget above - ucp links what is already
+# there, and up with mv and ln it failed with ENOENT because test had
+# not been installed yet.
+ln test [
+chmod 0755 find
+chmod 0755 expr
 chmod 0755 time
 chmod 0755 tsort
 chmod 0755 tty
@@ -353,10 +442,13 @@ chmod 0755 wall
 
 bget ../../../Applications/levee/levee
 chmod 0755 levee
+# levee IS the vi on this machine, and "vi" is what a hand reaches for.
+# A hard link, not a second copy: same inode, one directory entry, no
+# extra card space.  (Fuzix has no symbolic links.)
+ln levee vi
 
-cd /usr/man/man1
-bget ../../../Applications/levee/levee.1
-chmod 0644 levee.1
+# levee.1 and the rest of /usr/man are installed by the manual page
+# pass at the foot of this file, which walks the directories.
 
 cd /usr/lib
 bget ../../../Library/libs/liberror.txt
@@ -473,5 +565,233 @@ chmod 0644 advent.db
 #chmod 0755 startrek.logo
 
 EOF
+
+# ucp exits with the status of its LAST command and does not stop on a
+# failure, so a root that does not fit comes out silently short: every
+# file after the one that overflowed is simply missing, fsck is happy
+# because the filesystem is consistent, and the first you know is a
+# missing binary on the board.  Refuse to go on instead.
+#
+# The ceiling is the FTL's, not the filesystem's: mkftl -s 1952 with
+# 4 kB erase blocks gives 2555 sectors, and FSSIZE is set just under
+# it.  Growing the root means growing the flash region.
+# Anything ucp complained about is worth stopping for, but say WHICH:
+# the first version of this printed "does not fit" for every error, and
+# then blamed a full disk for an ln that had simply run before the file
+# it was linking to existed.
+if grep -q 'error' /tmp/ucp-flash.log && ! grep -q 'error 28' /tmp/ucp-flash.log; then
+	echo "" >&2
+	echo "***********************************************************" >&2
+	echo "update-flash.sh: ucp reported an error building the root" >&2
+	echo "" >&2
+	grep 'error' /tmp/ucp-flash.log | sed 's/^/    ucp: /' >&2
+	echo "" >&2
+	echo "  error 2 is ENOENT - usually an ln naming something that is" >&2
+	echo "  bget'd further down the file.  ucp works top to bottom." >&2
+	echo "***********************************************************" >&2
+	echo "" >&2
+fi
+if grep -q 'error 28' /tmp/ucp-flash.log; then
+	echo "" >&2
+	echo "***********************************************************" >&2
+	echo "update-flash.sh: THE FLASH ROOT DOES NOT FIT" >&2
+	echo "" >&2
+	grep 'error' /tmp/ucp-flash.log | sed 's/^/    ucp: /' >&2
+	echo "" >&2
+	echo "  Every file after the one that overflowed is MISSING from" >&2
+	echo "  filesystem.img.  fsck below will still pass - the image is" >&2
+	echo "  consistent, just short - so this message is the only sign." >&2
+	echo "" >&2
+	echo "  FSSIZE=${FSSIZE} sectors.  The ceiling is the FTL's, not the" >&2
+	echo "  filesystem's: mkftl -s 15360 with 4 kB erase blocks gives" >&2
+	echo "  20549 sectors, so this is very unlikely to be the wall." >&2
+	echo "" >&2
+	echo "  Fix by dropping something from the list above, or by" >&2
+	echo "  giving the disk more flash - that means FLASH_OFFSET in" >&2
+	echo "  globals.h, mkftl's -s AND the uf2 offset in the Makefile," >&2
+	echo "  all three together.  devflash.c defines the region as" >&2
+	echo "  PICO_FLASH_SIZE_BYTES - FLASH_OFFSET." >&2
+	echo "***********************************************************" >&2
+	echo "" >&2
+	# Deliberately not fatal: the SD card is the real root and this
+	# image is not a release asset, so failing here would block a
+	# kernel build over a fallback filesystem.  Loud instead.
+fi
+
+# CYW43 networking: /bin/wifi and the pro-forma /etc/wifi.conf.
+#
+# Not gated any more.  There is one kernel and it always has the
+# networking ioctls in it, so these always belong on the card; whether
+# a machine gets on a network is a question for /etc/wifi.conf.  This
+# used to follow a PC3_NET switch that had to agree with the one the
+# kernel was built with, and two switches that must agree are one more
+# than is safe.
+#
+# The Makefile no longer runs this script at all: it used to build the
+# on-board flash root, and that device is gone.  mksdimage.sh is the
+# only caller now, and it builds the SD card.
+#
+# The pro-forma is the point of shipping it rather than leaving people
+# to discover the format: it carries the syntax in its own comments and
+# a user replaces one line.  Mode 600 from the start, because the line
+# they replace it with holds a password.
+#
+# A separate ucp pass rather than lines in the big heredoc above, so
+# that "not included" means no ucp input at all rather than a blank
+# line the log has to be trusted to ignore.
+#
+# The netd tools come with it.  They were hand-copied onto a running
+# board while networking was being written, which meant the card had
+# programs no recipe could reproduce - and a card that cannot be
+# rebuilt is a card that is one fsck away from being wrong.  ping,
+# htget, dig, ntpdate, httpd and tftpd are the whole visible network
+# userland; tlsget is the TLS one and lives with the platform utils.
+	if [ ! -f utils/wifi.stripped ]; then
+		echo "update-flash.sh: the card needs utils/wifi.stripped" >&2
+		echo "  (cd utils && make wifi && arm-none-eabi-strip wifi -o wifi.stripped)" >&2
+		exit 1
+	fi
+	NETD=../../../Applications/netd
+	for f in ping htget dig ntpdate httpd tftpd; do
+		if [ ! -f "$NETD/$f" ]; then
+			echo "update-flash.sh: the card needs $NETD/$f" >&2
+			echo "  (cd Applications/netd && make -f Makefile.armm0 \\" >&2
+			echo "     FUZIX_ROOT=\$PWD/../.. USERCPU=armm0 PLATFORM=armm0)" >&2
+			exit 1
+		fi
+	done
+	if [ ! -f utils/tlsget.stripped ]; then
+		echo "update-flash.sh: the card needs utils/tlsget.stripped" >&2
+		exit 1
+	fi
+	if [ ! -f utils/tlsca.stripped ]; then
+		echo "update-flash.sh: the card needs utils/tlsca.stripped" >&2
+		exit 1
+	fi
+	# The CA bundle: nine roots, ~11K.  Small on purpose - every
+	# certificate is parsed into mbedtls state out of the same lwIP
+	# heap the packet buffers use, and the full Mozilla set (~200K)
+	# will not parse at all.
+	#
+	# WHICH roots is not guessable, and the obvious guesses are
+	# wrong.  A survey of ordinary sites found Cloudflare mostly
+	# rooted at GTS Root R4, example.com at SSL.com, openai.com at
+	# ISRG Root X2 and github.com at Sectigo E46 - none of which were
+	# in the first bundle, which had the RSA roots the web has
+	# largely moved off.  Check before assuming:
+	#   openssl s_client -connect HOST:443 -servername HOST -showcerts
+	if [ ! -f ca.pem ]; then
+		echo "update-flash.sh: the card needs ca.pem" >&2
+		exit 1
+	fi
+	echo "--- networking: /bin/wifi, the netd tools, and /etc/wifi.conf"
+	../../../Standalone/ucp ${IMG} > /tmp/ucp-wifi.log 2>&1 <<EOF
+cd /bin
+bget utils/wifi.stripped wifi
+chmod 0755 wifi
+bget $NETD/ping ping
+chmod 0755 ping
+bget $NETD/htget htget
+chmod 0755 htget
+bget $NETD/dig dig
+chmod 0755 dig
+bget $NETD/ntpdate ntpdate
+chmod 0755 ntpdate
+bget $NETD/httpd httpd
+chmod 0755 httpd
+bget $NETD/tftpd tftpd
+chmod 0755 tftpd
+bget utils/tlsget.stripped tlsget
+chmod 0755 tlsget
+bget utils/tlsca.stripped tlsca
+chmod 0755 tlsca
+cd /etc
+bget wifi.conf
+chmod 0600 wifi.conf
+bget ca.pem
+chmod 0644 ca.pem
+exit
+EOF
+	if grep -q "error" /tmp/ucp-wifi.log; then
+		echo "update-flash.sh: ucp failed installing the wifi files:" >&2
+		cat /tmp/ucp-wifi.log >&2
+		exit 1
+	fi
+	rm -f /tmp/ucp-wifi.log
+
+# ---------------------------------------------------------------------
+# The manual pages.
+#
+# The card carried exactly one - levee.1 - so `man awk' and `man sed'
+# answered "No manual entry" for every command on the machine.  This
+# installs a page for all of them.
+#
+# GENERATED RATHER THAN LISTED.  Everything else in this file is an
+# explicit bget line, which is right for binaries: the list IS the
+# decision about what the card holds.  Manual pages are not a decision -
+# every command should have one - and one bget plus one chmod each would
+# be three hundred lines here.  So this walks the directories, and
+# manpages.sh checks the result against what /bin actually holds: a
+# command with no page, or a page naming no command, fails the gate.
+#
+# WHERE THEY COME FROM.  Applications/man1 holds the pages written for
+# FUZIX.  The V7 commands keep the V7 pages that came with them, and
+# levee, man and sh likewise - installed from where they live, not
+# copied.  awk.1 is generated from upstream's page by mkawk1.sh, which
+# runs first so that a fresh clone has it.
+#
+# NOT V7's test.1: /bin/test is the Mark Williams one, which has -e, -nt
+# and -ot that V7's page does not describe.  Applications/man1/test.1 is
+# the page for the binary that is actually installed.
+#
+# Section 2 comes too.  Applications/man2 has 27 syscall pages that have
+# never been installed anywhere, and this machine is one people write C
+# on.
+echo "--- manual pages: /usr/man"
+MAN1=../../../Applications/man1
+sh $MAN1/mkawk1.sh > /dev/null
+
+V7MAN=../../../Applications/V7/cmd
+EXTRA="$V7MAN/at.1 $V7MAN/col.1 $V7MAN/comm.1 $V7MAN/crypt.1 $V7MAN/dc.1
+$V7MAN/deroff.1 $V7MAN/diff.1 $V7MAN/join.1 $V7MAN/look.1 $V7MAN/mesg.1
+$V7MAN/newgrp.1 $V7MAN/pr.1 $V7MAN/ptx.1 $V7MAN/rev.1 $V7MAN/split.1
+$V7MAN/su.1 $V7MAN/sum.1 $V7MAN/time.1 $V7MAN/tsort.1
+$V7MAN/sh/sh.1 ../../../Applications/util/man.1
+../../../Applications/levee/levee.1"
+
+# One page, several names.  Hard links rather than copies: same inode,
+# one directory entry each.  (Fuzix has no symbolic links.)
+ALIAS="cp.1:mv.1 cp.1:ln.1 reboot.1:halt.1 reboot.1:shutdown.1
+levee.1:vi.1 test.1:[.1 fsck.1:fsck-fuzix.1 uue.1:uud.1 rx.1:sx.1
+saveimage.1:loadimage.1 playmp3.1:playwav.1 playmp3.1:playflac.1
+bcrun.1:bcdump.1 true.1:false.1"
+
+{
+	echo "cd /usr/man"
+	echo "mkdir man2"
+	echo "chmod 0755 man2"
+	echo "cd /usr/man/man1"
+	for p in $MAN1/*.1 $EXTRA; do
+		b=`basename $p`
+		echo "bget $p $b"
+		echo "chmod 0644 $b"
+	done
+	for a in $ALIAS; do
+		echo "ln /usr/man/man1/`echo $a | cut -d: -f1` /usr/man/man1/`echo $a | cut -d: -f2`"
+	done
+	echo "cd /usr/man/man2"
+	for p in ../../../Applications/man2/*.2; do
+		b=`basename $p`
+		echo "bget $p $b"
+		echo "chmod 0644 $b"
+	done
+	echo "exit"
+} | ../../../Standalone/ucp ${IMG} > /tmp/ucp-man.log 2>&1
+if grep -q "error" /tmp/ucp-man.log; then
+	echo "update-flash.sh: ucp failed installing the manual pages:" >&2
+	cat /tmp/ucp-man.log >&2
+	exit 1
+fi
+rm -f /tmp/ucp-man.log
 
 ../../../Standalone/fsck -a ${IMG}

@@ -9,7 +9,7 @@
 char *readline(const char *prompt)
 {
     int len;
-    char *p = malloc(256);
+    register char *p = malloc(256);
     fflush(stdout);
     if (p == NULL)
         return NULL;

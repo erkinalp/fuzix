@@ -1,0 +1,37 @@
+; UZI mnemonics for memory addresses etc
+
+; Move down to 0xF600 to fit the monitor in
+U_DATA__TOTALSIZE           .equ 0x200        ; 256+256 bytes @ F600
+Z80_TYPE                    .equ 2
+
+OS_BANK                     .equ 0x00         ; value from include/kernel.h
+
+; Memory layout
+FIRST_RAM_BANK              .equ 0x00         ; low 512K of physical memory is RAM
+Z180_IO_BASE                .equ 0x00
+
+USE_FANCY_MONITOR           .equ 1            ; disabling this saves around approx 0.5KB
+CPU_CLOCK_KHZ               .equ 16000        ; 16.000MHz * 1
+TICKSPERSEC                 .equ 40           ; timer interrupt rate (Hz)
+TCR_CLOCK		    .equ 20000
+
+PROGBASE		    .equ 0x0000
+PROGLOAD		    .equ 0x0100
+
+#define CONFIG_SWAP
+; disabling this saves around approx 0.5KB
+#define USE_FANCY_MONITOR
+
+#define CONFIG_TINYIDE_PPI
+
+PPIDE_RD_LINE	.equ	0x20
+PPIDE_WR_LINE	.equ	0x40
+PPIDE_PPI_BUS_READ	.equ	0x90
+PPIDE_PPI_BUS_WRITE	.equ	0x80
+
+ppi_port_a	.equ	0x90
+ppi_port_b	.equ	0x91
+ppi_port_c	.equ	0x92
+ppi_control	.equ	0x93
+
+ppide_data	.equ	0x80

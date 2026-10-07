@@ -1,16 +1,16 @@
 CROSS_CCOPTS += -I../../dev/ -I../../dev/net/
 
 CSRCS = devtty.c
-CSRCS += devices.c main.c wiznet.c
+CSRCS += devices.c main.c wiznet.c sd.c
 
 DISCSRCS = discard.c
 
-ASRCS = zrc.S crt0.S
+ASRCS = zrc.S crt0.S piospi.S piosd.S
 ASRCS += tricks.S commonmem.S
 
 DISCARD_DSRCS = ../../dev/tinydisk_discard.c ../../dev/tinyide_discard.c
-DISCARD_DSRCS += ../../dev/ds1302_discard.c
-DSRCS = ../../dev/tinydisk.c ../../dev/tinyide.c
+DISCARD_DSRCS += ../../dev/ds1302_discard.c ../../dev/tinysd_discard.c
+DSRCS = ../../dev/tinydisk.c ../../dev/tinyide.c ../../dev/tinysd.c
 DSRCS += ../../dev/ds1302.c
 NSRCS = ../../dev/net/net_w5x00.c ../../dev/net/net_native.c
 
@@ -71,8 +71,10 @@ image:	boot
 	../../swap.o ../../mm/bankfixed.o ../../devsys.o \
 	devtty.o ../../dev/tinydisk.o ../../dev/tinydisk_discard.o \
 	../../dev/tinyide.o ../../dev/tinyide_discard.o \
+	../../dev/tinysd.o ../../dev/tinysd_discard.o \
 	../../dev/net/net_native.o ../../dev/net/net_w5x00.o wiznet.o \
 	../../dev/ds1302_rcbusu.o ../../dev/ds1302.o ../../dev/ds1302_discard.o \
+	piosd.o piospi.o sd.o \
 	/opt/fcc/lib/z80/libz80.a -m fuzix.tmpmap
 	perl -lpe '$$_=hex' fuzix.tmpmap | paste -d" " - fuzix.tmpmap  |  sort -n |  cut -d" " -f 2- >../../fuzix.map
 	../../tools/pack85 <../../fuzix.map fuzix.bin ../../fuzix.bin
@@ -98,3 +100,10 @@ diskimage:
 	dd if=boot of=$(IMAGES)/disk.img bs=446 count=1 conv=notrunc
 	# Make an emulator image of it
 	cat $(FUZIX_ROOT)/Standalone/filesystem-src/idehdr.20M $(IMAGES)/disk.img > $(IMAGES)/emu-ide.img
+
+	# Make a blank disk image with partition
+	dd if=$(FUZIX_ROOT)/Standalone/filesystem-src/parttab.20M of=$(IMAGES)/disk3v.img bs=20152320 conv=sync
+	# Add the file system
+	dd if=$(IMAGES)/filesys8.img of=$(IMAGES)/disk3v.img bs=512 seek=2048 conv=notrunc
+	# Add the kernel
+	dd if=../../fuzix.bin of=$(IMAGES)/disk3v.img bs=512 seek=288 conv=notrunc

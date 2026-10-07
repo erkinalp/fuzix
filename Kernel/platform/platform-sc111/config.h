@@ -24,7 +24,12 @@
 #define KERNTOP     0xF000  /* Kernel has lower 60KB */
 #define PROC_SIZE   64      /* Memory needed per process */
 
-#define CONFIG_IDE
+#define CONFIG_TD_NUM		2
+/* RC2014 style CF IDE */
+#define CONFIG_TD_IDE
+#define CONFIG_TINYIDE_8BIT
+#define CONFIG_TINYIDE_INDIRECT
+#define IDE_IS_8BIT(x)		1
 
 /* We need a tidier way to do this from the loader */
 #define CMDLINE	(0x0081)  /* Location of root dev name */
@@ -36,8 +41,6 @@
 
 /* Hardware parameters : internal hardware at 0x40-0x7F */
 #define Z180_IO_BASE       0xC0
-
-#define MAX_BLKDEV 2	    /* 2 IDE drives */
 
 #define NUM_DEV_TTY	2
 /* UART0 as the console */

@@ -7,7 +7,8 @@
 
 uint16_t ramtop = PROGTOP;
 uint16_t swap_dev = 0xFFFF;
-
+uint8_t num_banks;
+uint16_t ide_base;
 /*
  *	This routine is called continually when the machine has nothing else
  *	it needs to execute. On a machine with entirely interrupt driven
@@ -33,33 +34,32 @@ void plt_idle(void)
  *	Most platforms would read something to identify the interrupt source
  *	but in our case the only possible source is the RTC
  */
- 
+
 static uint8_t irqct;
 
-__sfr __at 0x2D rtcD;
-__sfr __at 0xF8 gpreg;
+#define RTC_D	0x2D
+#define GPREG	0xF8
 
 void plt_interrupt(void)
 {
 	uint8_t n, r;
-	if (rtcD & 0x04) {
+	if (in(RTC_D) & 0x04) {
 		irqct++;
 		/* We get 64 pulses per second and must drop 4, in other words
 		   drop one per 16 */
+		out(RTC_D, in(RTC_D) & ~0x04);
 		if (irqct & 0xF0)
 			timer_interrupt();
-		rtcD &= ~0x04;
 
 		/* Show the load on the lights */
-		r = gpreg;
+		r = in(GPREG);
 		r &= 0x8F;
 		n = nready;
 		if (n > 7)
 			n = 7;
 		n <<= 4;
 		r |= n;
-		gpreg = r;
-		
+		out(GPREG, r);
 	}
 	tty_poll();
 }
@@ -69,14 +69,12 @@ void plt_interrupt(void)
 struct blkbuf *bufpool_end = bufpool + NBUFS;
 
 /*
- *	We pack discard into the memory image is if it were just normal
- *	code but place it at the end after the buffers. When we finish up
- *	booting we turn everything from the buffer pool to common into
- *	buffers. This blows away the _DISCARD segment.
+ *	Discard follows buffers, then any free memory. We can expand into all
+ *	of the free space for buffers.
  */
 void plt_discard(void)
 {
-	uint16_t discard_size = (uint16_t)udata - (uint16_t)bufpool_end;
+	uint16_t discard_size = 0xFFFF - (uint16_t)bufpool_end;
 	bufptr bp = bufpool_end;
 
 	discard_size /= sizeof(struct blkbuf);

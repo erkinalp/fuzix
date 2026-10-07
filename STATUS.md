@@ -1,11 +1,27 @@
-# Status of 0.5 Work
+# Status of 0.6 Work
+
+## Move 6502 to Fuzix C Compiler
+
+Done for all but pz1
+
+## Move 6303/6803 to Fuzix C Compiler
+
+Done
+
+## Move 6809 to Fuzix C Compiler
+
+Started but only a couple of conversions finished yet
+
+## Move 68HC11 to Fuzix C Compiler
+
+Not started
 
 ## Move 8080 and 8085 to Fuzix C Compiler
 
 All targets completed. Userspace also moved. No relocatable binaries (as
 before). Can build applications natively.
 
-## Move Z80 To Fuzix C Compiler
+## Move Z80/Z180 To Fuzix C Compiler
 
 Userspace entirely moved. Binaries relocatable as before. Need to move to
 a better relocation solution for doing dynamic object modules.
@@ -15,100 +31,82 @@ everything in a sensibly laid out location.
 
 ### Completed
 
+- 2063
+- Ampro Litleboard (base and with MDISK)
+- Challenger III
+- CP/M 2.2 (experimental only but converted)
+- Dyno
+- EasyZ80
+- EZ512
+- Genie EG64
+- Linc80
+- Lobo Max
+- Micro80
+- Nano-Z80
 - Nascom
+- NC100 (Amstrad)
+- NC200 (Amstrad)
+- RBC Mark 4
 - RC2014-Tiny
-- SBC2G
+- Rcbus-TP128
+- Rcbus-SBC64
+- Rcbus-z180
+- Rhyophyre
+- RIZ180
+- SBC2g
 - SBCv2
+- SC108
+- SC111
 - SC720
-- Searle (and related)
+- Searle
 - Simple80
-- Tom's SBC (RAM based)
+- Sorceror (Exidy), WIP only
+- Tom's SBC (ROM based and banked form)
+- TRS80 (Model 4/4D/4P)
 - Z1013
-- Z80 MBC2
+- Z180ITX
+- Z1RCC
+- Z80All
+- Z80-MBC2
 - Z80 Membership Card
 - Z80Pack
+- Z80Retro
+- Zeta V2
 - ZRC
 
 ### In Progress
 
-- Zeta V2
+- TRS80 Model 1 (weird crash to debug)
 
 ### To Complete
 
-Some of these need an assembly macro expander adding, others need banking
-supported added to the compiler and linker. For now they rely on the
-modified SDCC 3.8 for building the kernel
-
-#### Needs macro expander
-- 2063
-- Ampro Littleboard
+- CPC128 / CMCSME (Amstrad)
 - Cromemco
-- Easy Z80
-- Linc80
-- Micro80
-- Z80Retro
-
-#### Needs banking
 - KC87
-- Pentagon
-- Pentagon 1024
-- RC2014
-- Scorpion
-- Tom's SBC (ROM)
-- TRS80 model I/III
-- VZ200
-- ZX Spectrum with DIVMMC/DIVIDE
-
-#### Other
-- Amstrad NC series
-- CP/M 2.2
-- Dyno
-- EZRetro
-- Genie EG64
-- JeeRetro
 - MSX1
 - MSX2
-- Memotech MTX
+- MTX (Memotech)
 - N8
+- Pentagon (base and 1024)
 - P112
-- PCW8256
-- RBC Mark 4
-- RCBUS SBC64
-- RCBUS Z180
-- Rhyophyre
-- RIZ180
-- SAM Coupe
-- SC108
-- SC111
+- PCW8256 (Amstrad)
+- RC2014
+- Sam Coupe
+- Scorpion
 - Scrumpel
-- SmallZ80
+- Small Z80
 - SocZ80
-- TC2068
-- TRS80 model 4
-- ubee (Microbee)
+- TC2068 (Sinclair)
+- VZ200
 - YAZ180
-- Z180ITX
-- ZX Spectrum +3
-- ZX Uno
+- ZX+3 (Sinclair)
+- ZXDiv (Sinclair)
+- ZXUno (Sinclair)
 
-### Work In Progress
-
-These platforms are unfinished experimental work anyway
-
-- Adam (converted)
-- C128 Z80
-- Gemini
-- Genie IIs
-- VZ700
-- Z280RC
-- Z80 BIOS
-- ZX Spectrum 48K with extended DIVMMC/IDE
-- ZX Evolution
-- ZX Spectrum with SpectraNet
 
 # Target Status
 
-Last updated 2024/07/04
+Last updated 2026/09/25
 
 ## 2063
 
@@ -120,7 +118,11 @@ Passes basic tests.
 
 ## Adam
 
-Work in progress, not targetted for 0.5
+Work in progress, not targeted for 0.6
+
+## Agon (Agon Light, Olimex AgonLight2)
+
+Passes basic tests.
 
 ## AmproLb (Ampro Littleboard)
 
@@ -136,16 +138,18 @@ Passes basic tests
 
 ## AppleIIe
 
-Long term project - probably needs a better compiler. Not for 0.5
+Long term project - probably needs a better compiler. Not for 0.6. Still not
+got enough code density.
 
 ## Atari ST
 
 Early 68K work. Now core 68K is stable can be resurrected. Probably not for
-0.5
+0.6
 
 ## C128-Z80
 
-Early experiments, broke VICE so on hold
+Early experiments, broke VICE so on hold. VICE now fixed so many take
+another look.
 
 ## Centurion
 
@@ -153,19 +157,23 @@ Early work in progress
 
 ## Challenger III
 
-Builds, needs a 0.5 test run
+Builds, needs a 0.6 test run
 
 ## COCO2 (64K, no cartridge)
 
-Builds, passes basic tests.
+Has size issues.
 
 ## COCO2Cart (64K with cartridge ROM)
 
-Passes basic tests
+To convert to fcc
 
 ## COCO3
 
-Builds, passes basic tests
+To convert to fcc
+
+## CPC6128 / CPCSME
+
+Neeeds conversion, should be working
 
 ## CPM22
 
@@ -177,11 +185,11 @@ Passes basic tests
 
 ## Dragon (MOOH)
 
-Passes basic tests
+Needs conversion
 
 ## Dragon (NX32)
 
-Passes basic tests
+Needs conversion
 
 ## Dyno
 
@@ -201,11 +209,11 @@ Builds, testing pending
 
 ## EZRetro
 
-Builds, not tested
+Passes basic tests
 
 ## Gemini
 
-Early WIP, probably not for 0.5
+Removed for now (early WIP best restarted differently)
 
 ## Geneve
 
@@ -225,7 +233,7 @@ Early sketches only
 
 ## JeeRetro
 
-Builds, not tested
+Dropped
 
 ## KC87
 
@@ -247,17 +255,21 @@ Builds, passes basic tests
 
 Builds, passes basic tests
 
+## MicroZ (Plasmo)
+
+Builds, passes basic tests
+
 ## Mini11 (Etched Pixels)
+
+Builds, passes basic tests
+
+## MiniM8
 
 Builds, passes basic tests
 
 ## MO6 (Thomson)
 
 Work in progress only (need info on cartridge headers to progress)
-
-## MSP430FR59
-
-Retired in 0.2, bitrotted
 
 ## MSX1
 
@@ -273,7 +285,7 @@ Builds, test pending
 
 ## Multicomp09
 
-Builds, not tested
+Not converted, will probably drop
 
 ## N8 (Retrobrew)
 
@@ -297,7 +309,7 @@ Builds, passes basic tests
 
 ## PCW8256 (Amstrad)
 
-Builds, passes basic tests
+Builds, passes basic tests, needs conversion
 
 ## PDP11
 
@@ -322,7 +334,7 @@ Early WIP, probably never feasible
 
 ## PZ1
 
-Builds, passes basic tests
+Needs conversion to fcc
 
 ## Rabbit 2000
 
@@ -346,11 +358,11 @@ Builds, passes basic tests
 
 ## rcbus-1802
 
-Compiler experimentation
+Compiler experimentation only
 
 ## rcbus-6303
 
-Builds, passes basic tests. Needs compiler from 2024/06/18 or later.
+Builds, passes basic tests.
 
 ## rcbus-6502
 
@@ -362,7 +374,7 @@ WIP compiler bring up
 
 ## rcbus-6800
 
-WIP compiler bring up
+Builds, passes basic tests
 
 ## rcbus-68008
 
@@ -423,6 +435,10 @@ Builds, passes basic tests
 ## riz180 (Plasmo)
 
 Builds, passes basic tests
+
+## rosco-r2
+
+Builds
 
 ## rpipico (Rapsberry Pi Pico0
 
@@ -500,13 +516,17 @@ Builds, passes basic tests
 
 Builds, test pending
 
+## TO7/70 (Thomson)
+
+WIP testbed for 6809 banked compiler
+
 ## TO8 (Thomson) 
 
-Builds, test pending
+Needs conversion
 
 ## TO9 (Thomson)
 
-Work in progress, stretch goal for 0.5
+needs conversion
 
 ## Toms SBC
 
@@ -522,7 +542,7 @@ Builds, passes basic tests
 
 ## TRS80m1 (Model 1/3)
 
-Builds, passes basic tests
+Builds, failign tests
 
 ## ubee (Microbee)
 
@@ -548,11 +568,11 @@ Builds, passes basic tests
 
 Experiment only, may well not be possible
 
-## yaz180
-
-Builds
-
 ## z1013 (Robotron)
+
+Builds, passes basic tests
+
+## Z1RCC
 
 Builds, passes basic tests
 

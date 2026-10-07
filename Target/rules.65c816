@@ -1,5 +1,5 @@
-CC = cc65c816
-AS = as65c816
+CC = fcc -m65c816
+AS = fcc -m65c816
 LINKER = $(FUZIX_ROOT)/Library/link/ld65c816
 CFLAGS = -X -Os -D__STDC__ -c -I$(FUZIX_ROOT)/Library/include -I$(FUZIX_ROOT)/Library/include/65c816
 #CFLAGS = -X -D__STDC__ -c -I$(FUZIX_ROOT)/Library/include -I$(FUZIX_ROOT)/Library/include/65c816

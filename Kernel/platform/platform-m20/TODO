@@ -1,0 +1,102 @@
+# Olivetti M20 FUZIX Port — TODO
+
+## Done
+  - Kernel boots, mounts root filesystem, starts /init
+  - exec binary loading (syscall_exec32.c + coff2aout + plt_relocate)
+  - crt0, FUZIX libc, syscall wrappers for Z8001
+  - /init with fork/exec/waitpid loop
+  - V7 shell (/bin/sh) boots with prompt, builtins, external commands
+  - dofork, switchin/switchout, signal delivery (VDSO unwind)
+  - HD driver (BIOS disk_io)
+  - coff2aout: R_IMM32 + R_IMM32_NORELAX relocations with addends
+  - CRT video console via BIOS PROM put_char (0x84000080)
+  - Keyboard driver: i8251A at 0xA1, polled from timer, CP/M-8000 scan code table
+  - 30 userland utilities built and working (ls, echo, cat, grep, etc.)
+  - PATH search works (shell finds commands in /bin without full path)
+  - Reboot via BIOS cold_boot entry (0x8400008C)
+  - Full init with login/getty — boots to login prompt, /etc/rc runs at boot
+  - 100+ userland utilities via build-filesystem-ng (basefs, util, V7 cmd)
+  - /etc configs (passwd, group, inittab, termcap, rc scripts, mtab, fstab)
+  - Read-write filesystem (CMDLINE "hda rw")
+  - Boot messages on CRT (kprintf writes to both serial and CRT)
+  - Standard device numbering (major 0=hd, major 1=fd, matching basefs.pkg)
+
+## Bugs fixed this session
+
+### coff2aout: .eh_frame mistaken for .data (Standalone/coff2aout.c)
+  GCC generates .eh_frame sections with the STYP_DATA flag. coff2aout matched
+  sections by flags, so .eh_frame (last section with DATA flag) overwrote the
+  real .data section info. All initialized pointers in .data were zero at runtime.
+  Fix: match sections by name (".text", ".data", ".bss") instead of flags.
+
+### Syscall generator: missing sign extension for pid_t (Library/tools/syscall_z8000.c)
+  waitpid(pid, ...) and kill(pid, ...) pass pid_t as 16-bit signed.  The generator
+  zero-extended all 16-bit args (`clr r2; ld r3, val`), so pid=-1 became 0x0000FFFF
+  (65535) instead of 0xFFFFFFFF (-1).  waitpid(-1,...) never matched any child;
+  the shell hung after every external command.
+  Fix: added 's' arg type that generates sign extension via `sra r2, #15`.
+  Applied to waitpid (syscall 55) and kill (syscall 39).
+
+### Syscall generator: memalloc return truncated (Library/tools/syscall_z8000.c)
+  memalloc (syscall 64) returns a 32-bit pointer, but the generator emitted
+  `ld r2, r3` which truncates to 16 bits (loses the segment).  Pointers from
+  calloc/malloc pointed to segment 0 (kernel memory), causing EFAULT on any
+  I/O to the allocated buffer (e.g. readdir's read() in ls).
+  Fix: added memalloc to `returns_ptr` list (skips `ld r2, r3`).
+
+### Syscall generator: memfree takes pointer, not word (Library/tools/syscall_z8000.c)
+  memfree (syscall 65) takes a pointer argument but was typed as 'w' (16-bit).
+  Fix: changed to 'l' (32-bit pointer).
+
+### Library: USE_SYSMALLOC incompatible with segmented Z8001 (Library/libs/Makefile.z8000)
+  USE_SYSMALLOC makes malloc call the memalloc syscall, which uses kmalloc to
+  allocate from the kernel heap (segment 0x82).  On Z8001, user processes run in
+  different segments (e.g. 0x8D).  The kernel's valaddr rejects kernel-segment
+  pointers passed by user code, causing EFAULT.
+  Fix: removed -DUSE_SYSMALLOC.  malloc now uses sbrk to grow the user's own
+  data segment, which is always in the correct segment.
+
+### Syscall wrappers: errno symbol mismatch (Library/tools/syscall_z8000.c)
+  All syscall wrappers wrote error codes to `errno` (assembly symbol) but C code
+  read from `_errno` (C symbol with underscore prefix). These resolved to different
+  addresses. errno was NEVER set from C's perspective — every perror() said "Success",
+  every `if (errno == ENOEXEC)` check failed, init couldn't fall back to /bin/sh
+  for shell scripts.
+  Fix: generator now emits `ld _errno, r1` instead of `ld errno, r1`.
+
+### crt0: environ loaded as value instead of address (Library/libs/crt0_z8000.S)
+  `ldl rr2, rr14(#8)` loaded the VALUE at ISP+8 (= envp[0], first env string pointer).
+  But `_environ` must be the ADDRESS of the envp array (ISP+8 itself).  With no
+  environment (stub init), envp[0]=NULL so _environ=NULL — worked by accident.
+  With real environment from full init, _environ pointed to a string like
+  "PATH=/bin:/usr/bin" instead of the pointer array — shell crashed in sh_getenv.
+  Fix: `ldl rr2, rr14; addl rr2, #8` computes address instead of loading value.
+  Same fix applied to crt0nostdio_z8000.S.
+
+### Device numbering: swapped major numbers (devices.c, config.h)
+  Original M20 had major 0=fd, major 1=hd (BOOTDEVICE=0x0100).  Standard FUZIX
+  (basefs.pkg) uses major 0=hd, major 1=fd.  prtroot showed /dev/fd0 as root.
+  Fix: swapped device table entries, BOOTDEVICE=0x0000, BOOTDEVICENAMES="hd#,fd#".
+  Root mounts ro by default; /etc/rc does fsck then remount rw.
+
+## Next: drivers
+  - Floppy driver — same BIOS disk_io interface as HD
+  - Serial port as second TTY (i8251A at 0xC1, currently kprintf-only)
+
+## Next: memory management
+  - Multi-segment user processes (use seg A/C/D/E for larger programs)
+  - Per-segment allocation instead of single flat pool
+
+## Compiler/toolchain bugs
+  - WORD_REGISTER_OPERATIONS: FIXED in gcc
+  - Jump table codegen: FIXED — CASE_VECTOR_MODE HImode
+  - addr(Rn) register: FIXED — use low word of pair
+  - Register global asm("r10"): WORKAROUND — -ffixed-r10
+  - z8k-coff-ld -r addend bug: FIXED in binutils (r_offset was dropped)
+  - coff2aout addend bug: FIXED (now reads r_offset field)
+  - ldb + neg + test NUL check bug: FIXED in gcc (Z8000 backend)
+  - Need to run GCC torture tests to find more bugs
+
+## Nice to have
+  - RTC / timekeeping
+  - Printer driver (i8255A parallel port)

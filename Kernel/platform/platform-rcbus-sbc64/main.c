@@ -48,7 +48,7 @@ void plt_idle(void)
 		sync_clock();
 }
 
-uint8_t plt_param(unsigned char *p)
+uint_fast8_t plt_param(unsigned char *p)
 {
 	used(p);
 	return 0;
@@ -70,13 +70,13 @@ void plt_interrupt(void)
 {
 	tty_poll_cpld();
 	if (sio_present)
-		tty_pollirq_sio0();
+		tty_irq_sio0();
 	if (sio1_present)
-		tty_pollirq_sio1();
+		tty_irq_sio1();
 	if (ctc_present) {
-		uint8_t n = 255 - CTC_CH3;
-		CTC_CH3 = 0x47;
-		CTC_CH3 = 255;
+		uint8_t n = 255 - in(CTC_CH(3));
+		out(CTC_CH(3), 0x47);
+		out(CTC_CH(3), 255);
 		timer_tick(n);
 	}
 }

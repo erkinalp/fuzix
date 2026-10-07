@@ -47,14 +47,13 @@ extern uint16_t swap_dev;
 #define BOOTDEVICENAMES "hd#"
 
 #define CONFIG_DYNAMIC_BUFPOOL /* we expand bufpool to overwrite the _DISCARD segment at boot */
-#define NBUFS    4        /* Number of block buffers, keep in line with space reserved in zeta-v2.s */
+#define NBUFS    4        /* Number of block buffers, keep in line with space reserved in micro80.s */
 #define NMOUNTS	 2	  /* Number of mounts at a time */
 
 /* IDE/CF support */
 #define CONFIG_TD
 #define CONFIG_TD_NUM	2
 #define CONFIG_TD_IDE
-#define CONFIG_TINYIDE_SDCCPIO
 #define CONFIG_TINYIDE_8BIT
 #define IDE_IS_8BIT(x)	1
 

@@ -10,6 +10,7 @@
 uint16_t ramtop = PROGTOP;
 uint16_t swap_dev = 0xFFFF;
 uint8_t timermsr = 0;
+uint8_t machtype;	/* 0 = ZRC 1 = 3vZ80 */
 
 uint8_t plt_tick_present;
 
@@ -50,7 +51,8 @@ void plt_interrupt(void)
 {
 	tty_poll();
 #ifdef CONFIG_NET_WIZNET
-	w5x00_poll();
+	if (machtype == 0)
+		w5x00_poll();
 #endif
 }
 
@@ -89,16 +91,3 @@ void swapper(ptptr p)
 	panic("swp");
 }
 
-/* string.c
- * Copyright (C) 1995,1996 Robert de Bath <rdebath@cix.compulink.co.uk>
- * This file is part of the Linux-8086 C library and is distributed
- * under the GNU Library General Public License.
- */
-
-int strcmp(const char *d, const char *s)
-{
-	register char *s1 = (char *) d, *s2 = (char *) s, c1, c2;
-
-	while ((c1 = *s1++) == (c2 = *s2++) && c1);
-	return c1 - c2;
-}

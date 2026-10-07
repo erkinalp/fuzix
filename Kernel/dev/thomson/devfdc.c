@@ -16,9 +16,11 @@
 
 #define MAX_FD	4
 
+extern uint8_t fdbios_flop(void);
+
 uint8_t fd_map;
 
-static int fd_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
+static int fd_transfer(uint_fast8_t minor, bool is_read, uint_fast8_t rawflag)
 {
     uint16_t block;
     uint16_t ct = 0;
@@ -50,7 +52,7 @@ static int fd_transfer(uint8_t minor, bool is_read, uint8_t rawflag)
         }
         fdbios_track = block >> 4;		/* 604A track: 16bit */
         fdbios_sector = (block & 0x0F) + 1;	/* 16 spt */
-        fdbios_addr = udata.u_dptr;
+        fdbios_addr = (uint16_t)udata.u_dptr;
         if (err = fdbios_flop())	/* Handle fd bios interface and mapping */
             goto bad;
         udata.u_dptr += 256;
@@ -65,7 +67,7 @@ bad2:
     return -1;
 }
 
-int fd_open(uint8_t minor, uint16_t flag)
+int fd_open(uint_fast8_t minor, uint16_t flag)
 {
     if(minor >= MAX_FD) {
         udata.u_error = ENODEV;
@@ -77,17 +79,17 @@ int fd_open(uint8_t minor, uint16_t flag)
     return -1;
 }
 
-int fd_read(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int fd_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     return fd_transfer(minor, true, rawflag);
 }
 
-int fd_write(uint8_t minor, uint8_t rawflag, uint8_t flag)
+int fd_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
     return fd_transfer(minor, false, rawflag);
 }
 
-int fd_ioctl(uint8_t minor, uarg_t request, char *buffer)
+int fd_ioctl(uint_fast8_t minor, uarg_t request, char *buffer)
 {
     return -1;
 }

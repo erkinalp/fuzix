@@ -1705,7 +1705,7 @@ int main(int argc, char *argv[])
 	}
 	game.msg[i] = dp;
 	for (i = 0; i < 140; i++) {
-
+		int n;
 		/* 0 terminate as entries don't give the true length */
 		len = strlen(pShortRmDesc[i]) + 1;
 		game.lshort[i] = endianize(dp);
@@ -1717,8 +1717,17 @@ int main(int argc, char *argv[])
 		}
 		dp += 16 * sizeof(struct trav) + 1;
 		write(out, &TravTab[i].sTrav, 1);
-		write(out, TravTab[i].pTrav, 16 * sizeof(struct trav));
-	} game.lshort[i] = dp;
+		for (n = 0; n < 16; n++) {
+			uint16_t d;
+			d = endianize(TravTab[i].pTrav[n].tdest);
+			write(out, &d, 2);
+			d = endianize(TravTab[i].pTrav[n].tverb);
+			write(out, &d, 2);
+			d = endianize(TravTab[i].pTrav[n].tcond);
+			write(out, &d, 2);
+		}
+	}
+	game.lshort[i] = dp;
 	for (i = 0; i < 64; i++) {
 		len = strlen(pObjDesc[i]);
 		game.odesc[i] = endianize(dp);
@@ -1726,7 +1735,7 @@ int main(int argc, char *argv[])
 		dp += len;
 	}
 	game.odesc[i] = dp;
-	for (i = 0; i < 64; i++) {
+	for (i = 0; i < 147; i++) {
 		len = strlen(pLongRmDesc[i]);
 		game.loclong[i] = endianize(dp);
 		write(out, pLongRmDesc[i], len);

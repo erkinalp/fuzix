@@ -43,18 +43,18 @@ void hd_probe(void)
 	p = (struct minipart *)(udata.u_dptr + 128);
 
 	for (dev = 0; dev < 4; dev++) {
-		hd_sdh = 0x80 | (dev << 3);
-		hd_cmd = HDCMD_RESTORE | RATE_4MS;
+		out(HD_SDH, 0x80 | (dev << 3));
+		out(HD_CMD, HDCMD_RESTORE | RATE_4MS);
 		if (hd_waitready() & 1) {
-			if ((hd_err & 0x12) == 0x12)
+			if ((in(HD_ERR) & 0x12) == 0x12)
 				continue;
 		}
-		hd_seccnt = 1;
-		hd_sdh = 0x80 | (dev << 3);
-		hd_secnum = 1;
-		hd_cyllo = 0;
-		hd_cylhi = 0;
-		hd_cmd = HDCMD_READ;
+		out(HD_SECCNT, 1);
+		out(HD_SDH, 0x80 | (dev << 3));
+		out(HD_SECNUM, 1);
+		out(HD_CYLLO, 0);
+		out(HD_CYLHI, 0);
+		out(HD_CMD, HDCMD_READ);
 		if (hd_waitdrq() & 1)
 			continue;
 		if((hd_xfer(1, udata.u_dptr) & 0x41) != 0x40)
@@ -88,7 +88,7 @@ void hd_probe(void)
 				p->g.seek = 1;
 		}
 		/* Set the step rate */
-		hd_cmd = HDCMD_SEEK | p->g.seek;
+		out(HD_CMD, HDCMD_SEEK | p->g.seek);
 		hd_waitready();
 		memcpy(&parts[dev], p, sizeof(parts[dev]));
 	}

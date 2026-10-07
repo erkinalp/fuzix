@@ -47,7 +47,7 @@ image:
 	../../tty.o ../../devsys.o ../../syscall_fs2.o ../../syscall_fs3.o \
 	../../syscall_exec16.o ../../syscall_exec.o ../../blk512.o \
 	../../usermem.o ../../cpu-65c816/usermem_std-65c816.o devtty.o \
-	/opt/cc65c816/lib/lib65c816.a
+	/opt/fcc/lib/65c816/lib65c816.a
 	dd if=../../fuzix.bin of=fuzix.img bs=256 skip=4 
 
 loader: loader.o

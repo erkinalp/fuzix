@@ -6,7 +6,7 @@
 
 const char *_ultoa(unsigned long val)
 {
-   char *p;
+   register char *p;
    static char buf[12];
 
    p = buf+sizeof(buf);

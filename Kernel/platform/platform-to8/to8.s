@@ -1,44 +1,81 @@
+# 1 "to8.S"
 	;
 	; TO8/TO8D/T09+ systems
 	;
 
-	.module to8
-
 	; exported
-	.globl map_kernel
-	.globl map_video
-	.globl map_proc
-	.globl map_proc_always
-	.globl map_save
-	.globl map_restore
-	.globl map_for_swap
-        .globl init_early
-        .globl init_hardware
-        .globl _program_vectors
-	.globl _need_resched
-
-	.globl _ramsize
-	.globl _procmem
-
-	; imported
-	.globl unix_syscall_entry
-	.globl null_handler
-
-	.globl video_init
+	.export map_kernel
+	.export map_video
+	.export map_proc_always
+	.export map_save
+	.export map_restore
+	.export map_for_swap
+        .export init_early
+        .export init_hardware
+        .export _program_vectors
+	.export _need_resched
 
 	; exported debugging tools
-	.globl _plt_monitor
-	.globl _plt_reboot
-	.globl outchar
-	.globl ___hard_di
-	.globl ___hard_ei
-	.globl ___hard_irqrestore
+	.export _plt_monitor
+	.export _plt_reboot
+	.export outchar
+	.export ___hard_di
+	.export ___hard_ei
+	.export ___hard_irqrestore
+# 1 "kernel.def"
+U_DATA__TOTALSIZE           equ 0x0200        ; 256+256
 
-	include "kernel.def"
-	include "../../cpu-6809/kernel09.def"
+VIDEO_BASE		    equ 0x0000	     ; 8K mapped in the video window
+VIDEO_END		    equ 0x2000	     ; for now
+VIDEO_OFF		    equ 0x00	     ; mapped at 0x00
+
+PROGBASE                    equ 0x6400       ; programs and data start here
+
+IOPAGE			    equ 0xE7	     ; I/O window
+# 1 "../../cpu-6809/kernel09.def"
+; Keep these in sync with struct u_data!!
+U_DATA__U_PTAB              equ 0   ; struct p_tab*
+U_DATA__U_PAGE              equ 2   ; uint16_t
+U_DATA__U_PAGE2             equ 4   ; uint16_t
+U_DATA__U_INSYS             equ 6   ; bool
+U_DATA__U_CALLNO            equ 7   ; uint8_t
+U_DATA__U_SYSCALL_SP        equ 8   ; void *
+U_DATA__U_RETVAL            equ 10  ; int16_t
+U_DATA__U_ERROR             equ 12  ; int16_t
+U_DATA__U_SP                equ 14  ; void *
+U_DATA__U_ININTERRUPT       equ 16  ; bool
+U_DATA__U_CURSIG            equ 17  ; int8_t
+U_DATA__U_ARGN              equ 18  ; uint16_t
+U_DATA__U_ARGN1             equ 20  ; uint16_t
+U_DATA__U_ARGN2             equ 22  ; uint16_t
+U_DATA__U_ARGN3             equ 24  ; uint16_t
+U_DATA__U_ISP               equ 26  ; void * (initial stack pointer when _exec()ing)
+U_DATA__U_TOP               equ 28  ; uint16_t
+U_DATA__U_BREAK             equ 30  ; uint16_t
+U_DATA__U_CODEBASE          equ 32  ; uint16_t
+U_DATA__U_SIGVEC            equ 34  ; table of function pointers (void *)
+
+; Keep these in sync with struct p_tab!!
+P_TAB__P_STATUS_OFFSET      equ 0
+P_TAB__P_FLAGS_OFFSET	    equ 1
+P_TAB__P_TTY_OFFSET         equ 2
+P_TAB__P_PID_OFFSET         equ 3
+P_TAB__P_PAGE_OFFSET        equ 15
+
+P_RUNNING                   equ 1            ; value from include/kernel.h
+P_READY                     equ 2            ; value from include/kernel.h
+
+PFL_BATCH		    equ 4            ; value from include/kernel.h
+
+OS_BANK                     equ 0            ; value from include/kernel.h
+
+EAGAIN                      equ 11           ; value from include/kernel.h
 
 
-	.area .discard
+; Keep in sync with struct blkbuf
+BUFSIZE 		    equ 520
+# 28 "to8.S"
+	.discard
 ;
 ;	Get some video up early for debug
 ;
@@ -70,15 +107,15 @@ init_hardware:
 	std	_ramsize
 	ldd	#512-40			; Kernel has 2,4 and half of 0
 	std	_procmem		; will be 2,3,4 eventually
-	ldd	<$CF			; system font pointer
+	ldd	@$CF			; system font pointer
 	subd	#0x00F8			; back 256 as starts at 32 and back
 	std	_fontbase		; 8 because it is upside down
 	jsr	video_init		; see the video code
 	ldd	#unix_syscall_entry	; Hook SWI
-	std	<$2F
+	std	@$2F
 	rts
 
-        .area .common
+        .common
 
 _plt_reboot:
 	; TODO
@@ -101,7 +138,7 @@ ___hard_ei:
 	rts
 ___hard_di:
 	tfr cc,b		; return the old irq state
-hard_di_2
+hard_di_2:
 	lda $6019
 	anda #$DF
 	sta $6019
@@ -112,7 +149,7 @@ hard_di_2
 ; COMMON MEMORY PROCEDURES FOLLOW
 ;
 
-	.area .common
+	.common
 
 _program_vectors:
 	ldx	#irqhandler
@@ -136,7 +173,7 @@ map_video:
 	sta	$E7E6		;	Video in the low 16K bank
 	puls	a,pc
 
-	.area .commondata
+	.commondata
 kmap:
 	.byte	0		; 	A000-DFFF
 	.byte	0		;	0000-3FFF
@@ -144,8 +181,8 @@ savemap:
 	.byte	0
 	.byte	0
 
-	.area .common
-map_proc_always
+	.common
+map_proc_always:
 	pshs	a
 	;	Set the upper page. The low 16K is kernel, the other chunk
 	;	is fixed for now until we tackle video.
@@ -177,19 +214,19 @@ map_for_swap:
 	rts
 
 
-	.area .common
+	.common
 outchar:
 	rts
 
-	.area .common
+	.common
 
 _need_resched:
-	.db 0
+	.byte 0
 
 ;
 ;	Interrupt glue
 ;
-	.area	.common
+	.common
 
 ;
 ;	Hook the timer interrupt but frob the stack so that we get
@@ -197,7 +234,7 @@ _need_resched:
 ;
 irqhandler:
 	; for a full frame pshs cc,a,b,dp,x,y,u,pc then fix up 10,s 0,s
-	; but firstly try Bill  Astle's trick
+	; but firstly try Bill Astle's trick
 	ldx	#interrupt_handler
 	tfr	cc,a
 	anda	#$7F
@@ -207,11 +244,11 @@ irqhandler:
 ;
 ;	Keyboard glue
 ;
-	.area .text2
+	.code
 
-	.globl _mon_keyboard
-	.globl _mon_mouse
-	.globl _mon_lightpen
+	.export _mon_keyboard
+	.export _mon_mouse
+	.export _mon_lightpen
 ;
 ;	This is interlocked by the IRQ paths
 ;
@@ -222,7 +259,6 @@ _mon_keyboard:
 ;	These require the in_bios flag
 ;
 _mon_mouse:
-	pshs	y
 	jsr	$EC08
 	beq	right_up
 	lda	#2
@@ -238,10 +274,9 @@ left_up:
 	jsr	$EC06
 	stx	_mouse_x
 	sty	_mouse_y
-	puls	y,pc
+	rts
 
 _mon_lightpen:
-	pshs	y
 	jsr	$E818
 	bcs	no_read
 	stx	_mouse_x
@@ -250,22 +285,21 @@ _mon_lightpen:
 	lda	#0
 	adca	#0
 	sta	_mouse_buttons
-	ldx	#1
-	puls	y,pc
+	ldd	#1
+	rts
 no_read:
-	ldx	#0
-	puls	y,pc
+	ldd	#0
+	rts
 
 
-	.area .common
-
+	.common
 ;
 ;	Floppy glue
 ;
 ;	Set in_bios so we can avoid re-entry between floppy
 ;	and keyboard scan
 ;
-	.globl _fdbios_flop
+	.export _fdbios_flop
 
 _fdbios_flop:
 	lda	#1
@@ -278,10 +312,8 @@ via_kernel:
 	jsr	$E82A
 	ldb	#0
 	bcc	flop_good
-	ldb	<$4E
-flop_good
+	ldb	@$4E
+flop_good:
 	; ensure map is correct
-	tfr	d,x
 	clr	_in_bios
 	jmp	map_kernel
-

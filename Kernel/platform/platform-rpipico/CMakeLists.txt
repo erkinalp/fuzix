@@ -1,53 +1,244 @@
 cmake_minimum_required(VERSION 3.12)
 
+# Declare the 8 MiB PSRAM to the LINKER, so a variable marked with the
+# SDK's __uninitialized_psram("group") lands in the QMI window at
+# 0x11000000 and the link exports __psram_start__/__psram_end__.
+#
+# This is the linker region ONLY. We do not link hardware_psram: bring-up
+# stays with psram.c, which is vendored from the MicroPython rp2 port and
+# is what makes PSRAM reliable at this overclock. PICO_PSRAM_SIZE_BYTES is
+# read by nothing we compile (only hardware_psram/psram.c and the board
+# headers reference it), so there is no second initialiser to fight.
+#
+# Must be set before pico_sdk_init(): pico_standard_link configures
+# pico_psram_region.ld from it while the SDK is being pulled in.
+# Plain integer, not "(8 * 1024 * 1024)": CMake splits on the spaces and
+# the generated region reads LENGTH = (;8;*;1024;*;1024;).
+set(PICO_PSRAM_SIZE_BYTES 8388608)
+
 # Pull in SDK (must be before project)
 include(pico_sdk_import.cmake)
 
 project(fuzix C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_BUILD_TYPE Debug)
-set(PICO_COPY_TO_RAM 1)
+# NOT copy_to_ram any more.  That put all 90,676 bytes of .text into
+# RAM at boot, and RAM is the scarce thing here - it is shared with the
+# process pool, and the text primitives needed 4K taken off that pool -
+# while flash sits at 22% used.
+#
+# Placement is now per function, in linker_overrides/
+# default_text_excludes.incl and default_rodata_excludes.incl: a name
+# listed there runs from flash, anything not listed falls through to the
+# SDK's .data section and stays in RAM.  -ffunction-sections makes that
+# work by name with no source changes, which matters because 35 of the
+# sources below are shared Fuzix core files that other ports compile.
+#
+# Both lists are EMPTY to begin with, so this build is byte-for-byte
+# the same shape as copy_to_ram was.  See PC3-FLASH-PLAN.md.
+set(PICO_COPY_TO_RAM 0)
+
+# Hardware debugging kernel: TinyUSB-s enumeration trace on the console.
+#   make SUBTARGET=pico2 PC3_USB_TRACE=1
+if(DEFINED ENV{PC3_USB_TRACE})
+	add_compile_definitions(PC3_USB_TRACE=1)
+endif()
+
+# Experiment: no keyboard LED reports (a control transfer on EP0).
+if(DEFINED ENV{PC3_NO_KBD_LEDS})
+	add_compile_definitions(PC3_NO_KBD_LEDS=1)
+endif()
+# ---- CYW43 Wi-Fi / lwIP --------------------------------------------
+#
+# ALWAYS BUILT.  There is one kernel for both boards and it has
+# networking in it; whether a machine gets on a network is a question
+# for /etc/wifi.conf, not for the build.
+#
+# It was briefly a cmake option, and that was a mistake: two build
+# directories meant two kernels that look identical on the console, and
+# the first thing it cost was a Pico Computer 2 test flashed with the
+# wrong one - the symptom being "Not a typewriter" from a command that
+# should have said "no radio".
+#
+# The radio is not powered until somebody asks (net_cyw43.c), and on a
+# Pico Computer 2 it is never powered at all: board_is_pc2() refuses at
+# NETIOC_UP, because these pins are that machine's SD chip select and
+# LED.  Board-verified there - "no radio (Pico Computer 2)", ENODEV
+# from wifi -f, and the card intact afterwards.
+#
+# It costs the process pool NOTHING.  lwIP's heap and every one of its
+# pools live in PSRAM (lwipopts.h), which took the SRAM bill from five
+# 4K blocks to one; then the flash filesystem went (config.h) and gave
+# back nearly two.  336K of pool either way, and over 4K still free in
+# the kernel's own region.
+#
+# PICO_CYW43_SUPPORTED is a CMake variable the SDK tests before it even
+# defines the pico_cyw43_arch targets, and it is normally set by the
+# board header.  This port builds with PICO_BOARD=pico2 - the plain
+# Pico 2 header - and overrides what the PC3 actually is by hand
+# (PICO_RP2350A=0, the 16M flash, PSRAM on GP47), so the radio has to
+# be declared here the same way.  Keeping the board header unchanged
+# also keeps the difference between this port and a stock Pico 2 build
+# in one file rather than two.
+#
+# The pins are the standard CYW43 wiring, which is what the PC3 uses.
+# They are ALSO the Pico Computer 2's SD chip select (GP29) and LED
+# (GP25) - see net_cyw43.c and board.c.
+set(PICO_CYW43_SUPPORTED 1)
+# TLS: our own mbedtls config, adapted from MMBasic's proven one.
+# Changing that file does NOT rebuild mbedtls - the dependency is
+# not tracked - so a clean build directory is required after edits.
+set(PICO_MBEDTLS_CONFIG_FILE ${CMAKE_CURRENT_LIST_DIR}/mbedtls_config.h)
+add_compile_definitions(
+	CONFIG_PC3_NET=1
+	CYW43_DEFAULT_PIN_WL_REG_ON=23
+	CYW43_DEFAULT_PIN_WL_DATA_OUT=24
+	CYW43_DEFAULT_PIN_WL_DATA_IN=24
+	CYW43_DEFAULT_PIN_WL_HOST_WAKE=24
+	CYW43_DEFAULT_PIN_WL_CLOCK=29
+	CYW43_DEFAULT_PIN_WL_CS=25
+	# The gSPI link is clocked from clk_sys, and the SDK's fixed
+	# divider of 2 is tuned for ~125MHz: at 375 it overclocks the
+	# chip and the symptom is "hdr mismatch" / ioctl timeouts.
+	# This lets the divider be set at runtime, as MMBasic and the
+	# PC3's MicroPython both do.
+	CYW43_PIO_CLOCK_DIV_DYNAMIC=1
+)
+
 option(TOTALMEM "specify how much TOTALMEM is present" 0)
 
 add_compile_definitions(
+		# The PC3 is an RP2350B: 48 GPIOs, ADC on GP40-47.  The pico2
+		# board header defaults to the A variant, which makes every
+		# SDK GPIO mask operation on pins >= 32 silently wrap (shift
+		# by pin & 31) and leaves the high-bank pad pull-downs in
+		# place - GP34-37 joystick reads and the GP41-44 ADC were
+		# both dead until this.
+		PICO_RP2350A=0
+		# The PC2 and PC3 always carry 16M and the pico2 board header
+		# defaults to 4M.  Nothing sizes a disk from this any more -
+		# the flash filesystem is gone, see config.h - but the chip is
+		# what it is and the SDK should be told.
+		PICO_FLASH_SIZE_BYTES=\(16*1024*1024\)
 		PICO_HEAP_SIZE=0x0
 		PICO_NO_BINARY_INFO=1
-		PICO_TIME_DEFAULT_ALARM_POOL_DISABLED
+		# The default alarm pool drives the system tick (devices.c).
+		# It was disabled here, which is why the tick was hand-rolled on
+		# a bare hardware alarm - and a hand-rolled re-arm is what froze
+		# the machine: hardware_alarm_set_target leaves the alarm UNarmed
+		# when the target has already passed, nothing else re-armed it,
+		# and one missed deadline stopped the timer for good.  The pool
+		# keeps its entries in an ordered list and re-fires immediately
+		# on a miss, so it cannot end up unarmed.  MMBasic runs its own
+		# tick this way (PicoMite.c:903, add_repeating_timer_us(-1000)).
+		#
+		# It costs static RAM only - the default pool and its entries are
+		# static objects, not malloc'd, which matters because PICO_HEAP_SIZE
+		# is 0 here.  Two entries (24 bytes each): one for the tick, one
+		# for the counting inputs' 1ms gate timer (countpin.c), which
+		# exists only while a SETPIN FIN/PER is live.  The SDK default of
+		# 16 would be 384 bytes this port has not got.  If a third
+		# consumer ever appears, raise this - countpin.c refuses the
+		# SETPIN rather than gating at zero when the pool is full.
+		# Alarm 0 keeps the tick on the same hardware alarm and the same
+		# IRQ it has always used.
+		PICO_TIME_DEFAULT_ALARM_POOL_MAX_TIMERS=2
+		PICO_TIME_DEFAULT_ALARM_POOL_HARDWARE_ALARM_NUM=0
     TOTALMEM=${TOTALMEM}
 		)
 
+# TinyUSB is our own pinned submodule (tinyusb/, hathach 0.21.0), NOT the
+# copy the SDK bundles - so the version this port is written against is
+# recorded in git and a fresh clone builds it after `git submodule update
+# --init`.  The SDK reads PICO_TINYUSB_PATH when it defines the tinyusb
+# targets during pico_sdk_init(), so this MUST be set before that call
+# (the same override the PC3 MicroPython port uses).  0.21's rewritten
+# RP2040/RP2350 host controller driver is what keeps this machine's
+# keyboard on the bus; 0.20 (which MMBasic still uses) retried a NAKing
+# device every 16us and panicked when the port read disconnected
+# (PC3-IRQ-REVIEW.md, 2026-09-01).
+set(PICO_TINYUSB_PATH ${CMAKE_CURRENT_LIST_DIR}/tinyusb)
+if(NOT EXISTS ${PICO_TINYUSB_PATH}/src/tusb_option.h)
+	message(FATAL_ERROR "TinyUSB submodule missing at ${PICO_TINYUSB_PATH} - "
+		"run: git submodule update --init Kernel/platform/platform-rpipico/tinyusb")
+endif()
+
 pico_sdk_init()
+
+# Belt-and-braces: assert the version at configure time, before anything
+# compiles.  The submodule pin already fixes it, but this catches a
+# PICO_TINYUSB_PATH pointed elsewhere and prints the fix rather than
+# failing deep in the patch step.
+execute_process(
+	COMMAND sh ${CMAKE_CURRENT_LIST_DIR}/usbcheck.sh ${PICO_TINYUSB_PATH}
+	RESULT_VARIABLE USBCHECK_RC
+	OUTPUT_VARIABLE USBCHECK_OUT
+	ERROR_VARIABLE  USBCHECK_ERR)
+if(NOT USBCHECK_RC EQUAL 0)
+	message(FATAL_ERROR "${USBCHECK_ERR}")
+endif()
+message(STATUS "${USBCHECK_OUT}")
 
 include_directories(
 	.
 	../..
 	../../dev
+	../../dev/net
 	../../include
 	../../cpu-armm0
 )
 
+# ../../version.c is generated by the kernel Makefile; a fresh tree does
+# not have it and add_executable would fail below (the Makefile build
+# makes it on demand via ../../version.c in Makefile).
+if(NOT EXISTS ${CMAKE_CURRENT_LIST_DIR}/../../version.c)
+	execute_process(
+		COMMAND make TARGET=rpipico version.c
+		WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/../..
+	)
+endif()
+
 add_executable(fuzix
 	devices.c
-	devflash.c
 	devsdspi.c
 	devtty.c
 	elf.c 
 	main.c
 	misc.c
-	rawflash.c
+	console.c
+	arena.c
+	devpsram.c
+	display.c
+	display_hstx.c
+	fonts.c
+	libm_table.c
+	ds3231.c
+	kbd_decode.c
+	usbkbd.c
+	usbtrace.c
+	psram.c
 	rawuart.c
+	board.c
+	lineedit.c
+	sound.c
+	sound_hw.c
 	swapper.c
 	tricks.S
 	core1.c
 	devgpio.c
+	i2cuser.c
+	spiuser.c
+	pinlock.c
+	countpin.c
+	pioout.c
 	usbdescriptors.c
+	wiznet.c
+	wiznet_spi.c
+	../../dev/devi2c.c
 	../../dev/blkdev.c
 	../../dev/mbr.c
 	../../dev/devsd_discard.c
 	../../dev/devsd.c
-	../../lib/dhara/error.c
-	../../lib/dhara/journal.c
-	../../lib/dhara/map.c
 	../../lib/hexdump.c
 	../../blk512.c
 	../../devio.c
@@ -74,6 +265,7 @@ add_executable(fuzix
 	../../usermem.c
 	../../version.c
 	../../dev/net/net_native.c
+	../../dev/net/net_w5x00.c
 	../../syscall_net.c
 	../../network.c
 )
@@ -81,12 +273,113 @@ add_executable(fuzix
 target_link_libraries(fuzix
 	pico_stdlib
 	pico_multicore
-	hardware_flash
+	tinyusb_host
+	hardware_adc
+	hardware_dma
+	hardware_exception
+	hardware_i2c
+	hardware_pio
+	hardware_pwm
 	hardware_spi
 	tinyusb_device
+	pico_rand
 )
 
+# TinyUSB's rp2 host controller driver, PATCHED AT BUILD TIME.
+#
+# 0.21's hcd fails a transfer on RX timeout (STOP_TRANS, then complete
+# as FAILED) without clearing the EPX buffer it had armed.  usbh retries
+# the request, and the retry's first buffer arm hits bufctrl_write32's
+# "buf_ctrl already available" - a panic - on every boot of an RP2350
+# host with a hub in the way (the status-stage IN of an enumeration
+# request times out).  usb/hcd_rp2040.patch clears the buffer in that
+# path, as the driver's own EPX-switch path already does.  The file
+# cannot be edited where it lives (tinyusb/ is a pinned submodule), and
+# a hand-kept copy would drift, so it is dropped from tinyusb_host_base
+# and a copy is generated by patch(1) into the build directory; if the
+# pinned TinyUSB changes under the hunk, patch refuses and the build
+# stops HERE rather than compile the wrong driver.
+# PICO_TINYUSB_PATH was set to the submodule above, before pico_sdk_init().
+# Three files of the driver are patched (all proven on the PC3 MicroPython
+# port, which runs the same TinyUSB 0.21 and shares the hub and devices):
+#   hcd_rp2040.c  - clear the EPX buffer when an RX timeout fails a transfer
+#   rp2040_usb.c  - single-buffer host CONTROL transfers (long HID report
+#                   descriptors panicked "buf_ctrl already available")
+#   usbh.c        - 100 ms reset recovery before the first SETUP (devices
+#                   behind the hub are not ready at the spec-minimum 10 ms
+#                   and a failed enumeration is never retried)
+get_target_property(PC3_HOST_SRCS tinyusb_host_base INTERFACE_SOURCES)
+foreach(PC3_REL IN ITEMS portable/raspberrypi/rp2040/hcd_rp2040 portable/raspberrypi/rp2040/rp2040_usb host/usbh)
+	get_filename_component(PC3_F ${PC3_REL} NAME)
+	set(PC3_SRC ${PICO_TINYUSB_PATH}/src/${PC3_REL}.c)
+	set(PC3_OUT ${CMAKE_BINARY_DIR}/${PC3_F}_pc3.c)
+	set(PC3_PATCH ${CMAKE_CURRENT_LIST_DIR}/usb/${PC3_F}.patch)
+	list(LENGTH PC3_HOST_SRCS PC3_HOST_N)
+	list(FILTER PC3_HOST_SRCS EXCLUDE REGEX "/${PC3_F}\\.c$")
+	list(LENGTH PC3_HOST_SRCS PC3_HOST_M)
+	if(PC3_HOST_M EQUAL PC3_HOST_N)
+		message(FATAL_ERROR "${PC3_F}.c is not where tinyusb_host_base used to keep it; "
+			"the build-time patch (usb/${PC3_F}.patch) needs looking at")
+	endif()
+	add_custom_command(OUTPUT ${PC3_OUT}
+		COMMAND patch -s -o ${PC3_OUT} ${PC3_SRC} ${PC3_PATCH}
+		DEPENDS ${PC3_SRC} ${PC3_PATCH}
+		COMMENT "TinyUSB ${PC3_F}.c with usb/${PC3_F}.patch applied"
+		VERBATIM)
+	target_sources(fuzix PRIVATE ${PC3_OUT})
+endforeach()
+set_target_properties(tinyusb_host_base PROPERTIES
+	INTERFACE_SOURCES "${PC3_HOST_SRCS}")
+# rp2040_usb.c is shared with the DEVICE stack, which this kernel also links
+# (tinyusb_device below); remove it there too or the unpatched original links
+# in beside the copy - "multiple definition of rp2usb_xfer_continue".
+get_target_property(PC3_DEV_SRCS tinyusb_device_base INTERFACE_SOURCES)
+list(LENGTH PC3_DEV_SRCS PC3_DEV_N)
+list(FILTER PC3_DEV_SRCS EXCLUDE REGEX "/rp2040_usb\\.c$")
+list(LENGTH PC3_DEV_SRCS PC3_DEV_M)
+if(PC3_DEV_M EQUAL PC3_DEV_N)
+	message(FATAL_ERROR "rp2040_usb.c is not where tinyusb_device_base used to keep it; "
+		"the build-time patch (usb/rp2040_usb.patch) needs looking at")
+endif()
+set_target_properties(tinyusb_device_base PROPERTIES
+	INTERFACE_SOURCES "${PC3_DEV_SRCS}")
+# the drivers include "rp2040_usb.h" and usbh's private headers relative to
+# their own directories; the SDK compiles rp2040_usb.c with the stringop
+# suppressions and so does this
+target_include_directories(fuzix PRIVATE
+	${PICO_TINYUSB_PATH}/src/portable/raspberrypi/rp2040
+	${PICO_TINYUSB_PATH}/src/host)
+set_source_files_properties(${CMAKE_BINARY_DIR}/hcd_rp2040_pc3.c PROPERTIES
+	COMPILE_FLAGS "-Wno-conversion")
+set_source_files_properties(${CMAKE_BINARY_DIR}/rp2040_usb_pc3.c PROPERTIES
+	COMPILE_FLAGS "-Wno-conversion -Wno-stringop-overflow -Wno-array-bounds")
+set_source_files_properties(${CMAKE_BINARY_DIR}/usbh_pc3.c PROPERTIES
+	COMPILE_FLAGS "-Wno-conversion")
+
+# The poll flavour of the arch layer: no async_context worker threads
+# and no alarm-pool entries (this port allows itself two, one of which
+# is the system tick).  lwIP is driven from the kernel's own pump
+# instead, which is the same choice MMBasic's WEB builds make.
+target_sources(fuzix PRIVATE net_cyw43.c ../../dev/net/net_lwip.c)
+target_link_libraries(fuzix pico_cyw43_arch_lwip_poll
+	pico_lwip_mbedtls pico_mbedtls)
+
 pico_set_float_implementation(fuzix none)
-pico_set_double_implementation(fuzix none)
+pico_set_double_implementation(fuzix pico)
+pico_add_linker_script_override_path(fuzix ${CMAKE_CURRENT_LIST_DIR}/linker_overrides)
+
+# The SDK's GPIO IRQ dispatcher must execute from RAM (the counting
+# inputs take an edge interrupt per pulse through it) while the rest of
+# gpio.c stays in flash where the FS32 space move put it.  A pre-link
+# section rename does it - see relocate_gpio_irq_to_ram.cmake, ported
+# from PicoMite, which verifies or dies.
+add_custom_command(TARGET fuzix PRE_LINK
+	COMMAND ${CMAKE_COMMAND}
+		-DOBJ_ROOT=${CMAKE_BINARY_DIR}/CMakeFiles/fuzix.dir
+		-DOBJCOPY=${CMAKE_OBJCOPY}
+		-DOBJDUMP=${CMAKE_OBJDUMP}
+		-P ${CMAKE_CURRENT_LIST_DIR}/relocate_gpio_irq_to_ram.cmake
+	COMMENT "Relocating gpio_default_irq_handler to RAM")
+
 pico_add_extra_outputs(fuzix)
 

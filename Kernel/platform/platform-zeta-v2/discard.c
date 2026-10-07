@@ -47,7 +47,7 @@ void device_init(void)
 #endif
 }
 
-uint8_t plt_param(char *p)
+uint_fast8_t plt_param(char *p)
 {
     used(p);
     return 0;

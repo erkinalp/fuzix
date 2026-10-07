@@ -39,18 +39,15 @@ int tty_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 	register struct tty *t;
 
 	/* FIXME: fix race of timer versus the ptimer_insert to psleep_flags_io */
-	used(rawflag);
-	used(flag);			/* shut up compiler */
-
 	q = &ttyinq[minor];
 	t = &ttydata[minor];
 
 	while (udata.u_done < udata.u_count) {
 		for (;;) {
-#ifdef CONFIG_LEVEL_2		
+#ifdef CONFIG_LEVEL_2
                         if (jobcontrol_in(minor, t))
 				return udata.u_done;
-#endif				
+#endif
 		        if ((t->flag & TTYF_DEAD) && (!q->q_count))
 				goto dead;
 			if (remq(q, &c)) {
@@ -107,8 +104,6 @@ int tty_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 	register struct tty *t;
 	uint_fast8_t c;
 
-	used(rawflag);
-
 	if (!valaddr_r(udata.u_base, udata.u_count))
 		return -1;
 
@@ -116,10 +111,10 @@ int tty_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 
 	while (udata.u_done != udata.u_count) {
 		for (;;) {	/* Wait on the ^S/^Q flag */
-#ifdef CONFIG_LEVEL_2		
+#ifdef CONFIG_LEVEL_2
 	                if (jobcontrol_out(minor, t))
 				return udata.u_done;
-#endif				
+#endif
 		        if (t->flag & TTYF_DEAD) {
 			        udata.u_error = ENXIO;
 			        return -1;
@@ -129,7 +124,7 @@ int tty_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 			if (psleep_flags_io(&t->flag, flag))
 				return udata.u_done;
 		}
-		/* We could optimize this significantly by 
+		/* We could optimize this significantly by
 		   a) looping here if not sleeping rather than repeating all
 		   the checks except for STOP/DISCARD
 		   b) possibly batching for the case where tty never blocks
@@ -280,7 +275,7 @@ int tty_ioctl(uint_fast8_t minor, uarg_t request, char *data)
 	}
         if (jobcontrol_ioctl(minor, t, request))
 		return -1;
-#endif		
+#endif
 	if (t->flag & TTYF_DEAD) {
 	        udata.u_error = ENXIO;
 	        return -1;
@@ -641,7 +636,7 @@ int ptty_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 
 int ptty_ioctl(uint_fast8_t minor, uint16_t request, char *data)
 {
-	return tty_ioctl(minor + PTY_OFFSET, rawflag, flag);
+	return tty_ioctl(minor + PTY_OFFSET, request, data);
 }
 
 int pty_open(uint_fast8_t minor, uint16_t flag)
@@ -659,23 +654,24 @@ int pty_close(uint_fast8_t minor)
 {
 	ptyusers[minor]--;
 	if (ptyusers[minor] == 0)
-		tty_carrider_drop(minor + PTY_OFFSET);
+		tty_carrier_drop(minor + PTY_OFFSET);
 	return tty_close(minor + PTY_OFFSET);
 }
 
 int pty_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
-	uint16_t nwritten;
+	uint16_t nwritten = 0;
+	uint8_t c;
 	minor += PTY_OFFSET;
 
 	while (nwritten < udata.u_count) {
 		if (udata.u_sysio)
-			c = udata.u_base;
+			c = *udata.u_base;
 		else
 			c = ugetc(udata.u_base);
 		if (tty_inproc(minor, c)) {
 			nwritten++;
-			udata.u_count++;
+			udata.u_base++;
 			continue;
 		}
 		if (nwritten == 0
@@ -688,7 +684,8 @@ int pty_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 
 int pty_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
-	struct s_queue q = &ttyinq[minor + PTY_OFFSET + PTY_PAIR];
+	struct s_queue *q = &ttyinq[minor + PTY_OFFSET + PTY_PAIR];
+	uint16_t nread = 0;
 	char c;
 
 	while (nread < udata.u_count) {
@@ -709,12 +706,12 @@ int pty_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 
 int pty_ioctl(uint_fast8_t minor, uint16_t request, char *data)
 {
-	return tty_ioctl(minor + PTY_OFFSET, rawflag, flag);
+	return tty_ioctl(minor + PTY_OFFSET, request, data);
 }
 
 void pty_putc_wait(uint_fast8_t minor, char c)
 {
-	struct s_queue q = &ptyq[minor + PTY_OFFSET + PTY_PAIR];
+	struct s_queue *q = &ptyq[minor + PTY_OFFSET + PTY_PAIR];
 	/* tty output queue to pty */
 	insq(q, c);
 	/* FIXME: select */

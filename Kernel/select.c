@@ -57,22 +57,22 @@ void selwait_inode(inoptr i, uint_fast8_t smask, uint_fast8_t setit)
 	struct selmap *s = (struct selmap *) (&i->c_node.i_addr[17]);
 	uint_fast8_t bit = udata.u_ptab - ptab;
 	uint_fast8_t mask = 1 << (bit & 7);
-	uint_fast8_t bset = bit & setit;
+	uint_fast8_t bset = setit ? mask : 0;
 	bit >>= 3;
 
 	if (smask & SELECT_IN) {
-		s->map[mask] &= ~bit;
-		s->map[mask] |= bset;
+		s->map[bit] &= ~mask;
+		s->map[bit] |= bset;
 	}
 	s++;
 	if (smask & SELECT_OUT) {
-		s->map[mask] &= ~bit;
-		s->map[mask] |= bset;
+		s->map[bit] &= ~mask;
+		s->map[bit] |= bset;
 	}
 	s++;
 	if (smask & SELECT_EX) {
-		s->map[mask] &= ~bit;
-		s->map[mask] |= bset;
+		s->map[bit] &= ~mask;
+		s->map[bit] |= bset;
 	}
 }
 

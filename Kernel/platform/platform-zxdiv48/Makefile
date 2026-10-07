@@ -1,79 +1,138 @@
-CSRCS = devtty.c devices.c main.c buffers.c divide.c zxcf.c devrd.c ide.c
+CSRCS = devtty.c devices.c main.c buffers.c devrd.c
 CDSRCS = discard.c
+# We force tinyide_discard into .overlay4 as it uses tmpbuf which is only
+# mapped in this overlay.
 DSRCS = ../../dev/tinydisk.c ../../dev/tinyide.c
 DDSRCS = ../../dev/tinydisk_discard.c ../../dev/tinyide_discard.c
 DZSRCS = ../../dev/zx/zxkeyboard.c
 DZSRCS += ../../dev/zx/devinput.c
 DDZSRCS =
-ASRCS = crt0.s zx48.s zxvideo.s rd_divideplus.s
-ASRCS += tricks.s commonmem.s
+ASRCS = crt0.S zx48.S zxvideo.S rd_divideplus.S
+ASRCS += tricks.S commonmem.S
+AZSRCS = ../../dev/zx/divide.S
 
-COBJS = $(CSRCS:.c=.rel)
-CDOBJS = $(CDSRCS:.c=.rel)
-AOBJS = $(ASRCS:.s=.rel)
-DOBJS = $(patsubst ../../dev/%.c,%.rel, $(DSRCS))
-DDOBJS = $(patsubst ../../dev/%.c,%.rel, $(DDSRCS))
-DZOBJS = $(patsubst ../../dev/zx/%.c,%.rel, $(DZSRCS))
-DDZOBJS = $(patsubst ../../dev/zx/%.c,%.rel, $(DDZSRCS))
-OBJS  = $(COBJS) $(CDOBJS) $(AOBJS) $(DOBJS) $(DDOBJS) $(DZOBJS) $(DDZOBJS)
+COBJS = $(CSRCS:.c=.o)
+CDOBJS = $(CDSRCS:.c=.o)
+AOBJS = $(ASRCS:.S=.o)
+DOBJS = $(patsubst ../../dev/%.c,%.o, $(DSRCS))
+DDOBJS = $(patsubst ../../dev/%.c,%.o, $(DDSRCS))
+AZOBJS = $(patsubst ../../dev/zx/%.S,%.o, $(AZSRCS))
+DZOBJS = $(patsubst ../../dev/zx/%.c,%.o, $(DZSRCS))
+DDZOBJS = $(patsubst ../../dev/zx/%.c,%.o, $(DDZSRCS))
+OBJS  = $(COBJS) $(CDOBJS) $(AOBJS) $(DOBJS) $(DDOBJS) $(DZOBJS) $(DDZOBJS) $(AZOBJS)
 
 CROSS_CCOPTS += -I../../dev/ -I../../dev/zx/
 
-CROSS_CC_SEG3 = --codeseg CODE3
-CROSS_CC_SEG4 = --codeseg CODE4
+CROSS_CC_SEG3 = -Toverlay3
+CROSS_CC_SEG4 = -Toverlay4
 
 all:	$(OBJS)
 
-$(COBJS): %.rel: %.c
+$(COBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEG4) -c $<
 
-$(CDOBJS): %.rel: %.c
+$(CDOBJS): %.o: %.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(DOBJS): %.rel: ../../dev/%.c
+$(DOBJS): %.o: ../../dev/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEG4) -c $<
 
-$(DDOBJS): %.rel: ../../dev/%.c
-	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
+$(DDOBJS): %.o: ../../dev/%.c
+	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEG4) -c $<
 
-$(DZOBJS): %.rel: ../../dev/zx/%.c
+$(AZOBJS): %.o: ../../dev/zx/%.S
+	$(CROSS_AS) $(ASOPTS) $<
+
+$(DZOBJS): %.o: ../../dev/zx/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEG3) -c $<
 
-$(DDZOBJS): %.rel: ../../dev/zx/%.c
+$(DDZOBJS): %.o: ../../dev/zx/%.c
 	$(CROSS_CC) $(CROSS_CCOPTS) $(CROSS_CC_SEGDISC) -c $<
 
-$(AOBJS): %.rel: %.s
+$(AOBJS): %.o: %.S
 	$(CROSS_AS) $(ASOPTS) $<
 
 clean:
-	rm -f $(OBJS) *.lst *.asm *.sym *.rst *.rel core *~ 
+	rm -f $(OBJS) *.lst *.asm *.Sym *.rst *.o core *~
 	rm -f *.ihx *.tmp loader loader-zxcf
 	rm -f FUZIX.BIN FUZIX comcode
 
 # Re-order the image and turn it into the raw image to load from disk
-image:
+loader:
 	# Build a generic DivIDE plus loader
-	sdasz80 -o loader.s
-	sdldz80 -i loader.rel
-	makebin -s 57856 loader.ihx loader.tmp
+	fcc -mz80 -c loader.S
+	ldz80 -b loader.o -o loader.tmp
 	dd bs=1 skip=57344 if=loader.tmp of=loader
-	# Build a generic ZXCF+ style loader
-	sdasz80 -o loader-zxcf.s
-	sdldz80 -i loader-zxcf.rel
-	makebin -s 57856 loader-zxcf.ihx loader-zxcf.tmp
 
+loader-zxcf:
+	# Build a generic ZXCF+ style loader
+	fcc -mz80 -c loader-zxcf.S
+	ldz80 -b loader-zxcf.o -o loader-zxcf
+
+image: loader loader-zxcf
+	# We repeat some stuff into each bank to make it fit
+	$(CROSS_LD) -b -O 0x0080 -S 0x3000 -C 0x5B00 -X 0x8200 \
+	-f SLCDBsbX -o ../../fuzix.bin \
+	crt0.o commonmem.o zx48.o ../../start.o \
+	../../version.o ../../cpu-z80u/lowlevel-z80u-banked.o \
+	../../usermem.o tricks.o main.o discard.o devrd.o rd_divideplus.o \
+	../../dev/zx/zxkeyboard.o ../../dev/zx/divide.o \
+	../../timer.o ../../kdata.o devices.o ../../devio.o \
+	../../filesys.o ../../blk512.o ../../process.o \
+	../../inode.o ../../syscall_exec.o ../../syscall_exec16.o \
+	../../syscall_fs.o ../../syscall_fs2.o ../../syscall_fs3.o \
+	../../syscall_proc.o ../../syscall_other.o ../../syscall_net.o \
+	../../network.o ../../tty.o ../../mm.o ../../mm/memalloc_none.o \
+	../../swap.o ../../mm/simple.o ../../devsys.o ../../vt.o \
+	../../devinput.o ../../dev/zx/devinput.o ../../dev/zx/keyscan.o \
+	../../font/font8x8.o devtty.o zxvideo.o buffers.o \
+	../../dev/tinydisk.o ../../dev/tinydisk_discard.o \
+	../../dev/tinyide.o ../../dev/tinyide_discard.o \
+	/opt/fcc/lib/z80/libz80.a -m fuzix.tmpmap -R fuzix.relocs
+	perl -lpe '$$_=hex' fuzix.tmpmap | paste -d" " - fuzix.tmpmap  |  sort -n |  cut -d" " -f 2- >../../fuzix.map
+	bankman ../../fuzix.bin fuzix.tmpmap fuzix.relocs z80
 	# Now build a FUZIX.BIN to load
 	# in the order we need it
 	# Extract the common code for each bank
-	dd if=../../common.bin bs=512 skip=27 count=5 of=comcode
-	# Add the common code to each bank top
-	dd if=comcode bs=512 seek=27 of=../bank1.bin
-	dd if=comcode bs=512 seek=27 of=../bank2.bin
-	dd if=comcode bs=512 seek=27 of=../bank3.bin
-	dd if=comcode bs=512 seek=27 of=../bank4.bin
-	dd if=../../bank1.bin bs=16384 >FUZIX.BIN conv=sync
-	dd if=../../bank2.bin bs=16384 >>FUZIX.BIN conv=sync
-	dd if=../../bank3.bin bs=16384 >>FUZIX.BIN conv=sync
-	dd if=../../bank4.bin bs=16384 >>FUZIX.BIN conv=sync
-	dd if=../../common.bin bs=16384 >>FUZIX.BIN skip=1 count=1 conv=sync
-	dd if=../../common.bin bs=16384 >>FUZIX.BIN skip=2 count=1 conv=sync
+	# Extract 3000-3FFF from the image into a work file
+	dd if=../../fuzix.bin bs=4096 skip=3 count=1 of=comcode
+	# Drop it into the overlay1 at the end (13000-13FFF in the file)
+	dd if=comcode of=../../fuzix.bin bs=4096 seek=19 conv=notrunc
+	# Drop it into the overlay2 at the end (23000-23FFF in the file)
+	dd if=comcode of=../../fuzix.bin bs=4096 seek=35 conv=notrunc
+	# Drop it into the overlay3 at the end (33000-33FFF in the file)
+	dd if=comcode of=../../fuzix.bin bs=4096 seek=51 conv=notrunc
+	# Drop it into the overlay4 at the end (43000-43FFF in the file)
+	dd if=comcode of=../../fuzix.bin bs=4096 seek=67 conv=notrunc
+	# Start with the four banks of 16K (including common copies)
+	dd if=../../fuzix.bin bs=16384 skip=4 count=1 >FUZIX.BIN conv=sync
+	dd if=../../fuzix.bin bs=16384 skip=8 count=1 >>FUZIX.BIN conv=sync
+	dd if=../../fuzix.bin bs=16384 skip=12 count=1 >>FUZIX.BIN conv=sync
+	dd if=../../fuzix.bin bs=16384 skip=16 count=1 >>FUZIX.BIN conv=sync
+	# Now append the 16-32K page
+	dd if=../../fuzix.bin bs=16384 skip=1 count=1 >>FUZIX.BIN conv=sync
+	# And the 32K-48K page
+	dd if=../../fuzix.bin bs=16384 skip=2 count=1 >>FUZIX.BIN conv=sync
+	# We now have an image for the loader
+
+
+IMAGES = $(FUZIX_ROOT)/Images/$(TARGET)
+# Adjust to wherever you have ESXDOS unpacked
+ESXDOS = $(FUZIX_ROOT)/../ESXDOS
+
+diskimage:
+	dd if=hdfstart.bin of=$(IMAGES)/disk.hdf
+	# Write a byte at the end to force the size
+	dd if=/dev/zero of=$(IMAGES)/disk.hdf bs=1 seek=134218261 count=1
+	# Sector 67584 (second partition on the hdfstart we used)
+	dd if=$(IMAGES)/filesys8.img of=$(IMAGES)/disk.hdf bs=34603542 seek=1 conv=notrunc
+	dd if=/dev/zero bs=512 count=65536 of=tmp.fat
+	mkfs.fat -F16 tmp.fat
+	# Sector 2048
+	dd if=tmp.fat of=$(IMAGES)/disk.hdf bs=1049110 seek=1 conv=notrunc
+	hdfmonkey put $(IMAGES)/disk.hdf $(ESXDOS)/* /
+	hdfmonkey put $(IMAGES)/disk.hdf FUZIX.BIN FUZIX.BIN
+	hdfmonkey put $(IMAGES)/disk.hdf loader BIN/FUZIX
+	dd if=$(IMAGES)/disk.hdf of=$(IMAGES)/disk.raw bs=534 skip=1
+	dd if=FUZIX.BIN of=$(IMAGES)/disk.raw bs=512 seek=1 conv=notrunc
+	cat $(FUZIX_ROOT)/Standalone/filesystem-src/idehdr.40M $(IMAGES)/disk.raw >$(IMAGES)/emu-ide.img

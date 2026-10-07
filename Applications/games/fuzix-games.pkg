@@ -35,6 +35,7 @@ f 0755 /usr/games/myst10        myst10
 f 0755 /usr/games/myst11        myst11
 f 0755 /usr/games/qrun          qrun
 f 0755 /usr/games/l9x		l9x
+f 0755 /usr/games/pom		pom
 f 0755 /usr/games/startrek      startrek
 d 0711 /usr/lib/trek
 f 0755 /usr/lib/trek/startrek.doc startrek.doc
@@ -48,3 +49,9 @@ f 0755 /usr/games/z3            z3
 f 0755 /usr/games/z4            z4
 f 0755 /usr/games/z5            z5
 f 0755 /usr/games/z8            z8
+f 0711 /usr/lib/games/zork1.z3	zork/zork1.z3
+f 0711 /usr/lib/games/zork2.z3	zork/zork2.z3
+f 0711 /usr/lib/games/zork3.z3	zork/zork3.z3
+l /usr/games/z3 /usr/games/zork1
+l /usr/games/z3 /usr/games/zork2
+l /usr/games/z3 /usr/games/zork3

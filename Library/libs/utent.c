@@ -58,10 +58,10 @@ endutent(void)
 }
 
 struct utmp *
-getutid(const struct utmp * utmp_entry)
+getutid(register const struct utmp * utmp_entry)
 {
   struct utmp * utmp;
-  
+
   while ((utmp=getutent())!=NULL)
     {
       if ((utmp_entry->ut_type==RUN_LVL   ||
@@ -84,7 +84,7 @@ getutid(const struct utmp * utmp_entry)
 struct utmp *
 getutline(const struct utmp * utmp_entry)
 {
-  struct utmp * utmp;
+  register struct utmp * utmp;
 
 #if 0 /* This is driving me nuts.  It's not an implementation problem -
 	 it's a matter of how things _SHOULD_ behave.  Groan. */

@@ -10,6 +10,7 @@
 #include <i2c.h>
 #include <net_native.h>
 #include <kmod.h>
+#include <bufstat.h>
 
 /*
  *	System devices:
@@ -33,9 +34,6 @@
 int sys_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
 	unsigned char *addr = (unsigned char *) ptab;
-
-	used(rawflag);
-	used(flag);
 
 	switch (minor) {
 	case 0:
@@ -83,9 +81,6 @@ int sys_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 
 int sys_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
-	used(rawflag);
-	used(flag);
-
 	switch (minor) {
 	case 0:
 	case 2:
@@ -169,6 +164,9 @@ int sys_ioctl(uint_fast8_t minor, uarg_t request, char *data)
 		uputi(sizeof(struct p_tab), data);
 		break;
 
+	case PIOC_BUFSTAT:
+		return bufstat_report((uint8_t *)data);
+
 	default:
 		return -1;
 	}
@@ -177,7 +175,6 @@ int sys_ioctl(uint_fast8_t minor, uarg_t request, char *data)
 
 int sys_close(uint_fast8_t minor)
 {
-	used(minor);
 #ifdef CONFIG_NET_NATIVE
 	if (minor == 65)
 		return netdev_close(minor);

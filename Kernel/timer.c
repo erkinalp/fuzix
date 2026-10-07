@@ -27,7 +27,7 @@ timer_t set_timer_duration(uint16_t duration)
 uint8_t timer_expired(timer_t timer_val)
 {
 	sync_clock();
-	return timer_val < ticks.h.low;
+	return ((timecmp_t)(timer_val - ticks.h.low) < 0);
 }
 
 /*-----------------------------------------------------------*/

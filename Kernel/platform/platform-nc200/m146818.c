@@ -10,21 +10,22 @@
 #include <printf.h>
 #include <rtc.h>
 
-__sfr __at 0xD0 rtc_second;
-__sfr __at 0xD2 rtc_minute;
-__sfr __at 0xD4 rtc_hour;
-__sfr __at 0xD7 rtc_day;
-__sfr __at 0xD8 rtc_month;
-__sfr __at 0xD9 rtc_year;
-__sfr __at 0xDA rtc_rega;
+/* assumes DI from caller */
+static uint8_t rtc_reg(uint8_t r)
+{
+	out(0xD0, r);
+	r = in(0xD1);
+	return r;
+}
 
 uint_fast8_t plt_rtc_secs(void)
 {
         static uint8_t last;
-        if (rtc_rega & 0x80)
+        if (rtc_reg(10) & 0x80)
             return last;
-        return rtc_second;
+        return rtc_reg(0);
 }
+
 
 /* Full RTC support (for read - no write yet) */
 int plt_rtc_read(void)
@@ -39,21 +40,23 @@ int plt_rtc_read(void)
 		len = udata.u_count;
 
 sync:
-        while(rtc_rega & 0x80);	/* Wait for UIP to clear */
-        
+        while(rtc_reg(10) & 0x80);	/* Wait for UIP to clear */
+
         flags = di();
-        if (rtc_rega & 0x80)
-            goto sync;
+        if (rtc_reg(10) & 0x80) {
+        	irqrestore(flags);
+        	goto sync;
+	}
 
         /* We are now safe for 244uS */
-	y = rtc_year + 1990;
+	y = rtc_reg(9) + 1990;
 	*p++ = y;
 	*p++ = y >> 8;
-	*p++ = rtc_month;
-	*p++ = rtc_day;
-        *p++ = rtc_hour;
-        *p++ = rtc_minute;
-        *p++ = rtc_second;
+	*p++ = rtc_reg(8) - 1;
+	*p++ = rtc_reg(7);
+        *p++ = rtc_reg(4);
+        *p++ = rtc_reg(2);
+        *p++ = rtc_reg(0);
         irqrestore(flags);
 
 	cmos.type = CMOS_RTC_DEC;

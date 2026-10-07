@@ -7,17 +7,14 @@
 
 /* Standard RC2014 */
 #define SIO0_BASE 0x30
-__sfr __at (SIO0_BASE + 0) SIOA_D;
-__sfr __at (SIO0_BASE + 1) SIOB_D;
-__sfr __at (SIO0_BASE + 2) SIOA_C;
-__sfr __at (SIO0_BASE + 3) SIOB_C;
+#define SIOA_D	0x30
+#define SIOB_D	0x31
+#define SIOA_C  0x32
+#define SIOB_C	0x33
 
-__sfr __at 0x40 CTC_CH0;
-__sfr __at 0x41 CTC_CH1;
-__sfr __at 0x42 CTC_CH2;
-__sfr __at 0x43 CTC_CH3;
+#define CTC_CH(n)	(0x40 + (n))
 
-extern void sio2_otir(uint8_t port) __z88dk_fastcall;
+extern void sio2_otir(uint8_t port);
 
 extern uint8_t sd_busy;
 extern uint8_t sd_count;

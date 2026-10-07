@@ -1,8 +1,8 @@
 /*
- *	This file implements the serial ports for the platform. Fuzix implements
- *	a reasonable subset of the System 5 termios. Certain things that are
- *	rarely relevant like XCASE, delay fills and parity are left to the
- *	driver if desired.
+ *	This file implements the serial ports for the platform. Fuzix
+ *	implements a reasonable subset of the System 5 termios. Certain
+ *	things that are rarely relevant like XCASE, delay fills and parity
+ *	are left to the driver if desired.
  *
  */
 
@@ -12,14 +12,8 @@
 #include <tty.h>
 #include <devtty.h>
 
-static uint8_t uart_base[5] = {
-	0,
-	0x10,
-	0x18,
-	/* FDC card when we add support */
-	0x48,
-	0x50
-};
+/* This depends upon the board generation but is provided by the firmware */
+uint8_t uart_base[5];
 
 #define UART_TX		0
 #define UART_RX		0
@@ -99,7 +93,7 @@ void kputchar(uint_fast8_t c)
  *
  *	A video display that never blocks will just return TTY_READY_NOW
  */
-uint_fast8_t tty_writeready(uint_fast8_t minor)
+ttyready_t tty_writeready(uint_fast8_t minor)
 {
 	uint8_t r = uart_in(minor, UART_LSR);
 	return r & 0x20 ? TTY_READY_NOW : TTY_READY_SOON;
@@ -215,7 +209,7 @@ void tty_data_consumed(uint_fast8_t minor)
  *	serial ports for activity.
  */
 void tty_poll(void)
-{	
+{
 	uint8_t msr;
 	uint_fast8_t minor;
 

@@ -28,7 +28,7 @@ int ttyname_r(int fd, char *name, size_t len)
 {
    struct stat st;
    DIR  *fp;
-   struct dirent *d;
+   register struct dirent *d;
    int noerr = errno;
    char buf[36];	/* 30 + /dev/ + \0 */
 

@@ -5,21 +5,20 @@
 ;	contexts and also map user space about
 ;
 
-	.globl	fd_nmi_handler
-	.globl	nmi_handler
+	.export	fd_nmi_handler
 
-	.globl _fd_reset
-	.globl _fd_operation
-	.globl _fd_motor_on
-	.globl _fd_motor_off
+	.export _fd_reset
+	.export _fd_operation
+	.export _fd_motor_on
+	.export _fd_motor_off
 
-	.globl _fd_tab
+	.export _fd_tab
 ;
 ;	MMIO for the floppy controller
 ;
 ;	For a Dragon cartridge
 ;
-FDCCTRL	EQU	0xFF48
+FDCCTRL	equ	0xFF48
 ;
 ;	0-1: drive select
 ;	2: motor on
@@ -27,10 +26,10 @@ FDCCTRL	EQU	0xFF48
 ;	4: precomp
 ;	5: nmi mode
 ;
-FDCREG	EQU	0xFF40
-FDCTRK	EQU	0xFF41
-FDCSEC	EQU	0xFF42
-FDCDATA	EQU	0xFF43
+FDCREG	equ	0xFF40
+FDCTRK	equ	0xFF41
+FDCSEC	equ	0xFF42
+FDCDATA	equ	0xFF43
 
 ;
 ;	Structures we use
@@ -38,18 +37,18 @@ FDCDATA	EQU	0xFF43
 ;
 ;	Per disk structure to hold device state
 ;
-TRKCOPY	EQU	0
+TRKCOPY	equ	0
 
 ;
 ;	Command issue
 ;
-CMD	EQU	0
-TRACK	EQU	1
-SECTOR	EQU	2
-DIRECT	EQU	3		; 0 = read 2 = write 1 = status
-DATA	EQU	4
+CMD	equ	0
+TRACK	equ	1
+SECTOR	equ	2
+DIRECT	equ	3		; 0 = read 2 = write 1 = status
+DATA	equ	4
 
-	.area	.common
+	.common
 ;
 ;	NMI handling for the floppy drive
 ;
@@ -79,17 +78,17 @@ waitdisk:
 waitdisk_l:
 	leax	-1,x
 	beq	forceint	; try forcing an interrupt
-	lda	<FDCREG
+	lda	@FDCREG
 	bita	#0x01
 	bne	waitdisk_l
 	rts			; done, idle EQ true
 forceint:			; no response, bigger stick
 	lda	#0xD0		; reset
-	sta	<FDCREG
+	sta	@FDCREG
 	nop
 	exg	a,a
 	exg	a,a
-	lda	<FDCREG		; read to reset int status
+	lda	@FDCREG		; read to reset int status
 	; ?? what to do next ??
 	lda	#0xff		; force NEQ
 	rts
@@ -99,23 +98,23 @@ forceint:			; no response, bigger stick
 ;
 fdsetup:
 	lda	TRKCOPY,y
-	sta	<FDCTRK		; reset track register
+	sta	@FDCTRK		; reset track register
 	pshs	x,y
 	cmpa	TRACK,x		; target track
 	beq	fdiosetup
 
 	lda	TRACK,x
-	sta	<FDCDATA	; target
+	sta	@FDCDATA	; target
 	;
 	;	So we can verify
 	;
 	lda	SECTOR,x
-	sta	<FDCSEC
+	sta	@FDCSEC
 	;
 	;	Need to seek the disk
 	;
 	lda	#0x14
-	sta	<FDCREG		; seek
+	sta	@FDCREG		; seek
 	nop
 	exg	a,a
 	exg	a,a
@@ -127,7 +126,7 @@ fdsetup:
 	; seek failed, not good
 setuptimeout:			; NE = bad
 	puls	x,y
-	ldb	<FDCTRK		; we have no idea where we are
+	ldb	@FDCTRK		; we have no idea where we are
 	stb	TRKCOPY,y	; so remember what the drive reported
 	rts
 ;
@@ -144,10 +143,10 @@ fdiosetup:
 	orb	#0x10
 noprecomp:
 	orb	#0x20		; NMI/halt on
-	stb	<FDCCTRL		; precomp configured
+	stb	@FDCCTRL		; precomp configured
 	lda	SECTOR,x
-	sta	<FDCSEC
-	lda	<FDCREG		; clear any pending int
+	sta	@FDCSEC
+	lda	@FDCREG		; clear any pending int
 	lda	CMD,x		; command to issue
 	ldy	#fdxferdone
 	sty	nmivector	; so our NMI handler will clean up
@@ -158,7 +157,7 @@ noprecomp:
 	beq	fdio_in
 	cmpb	#0x02
 	beq	fdio_out	; write
-	sta	<FDCREG		; issue the command
+	sta	@FDCREG		; issue the command
 	nop			; give the FDC a moment to think
 	exg	a,a
 	exg	a,a
@@ -167,20 +166,20 @@ noprecomp:
 ;
 fdxferdone:
 	ldb	fdcctrl
-	stb	<FDCCTRL
-	lda	<FDCREG
+	stb	@FDCCTRL
+	lda	@FDCREG
 	anda	#0x7C		; Returns with A holding the status bits
 	rts
 ;
 ;	Relies on B being 2...
 ;
 fdio_out:
-	sta	<FDCREG		; issue the command
+	sta	@FDCREG		; issue the command
 	ldx	DATA,x		; get the data pointer
 	lda	,x+		; otherwise we don't have time
 				; to fetch it
 wait_drq:
-	ldb	<0xFF23		; check for DRQ the fastest way we can
+	ldb	@0xFF23		; check for DRQ the fastest way we can
 	bmi	drq_go		; go go go...
 	leay	-1,y
 	bne	wait_drq
@@ -199,8 +198,8 @@ wait_drq:
 drq_loop:
 	sync
 drq_go:
-	sta	<FDCDATA
-	ldb	<0xFF22		; clear the FIR (PIA1DB)
+	sta	@FDCDATA
+	ldb	@0xFF22		; clear the FIR (PIA1DB)
 	lda	,x+
 	bra	drq_loop	; exit is via NMI
 
@@ -208,10 +207,10 @@ drq_go:
 ;	Read from the disk
 ;
 fdio_in:
-	sta	<FDCREG		; issue the command
+	sta	@FDCREG		; issue the command
 	ldx	DATA,x
 fdio_dwait:
-	ldb	<0xFF23		; wait on the PIA not fd regs.. quicker
+	ldb	@0xFF23		; wait on the PIA not fd regs.. quicker
 	bmi	fdio_go
 ;
 ;	Not ready, go round again
@@ -222,18 +221,18 @@ fdio_dwait:
 ;	FIXME: do error recovery at some point (reset/poll)
 ;
 	ldb	fdcctrl
-	stb	<FDCCTRL
+	stb	@FDCCTRL
 	lda	#0xff
 	rts
 
 fdio_go:
-	lda	<FDCDATA	; get the data first
-	ldb	<0xFF22		; clear FIR
+	lda	@FDCDATA	; get the data first
+	ldb	@0xFF22		; clear FIR
 	sta	,x+		; store the received byte
 fdio_loop:
 	sync			; stall for FIR
-	ldb	<0xFF22		; clear the FIR (PIA1DB)
-	lda	<FDCDATA
+	ldb	@0xFF22		; clear the FIR (PIA1DB)
+	lda	@FDCDATA
 	sta	,x+
 	bra	fdio_loop	; NMI terminates this
 
@@ -279,6 +278,7 @@ piaload:
 	lda	,y+
 	sta	,x
 	puls	x,y,pc
+
 ;
 ;	C glue interface.
 ;
@@ -288,21 +288,21 @@ piaload:
 ;
 
 ;
+;	uint8_t fd_reset(uint8_t *drive)
+;
 ;	Reset to track 0, wait for the command then idle
 ;
-;	fd_reset(uint16_t *drive)
-;
 _fd_reset:
-	pshs	x,y,dp
+	pshs	dp
 	lda	#0xFF
 	tfr	a,dp
 	ldb	fdcctrl
-	stb	<FDCCTRL
+	stb	@FDCCTRL
 	lda	#0x01
-	sta	<FDCSEC
+	sta	@FDCSEC
 	lda	#0x00		; seek
-	sta	<FDCTRK
-	sta	<FDCREG
+	sta	@FDCTRK
+	sta	@FDCREG
 	nop
 	exg	a,a
 	exg	a,a
@@ -314,20 +314,23 @@ _fd_reset:
 	anda	#0x10		; Error bit from the reset
 rstff:
 	tfr 	a,b
-	puls	x,y,dp,pc
+	clra
+	puls	dp,pc
+
 ;
-;	fd_operation(uint16_t *cmd, uint16_t *drive)
+;	uint8_t fd_operation(uint16_t *cmd, uint16_t *drive)
 ;
 ;	The caller must ensure the drive has been selected and the motor is
 ;	running.
 ;
 _fd_operation:
-	pshs y,cc,dp
+	pshs	cc,dp
+	tfr	d,x		; Command
 	lda	#0xFF
 	tfr	a,dp
 	orcc	#0x40		; Make sure FIR is off
 	jsr	piasave
-	ldy	6,s		; Drive struct
+	ldy	4,s		; Drive struct
 	tst	,x+		; User or kernel ?
 	beq	fd_op_k
 	jsr	map_proc_always
@@ -336,17 +339,18 @@ fd_op_k:
 	tfr	a,b		; Status code or 0xFF for total failure
 	jsr	map_kernel
 	bsr	piaload
-	puls	y,cc,dp,pc	; Restore IRQ state etc
+	clra
+	puls	cc,dp,pc	; Restore IRQ state etc
+
 ;
-;	C interface fd_motor_on(uint8 drivesel)
+;	uint8_t fd_motor_on(uint8_t drive)
 ;
 ;	Selects this drive and turns on the motors
 ;
 _fd_motor_on:
-	pshs	y,dp
+	pshs	dp
 	lda	#0xFF
 	tfr	a,dp
-
 	;
 	;	Select drive B, turn on motor if needed
 	;
@@ -358,14 +362,14 @@ _fd_motor_on:
 ;	All is actually good
 ;
 motor_was_on:
-	ldb	#0
-	puls	y,dp,pc
+	ldd	#0
+	puls	dp,pc
 ;
 ;	Select our drive
 ;
 notsel:
 	orb	#0x04		; motor on, single density + our drive id
-	stb	<FDCCTRL
+	stb	@FDCCTRL
 	stb	fdcctrl
 	bita	#0x4
 	bne	motor_was_on
@@ -373,35 +377,37 @@ notsel:
 	; FIXME: longer motor spin up delay goes here
 	jsr	waitdisk
 	tfr	a,b		; return in the right place
-	puls	y,dp,pc
+	puls	dp,pc
 
 ;
-;	C interface fd_motor_off(void)
+;	uint8_t fd_motor_off(void)
 ;
 ;	Turns off the drive motors, deselects all drives
 ;
 _fd_motor_off:
-	pshs	y,dp
+	pshs	dp
 	lda	#0xFF
 	tfr	a,dp
-
 ;
 ;	Deselect drives and turn off motor
 ;
 	ldb	motor_running
 	beq	no_work_motor
 	; Should we seek to track 0 ?
-	ldb	<FDCCTRL
+	ldb	@FDCCTRL
 	andb	#0xF0
-	stb	<FDCCTRL
+	stb	@FDCCTRL
 	clr	motor_running
 no_work_motor:
-	puls y,dp,pc
+	clra
+	puls	dp,pc
 
 ;
 ;	We need these mapped during interrupts so must live in common
 ;
-	.area .commondata
+
+	.commondata
+
 nmivector:
 	.word	nmi_handler
 curdrive:
@@ -409,7 +415,9 @@ curdrive:
 ;
 ;	BSS but used with user mapping so keep common
 ;
-	.area .commondata
+
+	.commondata
+
 motor_running:
 	.byte	0
 fdcctrl:

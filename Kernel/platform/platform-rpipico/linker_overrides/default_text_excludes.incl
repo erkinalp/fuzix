@@ -1,0 +1,437 @@
+/*
+ * WHAT MAY EXECUTE FROM FLASH.
+ *
+ * NOTE, 2026-08-20: the third rule below - "reached while flash is
+ * busy" - no longer has anything to apply to.  The on-board flash
+ * filesystem is gone (config.h), so nothing in this kernel erases or
+ * programs the flash at run time and there is no window in which
+ * fetching from XIP is unsafe.  The rule is kept because it is the one
+ * that would bite if a flash writer ever came back.
+ *
+ * The kernel used to be built PICO_COPY_TO_RAM, which put all 90,676
+ * bytes of .text into RAM at boot.  RAM is the scarce thing here - it
+ * is shared with the 308K process pool, and adding the text primitives
+ * needed 4K taken off that pool - while flash sits at 22% used.
+ *
+ * The SDK's own mechanism does the work: its .data section (RAM) ends
+ * with "*(.text*) ... *(.rodata*)" and the comment "stuff we exclude in
+ * ..._excludes files because we want it in RAM".  So this file names
+ * what goes to FLASH and everything it does not name falls through to
+ * RAM.  The first matching output section wins, and flash comes first
+ * in the script, so a name listed here is in flash and a name left out
+ * is in RAM.
+ *
+ * -ffunction-sections is on, so this is per FUNCTION, by name, with no
+ * source changes - which matters because 35 of the kernel's sources are
+ * shared Fuzix core files that every other port compiles, and cannot
+ * carry Pico SDK macros.
+ *
+ * ---------------------------------------------------------------
+ * THE RULE FOR WHAT BELONGS HERE
+ *
+ * A function may run from flash if a cache miss on it cannot hurt.  It
+ * must NOT be here if it is:
+ *
+ *   - on the scanout path.  core1 builds every scanline against a
+ *     deadline; a miss there is a visible glitch.
+ *   - an interrupt handler, or called from one.
+ *   - reached while flash is busy.  Flash and PSRAM share the QMI, so
+ *     kernel code fetched from XIP contends with the framebuffer layer
+ *     and bcrun's heap.
+ *   - part of the flash driver itself (rawflash, dhara, devflash): code
+ *     that erases or programs flash cannot be executing from it.
+ *
+ * Good candidates are cold: boot and init, mode switching, the console
+ * escape parser, anything that runs once or at human speed.
+ *
+ * And note that RAM is not automatically the fast choice here.  core1
+ * DMAs scanlines out of disp_fb continuously, so RAM bandwidth is
+ * contended, while the XIP cache is a separate path - a cached flash
+ * fetch can beat a contended RAM one.  MMBasic's experience is the
+ * same: pinning to RAM guarantees a floor, it does not guarantee a
+ * win.  So the way to decide is to move something and measure it, not
+ * to reason about it.
+ *
+ * ---------------------------------------------------------------
+ * Whole objects can be moved with file patterns, which is how the bulk
+ * of this is done; individual functions can be named where an object
+ * is mixed hot and cold.
+ *
+ * See PC3-FLASH-PLAN.md for the triage and the measurements.
+ */
+
+/* ---- the filesystem: SD-backed, nowhere near the scanout ---- */
+*filesys.c.o(.text*)
+*inode.c.o(.text*)
+*devio.c.o(.text*)
+*blk512.c.o(.text*)
+*mbr.c.o(.text*)
+
+/* ---- system calls: entered from user code at human speed ---- */
+*syscall_fs.c.o(.text*)
+*syscall_fs2.c.o(.text*)
+*syscall_fs3.c.o(.text*)
+*syscall_other.c.o(.text*)
+*syscall_proc.c.o(.text*)
+*syscall_exec.c.o(.text*)
+*syscall_execelf32.c.o(.text*)
+*syscall_net.c.o(.text*)
+*network.c.o(.text*)
+*net_native.c.o(.text*)
+*elf.c.o(.text*)
+
+/* ---- boot and setup: once, before anything is timed ---- */
+*start.c.o(.text*)
+*devices.c.o(.text*)
+*sound.c.o(.text*)
+*sound_hw.c.o(.text*)
+*board.c.o(.text*)
+*ds3231.c.o(.text*)
+*devgpio.c.o(.text*)
+/* /dev/i2c.  A transaction is ~300us of bus at 400kHz, so where the
+   dispatch runs is not measurable, and leaving these in RAM overflowed
+   it by 248 bytes the moment they were added. */
+*i2cuser.c.o(.text*)
+*devi2c.c.o(.text*)
+/* SPI0 for userland.  Same argument and a wider margin: a transfer here
+   is a display row or a whole frame - 153,600 bytes at 50MHz is 25ms -
+   so where the dispatch runs is far below measurable, and the SDK's
+   spi.c it calls is already in flash below.  Leaving it in RAM
+   overflowed by 1200 bytes the moment the file was added, which is
+   exactly what this file's own note predicts for anything new. */
+*spiuser.c.o(.text*)
+/* The I/O header's ownership table.  Claims happen at SETPIN speed and
+   the release sweep runs on the exit path next to freeing memory, so
+   nothing here is timed; the table itself is 192 bytes of .bss and stays
+   in RAM whatever this says. */
+*pinlock.c.o(.text*)
+*hardware_pwm/pwm.c.o(.text*)
+
+/* ---- the console's escape machinery and line editing, which run at
+       terminal speed.  charout is per character so it is named back
+       into RAM below if it ever measures badly. ---- */
+*lineedit.c.o(.text*)
+*kbd_decode.c.o(.text*)
+
+/* ---- the kernel's printf: panics and boot messages ---- */
+*printf.c.o(.text*)
+*hexdump.c.o(.text*)
+
+/* ---- the console: the escape parser, the tile/glyph plotting and
+       charout.  charout is per CHARACTER, which is the one thing here
+       that could have shown up, and it does not: the font and the code
+       are both smaller than the 16K XIP cache, so a screen of text
+       reads them from flash once.  Measured below. ---- */
+*console.c.o(.text*)
+
+/* ---- the shared maths library.
+ *
+ * This is here for USERLAND, not for the kernel, which does no
+ * floating point of its own: libm_table.c exports it so that every
+ * program can call one copy instead of linking its own 13K (see that
+ * file).  In RAM it overflowed the region by 14,432 bytes; in flash it
+ * costs nothing that matters, which is the entire point of sharing it.
+ *
+ * Nothing on the scanout path or in an interrupt calls these, and a
+ * BASIC program's sin() is not on a deadline. ---- */
+*libm.a:*(.text*)
+*double_math.c.o(.text*)
+*libm_table.c.o(.text*)
+
+/* ---- the font table: two accessors, each called once per string
+       rather than once per pixel.  The fonts themselves are `const' and
+       so were never in RAM to begin with - that is the whole reason all
+       nine of MMBasic's could be brought across. ---- */
+*fonts.c.o(.text*)
+
+/* ---- THE SCANOUT PATH IN FLASH: TRIED, AND IT KILLS THE DISPLAY ----
+ *
+ * disp_dma_irq and disp_fill_loop were moved here, on the reasoning
+ * that MMBasic and MicroPython both run their interpreter from flash
+ * through the XIP cache - so core0's instruction fetches never touch
+ * SRAM there - while Fuzix executes user processes from the pool IN
+ * main SRAM and starves core1.  Idle, it was clean and stable.  Under
+ * load the picture vanished ENTIRELY the instant the program started.
+ *
+ * The reason is four paragraphs up this file: flash and PSRAM share the
+ * QMI.  The load was mp3bench, which keeps 32K of decoder state in the
+ * PSRAM arena and works it continuously, so core0's PSRAM traffic and
+ * core1's instruction fetches were competing for one controller and
+ * core1 simply stopped being fetched.
+ *
+ * So the rule at the top of this file stands, but for a sharper reason
+ * than it gives: not "a cache miss might hurt" but "the scanout path
+ * must not depend on the QMI, because anything using PSRAM will take
+ * it away". ---- */
+
+/* main.c is NOT here.  It raises clk_sys, and the code doing that
+ * cannot be fetched from the flash whose clock it is changing - even
+ * with pc3_clock_init doing the QMI work from RAM, the caller around
+ * it would be running from flash across the switch. */
+
+/* ---- SDK peripherals: NOT MOVED, and clocks.c is why. ----
+ *
+ * A batch of these was moved and the board hung stone dead - no boot,
+ * no console, not even a panic.  clocks.c is the one that cannot go:
+ * this board overclocks to 375 MHz, and set_sys_clock_khz reconfigures
+ * the system clock, which changes the QMI's flash timing.  Code doing
+ * that cannot be executing from the flash whose clock it is changing.
+ * The SDK marks its own such functions __not_in_flash_func for exactly
+ * this reason.
+ *
+ * flash.c is out for the same family of reasons - it is the flash
+ * driver and cannot run from what it erases.
+ *
+ * The rest (i2c, pio, gpio, adc, uart, spi) are probably fine and
+ * together are only about 3K.  They were moved as a speculative batch
+ * with clocks.c, so they are untested, and they are not worth the
+ * recovery cycle until something needs the space.
+ */
+
+/* ---- the SD card: polled SPI, not on the QMI at all ---- */
+*blkdev.c.o(.text*)
+*devsdspi.c.o(.text*)
+*devsd.c.o(.text*)
+*devsd_discard.c.o(.text*)
+
+/* ---- /dev/sys ioctls: every one runs at human speed ---- */
+*misc.c.o(.text*)
+
+/* ---- the swapper: core0 only, nowhere near the scanout.  Its work
+ * is memcpy between the pool and PSRAM, which goes through the QMI
+ * regardless of where the code lives; the 1.7K of code itself fits
+ * the XIP cache.  Moved for the same FS32 RAM squeeze as the batch
+ * below. ---- */
+*swapper.c.o(.text*)
+
+/* ---- TinyUSB's hub and HID class drivers, moved when the 0.20
+ * upgrade outgrew 0.18's RAM fit by 1048 bytes.
+ *
+ * Both run only from tuh_task - thread context, on the dedicated usb
+ * stack - never from the interrupt (the ISR's whole call graph is
+ * hcd_rp2040.c / rp2040_usb.c plus usbh.c's hcd_event_handler, none of
+ * which is listed here), and never while flash is busy (the flash
+ * driver's di() window masks the tick that would pend the pump).
+ * Attach-time enumeration and 50/s report dispatch are human-speed; a
+ * cache miss cannot hurt.  Do NOT add the rest of tinyusb wholesale:
+ * with PICO_RP2040_USB_FAST_IRQ at its default 0 the ISR itself is
+ * plain .text and a blanket pattern would drag it to flash. ---- */
+*hub.c.o(.text*)
+*hid_host.c.o(.text*)
+
+/* ---- the PSRAM arena, for the same reason as the swapper above it,
+ * and moved for the same kind of squeeze: adding SPI0 left the link 264
+ * bytes over even with spiuser.c itself in flash.
+ *
+ * Allocation and release run at ioctl speed and on the exit path.  The
+ * one thing here reached often is arena_valaddr, on syscalls that
+ * validate a user pointer, and a syscall already costs 1.5us so a miss
+ * in it is not measurable.  Its work touches PSRAM, which contends with
+ * XIP over the QMI wherever the code lives - swapper.c says exactly
+ * that and made exactly this trade. ---- */
+*arena.c.o(.text*)
+
+/* ---- the SDK peripheral batch, moved when FS32 needed the space.
+ *
+ * This is the "not worth the recovery cycle until something needs the
+ * space" batch from the note above, minus the members the rules
+ * exclude: clocks.c and flash.c stay for the reasons given there,
+ * uart.c stays because rawuart's receive interrupt calls into it, and
+ * psram.c stays because it configures the QMI it would be fetched
+ * through.  What moves is configuration-speed code: i2c (DS3231 and
+ * the user i2c ioctls), pio and gpio setup, adc conversion setup, and
+ * the spi block driver under the SD card (whose C callers already run
+ * from flash).  ~6K.  FS32's 256-byte in-core inodes are what needed
+ * it: ITABSIZE x 192 extra bytes overflowed RAM by 10K. ---- */
+*hardware_i2c/i2c.c.o(.text*)
+*hardware_pio/pio.c.o(.text*)
+/* gpio.c is here MINUS gpio_default_irq_handler: the counting inputs
+ * (countpin.c) take an edge interrupt per pulse through that dispatcher
+ * at priority 0, so it must run from RAM.  A pre-link objcopy renames
+ * its section to .time_critical.* (relocate_gpio_irq_to_ram.cmake,
+ * ported from PicoMite), which this .text* glob then no longer matches;
+ * the SDK's RAM .data section collects .time_critical* instead.  ~100
+ * bytes of RAM against ~3K if the whole object moved back. */
+*hardware_gpio/gpio.c.o(.text*)
+*hardware_adc/adc.c.o(.text*)
+*hardware_spi/spi.c.o(.text*)
+
+
+/* ---- display.c, the cold functions only ----
+ *
+ * display.c as a whole stays in RAM: core1's scanout and the drawing
+ * primitives are on a deadline and a miss there is a visible glitch.
+ *
+ * FRAMEBUFFER MERGE IS NOT HERE, and that was a mistake worth
+ * recording.  It looked like the obvious candidate - it runs once when
+ * a program asks for it - but BOTH ITS SOURCES ARE IN PSRAM, and PSRAM
+ * and flash are reached through the same QMI and share the XIP cache.
+ * Running the loop from flash would put its instruction fetches in
+ * direct contention with the 76,800 bytes of data it is streaming, and
+ * each would evict the other.  It belongs in RAM precisely BECAUSE its
+ * data is external.
+ *
+ * These are the ones that are genuinely cold and touch no PSRAM: the
+ * palette, which changes when a program says MAP SET, and boot-time
+ * initialisation.  They pay for the merge's RAM.
+ *
+ * THE PALETTE IS ON CORE1'S PATH AND THESE ARE STILL SAFE, because
+ * what core1 reads is the TABLE, not these functions.  gfx_lut is a
+ * static array - data, not text - and the expander indexes it every
+ * two pixels (display.c:695).  gfx_lut_rebuild, which fills it, is
+ * deliberately NOT listed either.  What is listed is only the thin
+ * ioctl-side wrappers, and every caller of those is in misc.c or
+ * console.c: core0, in syscall or boot context.  Moving a function
+ * whose name contains "pal" to flash is the sort of thing that wants
+ * checking rather than assuming, so it was checked. */
+*display_hstx.c.o(.text.display_init)
+*display.c.o(.text.display_gfx_pal)
+*display.c.o(.text.display_gfx_remap)
+*display.c.o(.text.display_gfx_remap_apply)
+*display.c.o(.text.display_gfx_remap_reset)
+
+/* The two-axis SPRITE SCROLL engine (GFXIOC_SCROLL2).  Cold: once per
+ * game frame, from syscall context on core0, and its loops are small
+ * enough that XIP caches them on the first row.  The row buffer
+ * (sc2_row) is bss and stays in RAM, as data must. */
+*display.c.o(.text.display_gfx_scroll2)
+*display.c.o(.text.sc2_get)
+*display.c.o(.text.sc2_set)
+*display.c.o(.text.sc2_revrows)
+
+/* Mode switching is as cold as kernel code gets - once per program at
+ * most - and runs from syscall context on core0 while core1's scanout
+ * loop stays in RAM.  Moved to flash to make room for sc2_row (the
+ * SCROLL2 row buffer), which is data and has no choice. */
+*display.c.o(.text.display_gfx_mode)
+/* The hardware half of the same switch (display_hstx.c): the raster
+ * choice, the scanout stop/restart and the handover.  Same context,
+ * same coldness.  disp_hw_palette_changed is deliberately NOT here,
+ * for gfx_lut_rebuild's reason above - it is that function's door. */
+*display_hstx.c.o(.text.disp_hw_mode_prepare)
+*display_hstx.c.o(.text.disp_hw_mode_tables)
+*display_hstx.c.o(.text.disp_hw_mode_handover)
+*display_hstx.c.o(.text.disp_hw_mode_finish)
+
+/* Process exit is once per process, syscall context, and 312 bytes -
+ * moved to pay for the pipe stream positions in cinode (4 bytes per
+ * itab slot), which are data and cost RAM wherever they live. */
+*process.c.o(.text.doexit)
+
+/* The MMBasic synth's PROCESS-context half: the ioctl entry and its
+ * helpers run at PLAY-statement speed, not sample speed.  The IRQ
+ * half (mmsnd_fill, mms_sample, mms_blep_q, mms_quiet, mms_release,
+ * mms_rand) is NOT here and stays in RAM. */
+*sound.c.o(.text.sound_mm_cmd)
+*sound.c.o(.text.sound_mm_stop)
+*sound.c.o(.text.mms_make_noise)
+*sound.c.o(.text.mms_reap)
+
+/* Once per boot and once per open respectively. */
+*sound_hw.c.o(.text.sound_init)
+*sound.c.o(.text.sound_pcm_open)
+
+/* The whole pico ioctl dispatcher: 3.9K of if-chain, syscall context
+ * only, and every hot path it dispatches TO makes its own residency
+ * decision.  A flash-write ioctl returns through here only after the
+ * primitive has restored XIP, so the return address being in flash is
+ * fine - the doexit argument over again. */
+*misc.c.o(.text.plt_dev_ioctl)
+
+/* The swap machinery: syscall context, and its cost is the 4K-block
+ * memcpys (libc, RAM-resident), not the loops around them.  Swap
+ * moves images to PSRAM, never to the flash disk, so none of this
+ * runs during a flash write. */
+*swapper.c.o(.text.swapin)
+*swapper.c.o(.text.swapout)
+*swapper.c.o(.text.pagemap_alloc)
+*swapper.c.o(.text.pagemap_realloc)
+*swapper.c.o(.text.pagemap_free)
+*swapper.c.o(.text.largest_neighbour)
+
+/* More once-per-something sound entries. */
+*sound.c.o(.text.sound_envelope)
+*sound.c.o(.text.sound_pcm_close)
+*sound.c.o(.text.sound_pcm_stat)
+
+/* ---- CYW43 Wi-Fi and lwIP (PC3_NET builds only).
+ *
+ * These patterns match nothing unless the network stack is linked, so
+ * they are unconditional here.  Without them the link fails: the SDK's
+ * RAM .data section claims every .text and .rodata not named in these
+ * files, and the radio's firmware blob alone is a quarter of a megabyte
+ * (measured: "region RAM overflowed by 300312 bytes").
+ *
+ * Against this file's own rule - a cache miss here cannot hurt.  None
+ * of it is on the scanout path, and the packet rate over a gSPI link
+ * is four orders of magnitude below the pixel rate.  The one thing to
+ * watch when the radio is actually brought up is the poll arch's GPIO
+ * interrupt handler, which is small and only sets a work-pending flag;
+ * if its latency ever measures, name it back into RAM here. ---- */
+*lwip*.o(.text*)
+*cyw43*.o(.text*)
+*cybt_*.o(.text*)
+*async_context*.o(.text*)
+*net_cyw43.c.o(.text*)
+
+/* ---- Fuzix sockets over lwIP.  Entered from a syscall at whatever
+ * rate a program calls recvfrom, and every packet it touches has
+ * already crossed a serial link at a few megabits. ---- */
+*net_lwip.c.o(.text*)
+
+/* ---- SDK code that runs once, or not at all.
+ *
+ * mutex/claim are the SDK's own bookkeeping, called at init and by the
+ * cyw43 driver at human speed.  runtime_init walks the init list before
+ * main() - at that point the flash is still on boot2's timing, which is
+ * why executing from it there is safe.  multicore launches core1 once.
+ * The two stdio files are linked but unreachable: this kernel has its
+ * own printf and never calls the SDK's.
+ *
+ * NOT clocks.c, and NOT main.c - see the note above about the clock
+ * switch.  This is the boot code AROUND that, not the switch itself.
+ * ---- */
+*pico_sync/mutex.c.o(.text*)
+*hardware_claim/claim.c.o(.text*)
+*pico_runtime_init/runtime_init.c.o(.text*)
+*pico_multicore/multicore.c.o(.text*)
+*pico_stdio/stdio.c.o(.text*)
+*pico_stdio_uart/stdio_uart.c.o(.text*)
+
+/* ---- mbedtls.  A quarter of a megabyte of cipher and bignum code
+ * that would otherwise land in RAM and fail the link outright.  None
+ * of it is on the scanout path or in an interrupt: it runs in the
+ * pump, driven by arriving packets, at handshake time. ---- */
+*/mbedtls/*(.text*)
+*pico_mbedtls*(.text*)
+
+/* Entropy for TLS.  Called at handshake time, from the pump. */
+*pico_rand*(.text*)
+
+/* usbh.c and the SDK double maths were briefly moved here to pay for a
+ * dedicated 16K pump stack.  That stack is gone - the kernel stack
+ * itself grew instead (config.h, UDATA_BLKS), which costs process pool
+ * rather than SRAM - so both are back in RAM where they perform best.
+ * They remain on the shelf in PC3-FLASH-PLAN.md, measured, if SRAM is
+ * ever needed again. */
+
+/* ---- countpin.c, the cold side only ----
+ *
+ * The counting inputs (SETPIN FIN/CIN/PER).  The two callbacks -
+ * cnt_gpio_cb, taking an edge per pulse at priority 0, and cnt_tick_cb,
+ * the 1ms gate - are the hottest interrupt code in the kernel and stay
+ * in RAM by NOT being named here.  What is listed is the syscall-side
+ * ioctl (with cnt_config usually inlined into it) and the teardown
+ * paths, which run at SETPIN speed and process death. */
+*countpin.c.o(.text.countpin_ioctl)
+*countpin.c.o(.text.cnt_config)
+*countpin.c.o(.text.countpin_reset)
+*countpin.c.o(.text.cnt_timer_check)
+
+/* ---- pioout.c, whole object ----
+ *
+ * The fixed PIO output programs.  Everything here is cold - boot-time
+ * loading and the death-sweep - because the HOT path is the PIO state
+ * machine itself, which fetches nothing from any bus we share: the
+ * whole point of the design (PLAN-pioout.md). */
+*pioout.c.o(.text*)

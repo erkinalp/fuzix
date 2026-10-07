@@ -5,7 +5,6 @@
 #include <blkdev.h>
 #include "config.h"
 #include <z180.h>
-#include <ds1302.h>
 
 extern int strcmp(void *, void *);
 
@@ -22,19 +21,14 @@ void init_hardware_c(void)
 
 void pagemap_init(void)
 {
-    int i;
+	int i;
 
-    /* Scrumpel has RAM in the low 512K of physical memory. 
-     * First 64K is used by the kernel. 
+    /* Scrumpel has RAM in the low 512K of physical memory.
+     * First 64K is used by the kernel.
      * Each process gets the full 64K for now.
      * Page size is 4KB. */
-    for(i = 0x10; i < (512 >> 2); i += 0x10)
-        pagemap_add(i);
-#if 0        
-    ds1302_init();
-    if (ds1302_present)
-        kputs("DS1302 detected at 0xC0.\n");
-#endif        
+     for(i = 0x10; i < (512 >> 2); i += 0x10)
+     	pagemap_add(i);
 }
 
 void map_init(void)
@@ -46,7 +40,7 @@ void map_init(void)
 	   -- could be reused? */
 }
 
-uint8_t plt_param(char *p)
+uint_fast8_t plt_param(char *p)
 {
 	if (strcmp(p, "sd") == 0) {
 		has_sd = 1;

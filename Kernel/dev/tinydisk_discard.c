@@ -102,7 +102,7 @@ int td_register(uint_fast8_t unit, td_xfer rwop, td_ioc iop, uint_fast8_t parts)
 {
 	if (td_next == CONFIG_TD_NUM) {
 		if (!warned++)
-                    kprintf(": no more device slots.\n");
+                    kprintf("hd%c: no more device slots.\n", 'a' + CONFIG_TD_NUM);
 		return -2;
 	}
 	td_op[td_next] = rwop;

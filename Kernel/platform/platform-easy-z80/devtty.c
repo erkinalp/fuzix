@@ -80,13 +80,9 @@ static void sio2_setup(uint8_t minor, uint8_t flags)
 
 	r = 0xC4;
 
-	if (minor == 1) {
-		CTC_CH1 = 0x55;
-		CTC_CH1 = siobaud[baud];
-	} else {
-		CTC_CH2 = 0x55;
-		CTC_CH2 = siobaud[baud];
-	}
+	out(CTC_CH(minor), 0x55);
+	out(CTC_CH(minor), siobaud[baud]) ;
+
 	if (baud >= B600)	/* Use x16 clock and CTC divider */
 		r = 0x44;
 
@@ -103,13 +99,13 @@ static void sio2_setup(uint8_t minor, uint8_t flags)
 	sio_r[5] = 0x8A | ((t->c_cflag & CSIZE) << 1);
 }
 
-void tty_setup(uint8_t minor, uint8_t flags)
+void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 {
 	sio2_setup(minor, flags);
 	sio2_otir(sio2_cmap[minor]);
 }
 
-int tty_carrier(uint8_t minor)
+int tty_carrier(uint_fast8_t minor)
 {
         uint8_t c;
         uint8_t port;
@@ -155,7 +151,7 @@ void tty_drain_sio(void)
 	}
 }
 
-void tty_putc(uint8_t minor, unsigned char c)
+void tty_putc(uint_fast8_t minor, uint_fast8_t c)
 {
 	irqflags_t irqflags = di();
 
@@ -170,41 +166,35 @@ void tty_putc(uint8_t minor, unsigned char c)
 	irqrestore(irqflags);
 }
 
-void tty_sleeping(uint8_t minor)
+void tty_sleeping(uint_fast8_t minor)
 {
 	sleeping |= (1 << minor);
 }
 
-ttyready_t tty_writeready(uint8_t minor)
+ttyready_t tty_writeready(uint_fast8_t minor)
 {
 	if (sio_txl[minor - 1] < 128)
 		return TTY_READY_NOW;
 	return TTY_READY_SOON;
 }
 
-void tty_data_consumed(uint8_t minor)
+void tty_data_consumed(uint_fast8_t minor)
 {
 	used(minor);
 }
 
 /* kernel writes to system console -- never sleep! */
 
-void kputchar(char c)
+void kputchar(uint_fast8_t c)
 {
 	/* Can't use the normal paths as we must survive interrupts off */
 	irqflags_t irq = di();
 
-	while(!(SIOA_C & 0x04));
-	SIOA_D = c;
+	while(!(in(SIOA_C) & 0x04));
+	out(SIOA_D, c);
 
 	if (c == '\n')
 		kputchar('\r');
 
 	irqrestore(irq);
-}
-
-int rctty_open(uint8_t minor, uint16_t flag)
-{
-	/* Will need extending if we are support for plug in serial */
-	return tty_open(minor, flag);
 }

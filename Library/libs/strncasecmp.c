@@ -6,7 +6,7 @@
 #include <string.h>
 #include <ctype.h>
 
-int strncasecmp(const char *s, const char *d, size_t l)
+int strncasecmp(register const char *s, register const char *d, size_t l)
 {
    while(l>0)
    {

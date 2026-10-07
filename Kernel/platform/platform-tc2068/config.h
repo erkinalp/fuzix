@@ -33,7 +33,7 @@
 #define CONFIG_TD_NUM		2
 #define CONFIG_TD_IDE
 #define CONFIG_TINYIDE_8BIT
-#define CONFIG_TINYIDE_SDCCPIO
+#define CONFIG_TINYIDE_INDIRECT
 #define IDE_IS_8BIT(x)		1
 
 /* Custom banking */

@@ -102,10 +102,12 @@ int cart_find(int id)
 static struct cart_rom_id *cart_lookup(uint16_t hash)
 {
 	struct cart_rom_id *cart = carts;
-	do {
+	for (;; cart++) {
 		if (cart->hash == hash)
 			return cart;
-	} while(cart++->hash);
+		if (!cart->hash)
+			break;
+	}
 	return NULL;
 }
 
@@ -117,10 +119,12 @@ static inline int keycmp(uint16_t *k1, uint16_t *k2)
 static struct hdb_rom_id *hdb_lookup(uint16_t key)
 {
 	struct hdb_rom_id *id = hdb;
-	do {
+	for (;; id++) {
 		if (keycmp(&key, (uint16_t *)id->key))
 			return id;
-	} while(id++->id);
+		if (!id->id)
+			break;
+	}
 	return NULL;
 }
 

@@ -23,21 +23,12 @@
 
 #undef  DEBUG			/* UNdefine to delete debug code sequences */
 
-__sfr __at 0xC0 uarta;
-__sfr __at 0xC1 uartb;
+#define UARTA	0xC0
+#define UARTB	0xC1
 
-__sfr __at 0x90 irqmap;
+#define IRQMAP	0x90
 
-__sfr __at 0xB0 kmap0;
-__sfr __at 0xB1 kmap1;
-__sfr __at 0xB2 kmap2;
-__sfr __at 0xB3 kmap3;
-__sfr __at 0xB4 kmap4;
-__sfr __at 0xB5 kmap5;
-__sfr __at 0xB6 kmap6;
-__sfr __at 0xB7 kmap7;
-__sfr __at 0xB8 kmap8;
-__sfr __at 0xB9 kmap9;
+#define KMAP(n)	(0xB0 + (n))
 
 uint8_t vtattr_cap;
 struct vt_repeat keyrepeat;
@@ -83,11 +74,7 @@ int nc100_tty_open(uint_fast8_t minor, uint16_t flag)
 		nap();
 		/* Set the baud rate and parameters */
 		tty_setup(2, 0);
-#ifdef CONFIG_NC200
-		mod_irqen(0x0C, 0x00);    /* single Rx/Tx interrupt on NC200 */
-#else
 		mod_irqen(0x03, 0x00);    /* separate Rx/Tx interrupts on NC100 */
-#endif
 	}
 	return (0);
 }
@@ -99,11 +86,7 @@ int nc100_tty_close(uint_fast8_t minor)
 	if (ttydata[minor].users)
 		return 0;
 	if (minor == 2) {
-#ifdef CONFIG_NC200
-		mod_irqen(0x00, 0x0C);    /* single Rx/Tx interrupt on NC200 */
-#else
 		mod_irqen(0x00, 0x03);    /* separate Rx/Tx interrupts on NC100 */
-#endif
 		mod_control(0x10, 0);	/* turn off the line driver */
 	}
 	return (0);
@@ -125,18 +108,18 @@ ttyready_t tty_writeready(uint_fast8_t minor)
 	uint8_t c;
 	if (minor == 1)
 		return TTY_READY_NOW;
-	c = uartb;
+	c = in(UARTB);
 	return (c & 1) ? TTY_READY_NOW : TTY_READY_SOON;
 }
 
-void tty_putc(uint_fast8_t minor, uint_fast8_t c)
+void tty_putc(uint_fast8_t minor, uint_fast8_t ch)
 {
-	minor;
+	uint8_t c = ch;
 	if (minor == 1) {
 		vtoutput(&c, 1);
 		return;
 	}
-	uarta = c;
+	out(UARTA, c);
 }
 
 void tty_data_consumed(uint_fast8_t minor)
@@ -170,7 +153,7 @@ void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 	/* Now we need to think about the XPD 71051. Unfortunately the manual
 	   is in Japanese. Fortunately it seems to be an 8251 clone */
 	/* Reset it */
-	uartb = 0x40;
+	out(UARTB, 0x40);
 	nap();
 	/* Program it */
 	uart_ctrl = 0x03 | ((ttydata[2].termios.c_cflag & CSIZE) >> 2);
@@ -181,9 +164,9 @@ void tty_setup(uint_fast8_t minor, uint_fast8_t flags)
 	}
 	if (ttydata[2].termios.c_cflag & CSTOPB)
 		uart_ctrl |= 0xC0;
-	uartb = uart_ctrl;
+	out(UARTB, uart_ctrl);
 	nap();
-	uartb = 0x37;		/* RTS | RX enable | DTR | TX enable */
+	out(UARTB, 0x37);		/* RTS | RX enable | DTR | TX enable */
 	nap();
 }
 
@@ -211,9 +194,9 @@ void nc100_tty_init(void)
   mod_control(0x08, 0x00);
   nap();
   /* Force into a sane state: See 8251A documentation */
-  uartb = 0;
-  uartb = 0;
-  uartb = 0;
+  out(UARTB, 0);
+  out(UARTB, 0);
+  out(UARTB, 0);
   /* Now set it up */
   tty_setup(2, 0);
 }
@@ -257,33 +240,6 @@ static void keyproc(void)
 	}
 }
 
-#ifdef CONFIG_NC200
-uint8_t keyboard[10][8] = {
-	{0, 0, 0, KEY_ENTER, KEY_LEFT ,'4', 0, 0},
-	{'9', 0, 0, 0, ' ', KEY_ESC, 0,/*ctrl*/ 0/*func*/},
-	{0, '6', 0, '5', KEY_TAB, '1', 0/*sym*/, 0/*capslock*/},
-	{'d', 's', 0, 'e', 'w', 'q', '2', '3'},
-	{'f', 'r', 0, 'a', 'x', 'z', '7', '8'},
-	{'c', 'g', 'y', 't', 'v', 'b', 0, 0},
-	{'n', 'h', '/', '#',  KEY_RIGHT , KEY_DEL, KEY_DOWN , '6'},
-	{'k', 'm', 'u', 0, KEY_UP , '\\', '=', 0},
-	{',', 'j', 'i', '\'', '[', ']', '-', 0},
-	{'.', 'o', 'l', ';', 'p', KEY_BS, '0', 0}
-};
-
-uint8_t shiftkeyboard[10][8] = {
-	{0, 0, 0, KEY_ENTER, KEY_LEFT , '$', 0, 0},
-	{'(', 0, 0, 0, ' ', KEY_STOP, 0, 0},
-	{0, '^', 0, '%', KEY_TAB, '!', 0, 0},
-	{'D', 'S', 0, 'E', 'W', 'Q', '"', KEY_POUND },
-	{'F', 'R', 0, 'A', 'X', 'Z', '&', '*'},
-	{'C', 'G', 'Y', 'T', 'V', 'B', 0, 0},
-	{'N', 'H', '?', '~', KEY_RIGHT , KEY_DEL, KEY_DOWN , '^'},
-	{'K', 'M', 'U', 0, KEY_UP , '|', '+', 0},
-	{'<', 'J', 'I', '@', '{', '}', '_', 0},
-	{'>', 'O', 'L', ':', 'P', 8, ')', 0 }
-};
-#else
 uint8_t keyboard[10][8] = {
 	{0, 0, 0, KEY_ENTER, KEY_LEFT, 0, 0, 0},
 	{0, '5', 0, 0, ' ', KEY_ESC, 0, 0},
@@ -309,7 +265,6 @@ uint8_t shiftkeyboard[10][8] = {
 	{'<', 'J', 'I', '@', '{', '}', '_', '*'},
 	{'>', 'O', 'L', ':', 'P', KEY_BS, '(', ')'}
 };
-#endif
 
 static uint8_t capslock = 0;
 
@@ -345,88 +300,26 @@ static void keydecode(void)
 	tty_inproc(1, c);
 }
 
-
-#ifdef CONFIG_NC200
-
 void plt_interrupt(void)
 {
-	uint8_t a = irqmap;
-	uint8_t c;
-	if (!(a & 4)) {
-		/* FIXME: need to check uart itself to see wake cause */
-		wakeup(&ttydata[2]);
-		/* work around sdcc bug */
-		c = uarta;
-		tty_inproc(2, c);
-		if (txwait && (uartb & 1)) {
-			tty_outproc(2);
-			txwait = 0;
-		}
-	}
-	if (!(a & 8)) {
-		keyin[0] = kmap0;
-		keyin[1] = kmap1;
-		keyin[2] = kmap2;
-		keyin[3] = kmap3;
-		keyin[4] = kmap4;
-		keyin[5] = kmap5;
-		keyin[6] = kmap6;
-		keyin[7] = kmap7;
-		keyin[8] = kmap8;
-		keyin[9] = kmap9;	/* This resets the scan for 10mS on */
+	uint8_t a = in(IRQMAP);
 
-		newkey = 0;
-		keyproc();
-		if (keysdown && keysdown < 3) {
-			if (newkey) {
-				keydecode();
-				kbd_timer = keyrepeat.first;
-			} else if (! --kbd_timer) {
-				keydecode();
-				kbd_timer = keyrepeat.continual;
-			}
-		}
-		timer_interrupt();
-		devfd_spindown();
-	}
-	if (!(a & 16)) {
-		/* FIXME: Power button */
-		;
-	}
-	if (!(a & 32)) {
-		/* FIXME: FDC */
-		;
-	}
-	/* clear the mask */
-	irqmap = a;
-}
-
-
-#else
-
-void plt_interrupt(void)
-{
-	uint8_t a = irqmap;
-	uint8_t c;
 	if (!(a & 2))
 		wakeup(&ttydata[2]);
-	if (!(a & 1)) {
-		/* FIXME: we should look for errors here one day */
-		/* work around sdcc bug */
-		c = uarta;
-		tty_inproc(2, c);
-	}
+	if (!(a & 1))
+		tty_inproc(2, in(UARTA));
+
 	if (!(a & 8)) {
-		keyin[0] = kmap0;
-		keyin[1] = kmap1;
-		keyin[2] = kmap2;
-		keyin[3] = kmap3;
-		keyin[4] = kmap4;
-		keyin[5] = kmap5;
-		keyin[6] = kmap6;
-		keyin[7] = kmap7;
-		keyin[8] = kmap8;
-		keyin[9] = kmap9;	/* This resets the scan for 10mS on */
+		keyin[0] = in(KMAP(0));
+		keyin[1] = in(KMAP(1));
+		keyin[2] = in(KMAP(2));
+		keyin[3] = in(KMAP(3));
+		keyin[4] = in(KMAP(4));
+		keyin[5] = in(KMAP(5));
+		keyin[6] = in(KMAP(6));
+		keyin[7] = in(KMAP(7));
+		keyin[8] = in(KMAP(8));
+		keyin[9] = in(KMAP(9));	/* This resets the scan for 10mS on */
 
 		newkey = 0;
 		keyproc();
@@ -442,10 +335,8 @@ void plt_interrupt(void)
 		timer_interrupt();
 	}
 	/* clear the mask */
-	irqmap = a;
+	out(IRQMAP, a);
 }
-
-#endif
 
 /* This is used by the vt asm code, but needs to live at the top of the kernel */
 uint16_t cursorpos;

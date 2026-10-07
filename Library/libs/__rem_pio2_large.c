@@ -272,8 +272,10 @@ static const double PIo2[] = {
 };
 
 static const double
-two24  = 1.67772160000000000000e+07, /* 0x41700000, 0x00000000 */
-twon24 = 5.96046447753906250000e-08; /* 0x3E700000, 0x00000000 */
+toint   = 6.75539944105574400000e+15, /* 0x43380000  0x00000000 */
+two24  = 1.67772160000000000000e+07,  /* 0x41700000, 0x00000000 */
+invpio2 = 6.36619772367581382433e-01, /* 0x3FE45F30, 0x6DC9C883 */
+twon24 = 5.96046447753906250000e-08;  /* 0x3E700000, 0x00000000 */
 
 int __rem_pio2_large(double *x, double *y, int e0, int nx, int prec)
 {
@@ -416,7 +418,8 @@ recompute:
 		fw = 0.0;
 		for (i=jz; i>=0; i--)
 			fw += fq[i];
-		STRICT_ASSIGN(double,fw,fw);
+		/* TODO: drop excess precision here */
+		fw = (double)fw;
 		y[0] = ih==0 ? fw : -fw;
 		fw = fq[0]-fw;
 		for (i=1; i<=jz; i++)

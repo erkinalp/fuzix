@@ -7,7 +7,7 @@
 
 /* This uses strchr, strchr should be in assembler */
 
-char *strpbrk(const char *str, const char *set)
+char *strpbrk(register const char *str, const char *set)
 {
   while (*str != '\0')
     if (strchr(set, *str) == 0)

@@ -1,0 +1,7 @@
+;
+; Multiple app sizes and the fact the kernel and apps share the same banks
+; means we need to put this up top
+;
+	.commondata
+
+#include "../../cpu-z80u/std-commonmem.S"

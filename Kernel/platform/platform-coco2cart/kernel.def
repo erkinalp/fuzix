@@ -11,3 +11,6 @@ IDEDATA_L		    equ 0xFF58
 
 PROGBASE                    equ 0x8000       ; programs and data start here
 
+
+#define BECKER
+

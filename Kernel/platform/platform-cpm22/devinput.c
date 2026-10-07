@@ -34,7 +34,7 @@ int plt_input_read(uint8_t *slot)
     uint16_t delta = js ^ old_js;
     old_js = js;
 
-    if (delta & 0xFF00) { 
+    if (delta & 0xFF00) {
         *slot++ = STICK_DIGITAL | 1;
         *slot = js >> 8;
         return 2;
@@ -59,7 +59,7 @@ void poll_input(void)
         wakeup(&old_js);
 }
 
-int plt_input_write(uint8_t flag)
+int plt_input_write(uint_fast8_t flag)
 {
     flag;
     udata.u_error = EINVAL;

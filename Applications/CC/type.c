@@ -43,9 +43,41 @@ unsigned type_addpointer(unsigned t, unsigned ptr)
  */
 unsigned type_canonical(unsigned t)
 {
-	/* An array is pointer to the base type of the array */
-	if (IS_ARRAY(t)) {
+	/* An array is pointer to the base type of the array.  A pointer
+	   TO an array - "char (*a)[257]", more indirections than the
+	   array has dimensions - is already a pointer and must keep its
+	   array typing: that is where the row size lives.  Decaying it
+	   too turned a parameter's rows into a scale of zero, and every
+	   a[i] quietly addressed row 0. */
+	if (IS_ARRAY(t) && PTR(t) <= array_num_dimensions(t)) {
 		struct symbol *s = symbol_ref(t);
+		unsigned p = PTR(t);
+		/*
+		 * An array object with more than one dimension left decays
+		 * to a pointer to its ROW type, not to a pointer to the
+		 * element: "int a[5][7]" passed to a function is
+		 * "int (*)[7]", and that 7 is the scale of a[i].  Decaying
+		 * it all the way to "int **" made a[i] a load of the row's
+		 * first word, so every store through a two dimensional
+		 * parameter went somewhere else entirely - Dhrystone's
+		 * Proc_8 never touched Arr_2_Glob.
+		 *
+		 * PTR counts the dimensions still in play, from the right,
+		 * so the row type is an array of the last p - 1 of them.
+		 */
+		if (p > 1) {
+			unsigned n = array_num_dimensions(t);
+			unsigned idx[9];
+			unsigned i;
+			idx[0] = p - 1;
+			for (i = 1; i < p; i++)
+				idx[i] = array_dimension(t, n - p + 1 + i);
+			/* Array types are matched by the identity of their
+			   dimension list, so it has to be the interned copy
+			   and never this stack frame */
+			return type_ptr(make_array(s->type,
+				sym_find_idx(S_ARRAY, idx, p)));
+		}
 		/* Shouldn't be possible */
 		if (PTR(s->type) + PTR(t) > 7)
 			indirections();
@@ -152,6 +184,25 @@ int type_pointerconv(struct node *r, unsigned lt, unsigned warn)
     /* Same depth and type */
     if (lt == rt)
         return 1;
+    /*
+     * Pointers to functions where one side has an unspecified argument
+     * list. "int (*fp)()" is C89's way of saying "any arguments", and
+     * parse_function_arguments() records it as a lone ELLIPSIS, so the
+     * type codes differ from those of a real prototype and every
+     * comparison below then calls it a mismatch. Only the return type
+     * has to agree.
+     *
+     * This is not a corner: it is how a callback is declared, and it
+     * made optest.c's "apply(addfn, 9, 4)" fail to compile.
+     */
+    if (PTR(lt) == 1 && PTR(rt) == 1 && IS_FUNCTION(lt) && IS_FUNCTION(rt)) {
+        unsigned *la = func_args(lt);
+        unsigned *ra = func_args(rt);
+        if (func_return(lt) == func_return(rt) && la && ra &&
+            ((la[0] == 1 && la[1] == ELLIPSIS) ||
+             (ra[0] == 1 && ra[1] == ELLIPSIS)))
+            return 1;
+    }
     /* void * is fine */
     if (BASE_TYPE(lt) == VOID)
         return 1;
@@ -164,6 +215,47 @@ int type_pointerconv(struct node *r, unsigned lt, unsigned warn)
         return 1;
     }
     return !warn;
+}
+
+/*
+ *	Are two function types compatible, given that one of them may have
+ *	an unspecified argument list?
+ *
+ *	    int main(void);
+ *	    int main() { return 0; }
+ *
+ *	is C89 and is everywhere in period source, but the K&R form is
+ *	recorded as a lone ELLIPSIS by parse_function_arguments(), so the
+ *	two type codes differ and the definition looked like a redeclaration
+ *	with a different type (c-testsuite 00114).
+ *
+ *	Only the return type has to agree - the same rule
+ *	type_pointerconv() already applies to pointers to functions above.
+ *	Returns 1 if compatible, and sets *keep to whichever type is the
+ *	more informative of the two, so the prototype survives.
+ */
+int type_func_compatible(unsigned lt, unsigned rt, unsigned *keep)
+{
+	unsigned *la, *ra;
+	unsigned lany, rany;
+
+	if (PTR(lt) || PTR(rt))
+		return 0;
+	if (!IS_FUNCTION(lt) || !IS_FUNCTION(rt))
+		return 0;
+	if (func_return(lt) != func_return(rt))
+		return 0;
+	la = func_args(lt);
+	ra = func_args(rt);
+	if (la == NULL || ra == NULL)
+		return 0;
+	lany = (la[0] == 1 && la[1] == ELLIPSIS);
+	rany = (ra[0] == 1 && ra[1] == ELLIPSIS);
+	if (!lany && !rany)
+		return 0;
+	if (keep)
+		*keep = lany ? rt : lt;
+	return 1;
 }
 
 /*
@@ -207,5 +299,23 @@ unsigned type_ptrscale_binop(unsigned op, struct node *l, struct node *r,
 		return type_ptrscale(rt);
 	}
 	invalidtype();
+	return 1;
+}
+
+/*
+ *	Is this type a pointer *object* rather than an array object?
+ *
+ *	An array type carries its dimension count in the same field as the
+ *	indirection count, so "char (*p)[4]" and "char a[2][4]" both have
+ *	two. The difference is that a pointer has more indirections than
+ *	the type has dimensions. Everything that must tell a pointer from
+ *	an array needs this test - make_rval() spells out the same rule.
+ */
+int type_is_pointer_object(unsigned t)
+{
+	if (!PTR(t))
+		return 0;
+	if (IS_ARRAY(t))
+		return PTR(t) > array_num_dimensions(t);
 	return 1;
 }

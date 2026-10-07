@@ -7,7 +7,7 @@
 
 extern int signgam;
 
-#if !defined(double) && !defined(__m6809__) && !defined(NO_64BIT)
+#if !defined(double) && !defined(NO_64BIT)
 
 /* Compiler with full float/double support */
 
@@ -175,7 +175,7 @@ extern int __signbit(double x);
 #define rint(a)		rintf(a)
 #define round(a)	roundf(a)
 #define scalbln(a,b)	scalblnf(a,b)
-#define scalbn(a,b)	scalblf(a,b)
+#define scalbn(a,b)	scalbf(a,b)
 #define sin(a)		sinf(a)
 #define sinh(a)		sinhf(a)
 #define sqrt(a)		sqrtf(a)
@@ -253,7 +253,7 @@ extern float remainderf(float, float);
 extern float remquof(float, float, int *);
 extern float rintf(float);
 extern float roundf(float);
-extern float scalblf(float, long);
+extern float scalbf(float, float);
 extern float scalbnf(float, int);
 extern float sinf(float);
 extern float sinhf(float);

@@ -63,7 +63,7 @@ void psleep_nosig(void *event)
 
 void wakeup(void *event)
 {
-	regptr ptptr p;
+	register ptptr p;
 	irqflags_t irq;
 
 #ifdef DEBUGHARDER
@@ -212,8 +212,9 @@ ptptr getproc(void)
 				   catches up */
 				getproc_nextp->p_flags &= ~PFL_BATCH;
 				getproc_nextp->p_flags |= PFL_SWAPIN;
-				swap_in(getproc_nextp);
-				continue;
+				swapper(getproc_nextp);
+				/* Now let the swaptask run */
+				return swapproc;
 			}
 			getproc_nextp->p_flags &= ~PFL_SWAPIN;
 #endif
@@ -247,7 +248,7 @@ ptptr getproc(void)
 
 ptptr getproc(void)
 {
-	regptr ptptr p = udata.u_ptab;
+	register ptptr p = udata.u_ptab;
 
 #ifdef DEBUGREALLYHARD
 	kputs("getproc(");
@@ -263,6 +264,9 @@ ptptr getproc(void)
 				p->p_pptr);
 #endif
 			p = p->p_pptr;
+			if (p->p_status != P_READY && p->p_status != P_RUNNING)
+				break;
+			/* fall through */
 		case P_READY:
 			/* If we are ready run us */
 			p->p_status = P_RUNNING;
@@ -289,7 +293,7 @@ ptptr getproc(void)
  * The fork code has already copied the udata into u so we only need to
  * touch things that changed. u may or may not be the current udata
  */
-void makeproc(regptr ptptr p, u_data *u)
+void makeproc(register ptptr p, register u_data *u)
 {				/* Passed New process table entry */
 	uint8_t *j, *e;
 	irqflags_t irq;
@@ -358,8 +362,8 @@ static uint16_t nextpid = 0;
 
 ptptr ptab_alloc(void)
 {
-	regptr ptptr p;
-	regptr ptptr newp;
+	register ptptr p;
+	register ptptr newp;
 	irqflags_t irq;
 
 	newp = NULL;
@@ -415,7 +419,7 @@ ptptr ptab_alloc(void)
 
 static void load_average(void)
 {
-	regptr struct runload *r;
+	register struct runload *r;
 	static uint_fast8_t utick;
 	uint_fast8_t i;
 	uint16_t nr;
@@ -592,9 +596,9 @@ void unix_syscall(void)
 		(udata.u_callno != 32 /* fork */ || !udata.u_retval) &&
 #endif
 		runticks >= udata.u_ptab->p_priority && nready > 1) {
-#ifdef DEBUG_PREEMPT	
+#ifdef DEBUG_PREEMPT
 		kprintf("P: %d %x %d\n", runticks, udata.u_ptab, udata.u_ptab->p_priority);
-#endif		
+#endif
 		/* Time to switch out? - we may have overstayed our welcome inside
 		   a syscall so swtch straight afterwards */
 		udata.u_ptab->p_status = P_READY;
@@ -611,7 +615,7 @@ void unix_syscall(void)
 
 void sgrpsig(uint16_t pgrp, uint_fast8_t sig)
 {
-	regptr ptptr p;
+	register ptptr p;
 	if (pgrp) {
 		for (p = ptab; p < ptab_end; ++p)
 			if (p->p_pgrp == pgrp)
@@ -630,7 +634,7 @@ uint_fast8_t dump_core(uint_fast8_t sig)
 	}
 	return sig;
 }
-#endif                                    
+#endif
 
 
 /* FIXME: we should keep a dirty flag so we know if we need to check for
@@ -685,7 +689,7 @@ static uint_fast8_t chksigset(struct sigbits *sb, uint_fast8_t b)
 	}
 
 	/* Dispatch the lowest numbered signal */
-	for (; j < 15; ++j) {
+	for (; j < 16; ++j) {
 		svec++;
 		/* FIXME: optimise by setting up m once and shifting */
 		m = 1 << j;
@@ -791,16 +795,16 @@ rescan:
  *	Send signal, avoid touching uarea
  */
 
-void ssig(ptptr proc, uint_fast8_t sig)
+void ssig(register ptptr proc, uint_fast8_t sig)
 {
-	struct sigbits *m = proc->p_sig;
+	register struct sigbits *m = proc->p_sig;
 	uint16_t sigm;
 	irqflags_t irq;
 
 	if (sig > 15)
 		m++;
 
-	sigm = 1 << (sig & 0x0F);
+	sigm = sigmask(sig);
 
 #ifdef DEBUG_SLEEP
 	kprintf("sig %d to %d(%d) %p %p\n",
@@ -895,7 +899,7 @@ void acctexit(ptptr p)
 static int signal_parent(ptptr c)
 {
 	ptptr p = c->p_pptr;
-        if (p->p_sig[1].s_ignored & (1UL << (SIGCHLD - 16))) {
+        if (p->p_sig[1].s_ignored & (1 << (SIGCHLD - 16))) {
 		/* POSIX.1 says that SIG_IGN for SIGCHLD means don't go
 		   zombie, just clean up as we go */
 		udata.u_ptab->p_status = P_EMPTY;
@@ -910,8 +914,8 @@ static int signal_parent(ptptr c)
 
 void doexit(uint16_t val)
 {
-	uint_fast8_t j;
-	ptptr p;
+	register ptptr p;
+	register uint_fast8_t j;
 	irqflags_t irq;
 
 #ifdef DEBUG_SLEEP
@@ -941,6 +945,7 @@ void doexit(uint16_t val)
 #endif
 	pagemap_free(udata.u_ptab);
 
+	/* FIXME: switch to pointer walking */
 	for (j = 0; j < UFTSIZE; ++j) {
 		if (udata.u_files[j] != NO_FILE)
 			doclose(j);
@@ -1011,46 +1016,6 @@ void NORETURN panic(char *deathcry)
 	for(;;);
 }
 
-#ifdef CONFIG_SWAPPER
-
-/*
- *	Very simple swap helper task for systems that benefit from it.
- *
- *	There is lots more can be done here especially if the platform
- *	has true asynchronous disk I/O - things like paging stuff out in
- *	advance.
- */
-
-static struct p_tab *swapin_proc;
-
-void NORETURN swapper(void)
-{
-	irqflags_t irq;
-	struct p_tab *proc;
-
-	while(1) {
-		irq = di();
-		if (swapin_proc) {
-			proc = swapin_proc;
-			swapin_proc = HULL;
-			irqrestore(irq);
-			swapin(proc, proc->p_page2);
-		}
-		psleep(&swapper);
-	}
-}
-
-void swap_in(ptptr proc)
-{
-	/* No queue for now */
-	if (swapin_proc == NULL) {
-		swapin_proc = proc;
-		wakeup(&swapper);
-	}
-}
-
-#endif
-
 /* We put this here so that we can blow the start.c code away on exec
    eventually, but still manage to get the panic() to happen if it fails */
 void exec_or_die(void)
@@ -1068,10 +1033,11 @@ void exec_or_die(void)
 	pid = dofork(p);
 	irqrestore(irq);
 	if (pid != 1)
-		swapper();
+		swaptask();
 #endif
 	kputs("Starting /init\n");
 	plt_discard();
 	_execve();
+	kprintf("execve failed: err=%d\n", udata.u_error);
 	panic(PANIC_NOINIT);	/* BIG Trouble if we Get Here!! */
 }

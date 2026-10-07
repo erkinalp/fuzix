@@ -42,6 +42,24 @@
 #define Pico_SD_RX  16 // MISO
 #define Pico_SD_CS  17 // SD_CS
 
+#elif defined(CONFIG_PICO_COMPUTER_3)
+
+// Pico Computer 3 (RP2350B): SD on the hardware SPI1 block.  The same
+// kernel also runs the Pico Computer 2 (board.c runtime detection),
+// whose card sits on SCK 30 / MOSI 31 / MISO 32 / CS 29 - MISO is a
+// SPI0 pin, so that set is bit-banged, as in MMBasic and MicroPython.
+#define Pico_SD_SCK 30
+#define Pico_SD_TX  31 // MOSI
+#define Pico_SD_RX  28 // MISO
+#define Pico_SD_CS  33
+
+#define Pico_SD_SPI_MOD spi1
+
+#define PC2_SD_SCK  30
+#define PC2_SD_TX   31 // MOSI
+#define PC2_SD_RX   32 // MISO
+#define PC2_SD_CS   29
+
 #else
 
 /* Pico SPI GPIO connected to SD SPIO - David Given's Arrangement */
@@ -58,8 +76,80 @@
 #define SLOW_SPEED 250000
 #define FAST_SPEED 4000000
 
+#ifdef CONFIG_PICO_COMPUTER_3
+/* --- Pico Computer 2: bit-banged transport ----------------------------- */
+extern int board_is_pc2(void);
+
+static uint8_t sd_bb;           /* nonzero: bit-bang on the PC2 pin set */
+static uint8_t sd_bb_fast;      /* 0 = identification speed */
+
+/* A straight port of MMBasic's BitBangSwapSPI as proven on this board
+ * (via the MicroPython machine_sdcard bit-bang transport): mode 0,
+ * MSB first, 20 us half-bits while identifying the card, NOP-padded
+ * thereafter (the 3-NOP flavour: clk_sys is above 200 MHz), and MISO
+ * sampled late in the clock-high phase for settling margin.  MISO is
+ * GP32: high-bank pins must be read via gpio_get_all64() - per-pin
+ * gpio_get() misreads them here (as first seen with ADVAL on
+ * GP34-37). */
+#define SD_BB_NOP() __asm__ volatile ("nop")
+
+static uint8_t bb_xfer(uint8_t out)
+{
+    uint8_t in = 0;
+    int bit;
+    if (!sd_bb_fast) {
+        for (bit = 0; bit < 8; bit++) {
+            gpio_put(PC2_SD_TX, out & 0x80);
+            busy_wait_us_32(20);
+            in <<= 1;
+            gpio_put(PC2_SD_SCK, 1);
+            busy_wait_us_32(20);
+            in += ((gpio_get_all64() >> PC2_SD_RX) & 1);
+            gpio_put(PC2_SD_SCK, 0);
+            out <<= 1;
+        }
+    } else {
+        for (bit = 0; bit < 8; bit++) {
+            gpio_put(PC2_SD_TX, out & 0x80);
+            SD_BB_NOP();
+            SD_BB_NOP();
+            SD_BB_NOP();
+            in <<= 1;
+            gpio_put(PC2_SD_SCK, 1);
+            SD_BB_NOP();
+            SD_BB_NOP();
+            SD_BB_NOP();
+            in += ((gpio_get_all64() >> PC2_SD_RX) & 1);
+            gpio_put(PC2_SD_SCK, 0);
+            out <<= 1;
+        }
+    }
+    return in;
+}
+#endif
+
 void sd_rawinit(void)
 {
+#ifdef CONFIG_PICO_COMPUTER_3
+    if (board_is_pc2()) {
+        sd_bb = 1;
+        sd_bb_fast = 0;                     /* identification speed */
+        gpio_init(PC2_SD_SCK);
+        gpio_set_dir(PC2_SD_SCK, true);
+        gpio_init(PC2_SD_TX);
+        gpio_put(PC2_SD_TX, true);      /* level set before the pin drives */
+        gpio_set_dir(PC2_SD_TX, true);
+        gpio_init(PC2_SD_RX);
+        gpio_set_dir(PC2_SD_RX, false);
+        gpio_set_input_enabled(PC2_SD_RX, true);
+        gpio_pull_up(PC2_SD_RX);
+        gpio_set_input_hysteresis_enabled(PC2_SD_RX, true);
+        gpio_init(PC2_SD_CS);
+        gpio_put(PC2_SD_CS, true);      /* never glitch CS low at init */
+        gpio_set_dir(PC2_SD_CS, true);
+        return;
+    }
+#endif
     //initilase GPIO ports
     gpio_init(Pico_SD_SCK );
     gpio_init(Pico_SD_TX);
@@ -81,40 +171,86 @@ void sd_rawinit(void)
 
 void sd_spi_clock(bool go_fast)
 {
+#ifdef CONFIG_PICO_COMPUTER_3
+    if (sd_bb) {
+        sd_bb_fast = go_fast;
+        return;
+    }
+#endif
     spi_set_baudrate(Pico_SD_SPI_MOD,
         go_fast ? FAST_SPEED : SLOW_SPEED);
 }
 
 void sd_spi_raise_cs(void)
 {
+#ifdef CONFIG_PICO_COMPUTER_3
+    if (sd_bb) {
+        gpio_put(PC2_SD_CS, true);
+        return;
+    }
+#endif
     gpio_put(Pico_SD_CS, true);
 }
 
 void sd_spi_lower_cs(void)
 {
+#ifdef CONFIG_PICO_COMPUTER_3
+    if (sd_bb) {
+        gpio_put(PC2_SD_CS, false);
+        return;
+    }
+#endif
     gpio_put(Pico_SD_CS, false);
 }
 
 void sd_spi_transmit_byte(uint_fast8_t b)
 {
+#ifdef CONFIG_PICO_COMPUTER_3
+    if (sd_bb) {
+        bb_xfer(b);
+        return;
+    }
+#endif
     spi_write_blocking(Pico_SD_SPI_MOD, (uint8_t*) &b, 1);
 }
 
 uint_fast8_t sd_spi_receive_byte(void)
 {
     uint8_t b;
+#ifdef CONFIG_PICO_COMPUTER_3
+    if (sd_bb)
+        return bb_xfer(0xFF);
+#endif
     spi_read_blocking(Pico_SD_SPI_MOD, 0xff, (uint8_t*) &b, 1);
     return b;
 }
 
-bool sd_spi_receive_sector(void)
+bool sd_spi_rxsect(void)
 {
+#ifdef CONFIG_PICO_COMPUTER_3
+    if (sd_bb) {
+        uint8_t *p = (uint8_t *) blk_op.addr;
+        int i;
+        for (i = 0; i < 512; i++)
+            *p++ = bb_xfer(0xFF);
+        return 0;
+    }
+#endif
     spi_read_blocking(Pico_SD_SPI_MOD, 0xff, (uint8_t*) blk_op.addr, 512);
         return 0;
 }
 
-bool sd_spi_transmit_sector(void)
+bool sd_spi_txsect(void)
 {
+#ifdef CONFIG_PICO_COMPUTER_3
+    if (sd_bb) {
+        uint8_t *p = (uint8_t *) blk_op.addr;
+        int i;
+        for (i = 0; i < 512; i++)
+            bb_xfer(*p++);
+        return 0;
+    }
+#endif
     spi_write_blocking(Pico_SD_SPI_MOD,  (uint8_t*) blk_op.addr, 512);
         return 0;
 }

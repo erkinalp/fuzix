@@ -9,7 +9,7 @@
 #include <fcntl.h>
 #include <string.h>
 
-static struct __dirent *dnext(DIR *dir)
+static struct __dirent *dnext(register DIR *dir)
 {
         if (dir->_priv.next == dir->_priv.last) {
                 int l = read(dir->dd_fd, dir->_priv.buf, sizeof(dir->_priv.buf));
@@ -24,8 +24,8 @@ static struct __dirent *dnext(DIR *dir)
 
 struct dirent *readdir(DIR * dir)
 {
-	struct __dirent *direntry;
 	register struct dirent *buf;
+	register struct __dirent *direntry;
 
 	if (dir == NULL) {
 		errno = EFAULT;

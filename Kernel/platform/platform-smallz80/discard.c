@@ -3,8 +3,8 @@
 #include <kdata.h>
 #include <printf.h>
 #include <devtty.h>
-#include <blkdev.h>
-#include <devide.h>
+#include <tinyide.h>
+#include "smallz80.h"
 
 /*
  *	Everything in this file ends up in discard which means the moment
@@ -17,7 +17,7 @@
  *	we claim it, if not it gets passed to init. It's perfectly acceptable
  *	to act on a match and return to also pass it to init if you need to.
  */
-uint8_t plt_param(unsigned char *p)
+uint_fast8_t plt_param(unsigned char *p)
 {
 	return 0;
 }
@@ -59,5 +59,9 @@ void pagemap_init(void)
 
 void device_init(void)
 {
-	devide_init();
+	if (uart_base[1] == 0x10)
+		ide_base = 0x38;
+	else
+		ide_base = 0x68;
+	ide_probe();
 }

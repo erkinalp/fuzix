@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-int setvbuf(FILE *fp, char *buf, int mode, size_t size)
+int setvbuf(register FILE *fp, char *buf, int mode, size_t size)
 {
    int rv = 0;
    fflush(fp);

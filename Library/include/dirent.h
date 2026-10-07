@@ -49,6 +49,8 @@ struct __dirent {
 };
 extern DIR *opendir(const char *__name);
 extern DIR *opendir_r(DIR *__dirp, const char *__name);
+extern DIR *fdopendir(int __fd);
+extern DIR *fdopendir_r(DIR *__dirp, int __fd);
 extern int closedir(DIR *__dirp);
 extern int closedir_r(DIR *__dirp);
 extern struct dirent *readdir(DIR *__dirp);

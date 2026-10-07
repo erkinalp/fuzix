@@ -23,9 +23,9 @@
 
     - sd_spi_receive_byte(): receive a single byte
 
-    - sd_spi_transmit_sector(): transmit a 512-byte sector (params in blk_op)
+    - sd_spi_txsect(): transmit a 512-byte sector (params in blk_op)
 
-    - sd_spi_receive_sector(): receive a 512-byte sector (params in blk_op)
+    - sd_spi_rxsect(): receive a 512-byte sector (params in blk_op)
 */
 
 
@@ -45,8 +45,8 @@ void sd_spi_lower_cs(void);
 void sd_spi_transmit_byte(uint_fast8_t byte) SD_SPI_CALLTYPE;
 uint_fast8_t sd_spi_receive_byte(void);
 
-bool sd_spi_receive_sector(void);
-bool sd_spi_transmit_sector(void);
+bool sd_spi_rxsect(void);
+bool sd_spi_txsect(void);
 
 uint_fast8_t sd_spi_try_release(void);
 

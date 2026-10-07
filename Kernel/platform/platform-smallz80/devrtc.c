@@ -3,22 +3,8 @@
 #include <printf.h>
 #include <rtc.h>
 
-__sfr __at 0x20 rtc0;
-__sfr __at 0x21 rtc1;
-__sfr __at 0x22 rtc2;
-__sfr __at 0x23 rtc3;
-__sfr __at 0x24 rtc4;
-__sfr __at 0x25 rtc5;
-__sfr __at 0x26 rtc6;
-__sfr __at 0x27 rtc7;
-__sfr __at 0x28 rtc8;
-__sfr __at 0x29 rtc9;
-__sfr __at 0x2A rtcA;
-__sfr __at 0x2B rtcB;
-__sfr __at 0x2C rtcC;
-__sfr __at 0x2D rtcD;
-__sfr __at 0x2E rtcE;
-__sfr __at 0x2F rtcF;
+/* Location depends on board generation */
+uint8_t rtc_base;
 
 /* Full RTC support (for read - no write yet) */
 int plt_rtc_read(void)
@@ -32,21 +18,21 @@ int plt_rtc_read(void)
 		len = udata.u_count;
 
         irq = di();
-        rtcD |= 0x01;		/* Set hold and then */
-        while(rtcD & 0x02);	/* spin until not busy */
-        
+        out(rtc_base + 0x0D, in(rtc_base + 0x0D) | 1);	/* Hold on */
+        while(in(rtc_base + 0x0D) & 0x02);	/* spin until not busy */
+
         /* Now safe to read the clock */
         /* FIXME: we assume 24hr mode */
-        p[6] = rtc0 | (rtc1 << 4);
-        p[5] = rtc2 | (rtc3 << 4);
-        p[4] = rtc4 | ((rtc5 << 4) & 0x30);
-        p[3] = rtc6 | (rtc7 << 4);
-        p[2] = rtc8 | (rtc9 << 4);
-        p[1] = rtcA | (rtcB << 4);
+        p[6] = in(rtc_base) | (in(rtc_base + 1) << 4);
+        p[5] = in(rtc_base + 2) | (in(rtc_base + 3) << 4);
+        p[4] = in(rtc_base + 4) | ((in(rtc_base + 5) << 4) & 0x30);
+        p[3] = in(rtc_base + 6) | (in(rtc_base + 7) << 4);
+        p[2] = in(rtc_base + 8) | (in(rtc_base + 9) << 4);
+        p[1] = in(rtc_base + 0x0A) | (in(rtc_base + 0x0B) << 4);
         /* Assume 2000 based for now FIXME */
         p[0] = 0x20;
 
-        rtcD &= ~1;		/* Hold off */
+        out(rtc_base + 0x0D, in(rtc_base + 0x0D) & ~1);		/* Hold off */
 
         irqrestore(irq);
 	cmos.type = CMOS_RTC_BCD;
@@ -62,15 +48,15 @@ int plt_rtc_write(void)
 	return -1;
 }
 
-uint8_t plt_rtc_secs(void)
+uint_fast8_t plt_rtc_secs(void)
 {
         irqflags_t irq;
         uint8_t s;
         irq = di();
-        rtcD |= 0x01;		/* Set hold and then */
-        while(rtcD & 0x02);	/* spin until not busy */
-        s = rtc0 + 10 * rtc1;
-        rtcD &= ~0x01;
+        out(rtc_base + 0x0D, in(rtc_base + 0x0D) | 1);	/* Hold on */
+        while(in(rtc_base + 0x0D) & 0x02);	/* spin until not busy */
+        s = in(rtc_base) + 10 * in(rtc_base + 1);
+        out(rtc_base + 0x0D, in(rtc_base + 0x0D) & ~1);	/* Hold off */
         irqrestore(irq);
         return s;
 }

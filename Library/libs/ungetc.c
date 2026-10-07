@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-int ungetc(int c, FILE *fp)
+int ungetc(int c, register FILE *fp)
 {
    if (fp->mode & __MODE_WRITING)
       fflush(fp);

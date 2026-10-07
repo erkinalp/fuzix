@@ -5,8 +5,11 @@
 
 #define CONFIG_CPU_CLK	6144000
 
-/* Define this to select SD card rather than networkign on the SPI port */
+/* One or neither of these */
+/* Define this to select SD card on the CSIO port */
 #undef CONFIG_WITH_SD
+/* Define this to select a WizNET 5500 on the CSIO port */
+#define CONFIG_WITH_WIZNET
 
 /* Enable to make ^Z dump the inode table for debug */
 #undef CONFIG_IDUMP
@@ -38,15 +41,14 @@
 #define KERNTOP     0xF000  /* Kernel has lower 60KB */
 #define PROC_SIZE   56      /* Memory needed per process */
 
-#define CONFIG_TD_NUM	4
+#define CONFIG_TD_NUM		3
 #define CONFIG_TD_IDE
-#define CONFIG_TINYIDE_SDCCPIO
+#define CONFIG_TINYIDE_8BIT
 #define CONFIG_TINYIDE_8BIT
 #define IDE_IS_8BIT(x)		1
 #ifdef CONFIG_WITH_SD
 #define CONFIG_TD_SD
-#define TD_SD_NUM	1
-#define SD_SPI_CALLTYPE	__z88dk_fastcall
+#define TD_SD_NUM		1
 #endif
 
 #define CONFIG_RTC
@@ -55,7 +57,7 @@
 #define CONFIG_RTC_INTERVAL	100
 #define CONFIG_RTC_DS1302
 
-#ifndef CONFIG_WITH_SD
+#ifdef CONFIG_WITH_WIZNET
 #define CONFIG_NET
 #define CONFIG_NET_WIZNET
 #define CONFIG_NET_W5500

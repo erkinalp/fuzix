@@ -4,11 +4,57 @@
 #include <printf.h>
 #include <devtty.h>
 #include <devinput.h>
+#include "../../dev/cpc/ds12885.h"
+#include "devm4board.h"
 
+uint16_t swap_dev = 0xFFFF;
 uaddr_t ramtop = PROGTOP;
+
+#if ((defined CONFIG_M4BOARD) || (defined CONFIG_SYMBIFACE_RTC))
+uint8_t plt_rtc_secs(void){
+#ifdef CONFIG_SYMBIFACE_RTC
+	if (ds12885_present)
+		return sf_plt_rtc_secs();
+	else 
+#endif
+#ifdef CONFIG_M4BOARD
+		if (m4_present)
+			return m4_plt_rtc_secs();
+#endif
+	return 0xff;
+}
+int plt_rtc_read(void){
+#ifdef CONFIG_SYMBIFACE_RTC
+	if (ds12885_present)
+		return sf_plt_rtc_read();
+	else
+#endif
+#ifdef CONFIG_M4BOARD		
+		if (m4_present)
+			return m4_plt_rtc_read();
+#endif
+	udata.u_error = EOPNOTSUPP;
+	return -1;
+}
+int plt_rtc_write(void){
+#ifdef CONFIG_SYMBIFACE_RTC
+	if (ds12885_present)
+		return sf_plt_rtc_write();
+#endif
+	udata.u_error = EOPNOTSUPP;
+	return -1;
+}
+#endif
 
 void plt_idle(void)
 {
+	tty_poll();
+#ifdef CONFIG_USIFAC_SERIAL
+	tty_poll_usifac();
+#endif
+#ifdef CONFIG_NET_WIZNET
+	w5x00_poll();
+#endif
  __asm
   halt
  __endasm;
@@ -19,14 +65,13 @@ uint8_t timer_wait;
 void plt_interrupt(void)
 {
 	tty_pollirq();
-#if defined CONFIG_USIFAC_SERIAL
-	tty_pollirq_usifac();
+#ifdef CONFIG_USIFAC_SERIAL
+	tty_poll_usifac();
 #endif
 #ifdef CONFIG_NET_WIZNET
 	w5x00_poll();
 #endif
 	timer_interrupt();
-	poll_input();
 	if (timer_wait)
 		wakeup(&timer_interrupt);
 #ifdef CONFIG_FDC765
@@ -76,5 +121,5 @@ void plt_discard(void)
 		bp->bf_dev = NO_DEVICE;
 		bp->bf_busy = BF_FREE;
 	}
-#endif	
+#endif
 }

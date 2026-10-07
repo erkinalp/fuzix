@@ -2,11 +2,7 @@
 #include <version.h>
 #include <kdata.h>
 #include <devlpr.h>
-
-__sfr __at 0x01	lp;
-__sfr __at 0x02 lpss;
-__sfr __at 0x03 lpsc;
-__sfr __at 0x8C siob_c;
+#include "lb.h"
 
 int lpr_open(uint_fast8_t minor, uint16_t flag)
 {
@@ -34,8 +30,8 @@ static uint8_t lpstat(void)
 {
 	uint8_t r;
 	irqflags_t irq = di();
-	siob_c = 0x10;
-	r = siob_c & 0x10;
+	out(DARTB_C, 0x10);
+	r = in(DARTB_C) & 0x10;
 	irqrestore(irq);
 	return r;
 }
@@ -52,9 +48,9 @@ int lpr_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 			if ((n = iopoll(pe - p)) != 0)
 				return n;
 		}
-		lp = ugetc(p++);
-		lpss = 1;
-		lpsc = 1;
+		out(LPDATA, ugetc(p++));
+		out(LPSTON, 1);
+		out(LPSTROFF, 1);
 	}
-	return pe - p;
+	return udata.u_count;
 }

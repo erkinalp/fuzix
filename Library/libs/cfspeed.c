@@ -11,7 +11,7 @@ speed_t cfgetospeed(const struct termios *p)
   return p->c_cflag&CBAUD;
 }
 
-int cfsetspeed(struct termios *p, speed_t s)
+int cfsetspeed(register struct termios *p, speed_t s)
 {
   if (s & ~CBAUD)	/* Invalid bits ? */
     return -1;

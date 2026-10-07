@@ -3,7 +3,7 @@
 
 #include "config.h"
 
-__sfr __at (PROPIO2_IO_BASE + 0x00) PROPIO2_STAT;
-__sfr __at (PROPIO2_IO_BASE + 0x01) PROPIO2_TERM;
+#define PROPIO2_STAT	(PROPIO2_IO_BASE + 0x00)
+#define PROPIO_TERM	(PROPIO2_IO_BASE + 0x01)
 
 #endif

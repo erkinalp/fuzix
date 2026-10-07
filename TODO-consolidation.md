@@ -109,8 +109,8 @@ STILL OPEN — features:
 - #1040 Mizar32 discussion
 - #1178 0.5rc build checklist sweep
 
-(GitHub Issues are currently disabled on this repository — this file is
-the to-do list until they're enabled.)
+(GitHub issues #9-#19 now track this list; this file remains the detailed
+record and diagnosis log.)
 
 ## Downstream CI/buildstate items (2026-10-06)
 
